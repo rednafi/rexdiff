@@ -20,7 +20,7 @@ Then press Shift+Cmd+R next to an agent.
 
 ## Docs
 
-- [User guide](.doc/user.md): keys, settings, and how it works
+- [User guide](.doc/user.md)
 - [Architecture](.doc/arch.md)
 - [Development](.doc/dev.md)
 - [Tests](.doc/test.md)
