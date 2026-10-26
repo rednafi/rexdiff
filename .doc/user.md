@@ -105,9 +105,16 @@ local settings = {
 }
 ```
 
-Most other settings are as in
-[herdr-reviewr](https://github.com/persiyanov/herdr-reviewr), but `file_list` is its
-`navigator_position`. After a change, run `rex config reload`.
+The other settings are as in
+[herdr-reviewr](https://github.com/persiyanov/herdr-reviewr), with these changes:
+
+- `layout`, `placement`, and `direction` are its `diff_view`, `toggle_placement`,
+  and `toggle_direction`.
+- `file_list` is its `navigator_position`.
+- rexdiff adds `file_list_width`, `diff_signs`, and `focus_agent_after_send`.
+- rexdiff has no `theme` and no `auto_open`.
+
+After a change, run `rex config reload`.
 
 Press `?` to see all the keys.
 

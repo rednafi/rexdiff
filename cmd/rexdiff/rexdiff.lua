@@ -1,7 +1,7 @@
 -- "rexdiff install" wrote this file. To remove it, run "rexdiff uninstall".
 --
--- These are your settings of rexdiff. The user guide lists them:
--- https://github.com/rednafi/rexdiff/blob/master/.doc/user.md#settings
+-- These are your settings of rexdiff. For help, see the user guide:
+-- https://github.com/rednafi/rexdiff/blob/master/.doc/user.md#12-change-the-settings
 -- To change a setting, edit it, then run "rex config reload".
 -- rexdiff does not change this file. The action is in rexdiff_toggle.lua.
 local settings = {
