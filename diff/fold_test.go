@@ -57,7 +57,7 @@ func headers(d *diff.Diff) string {
 // header below it.
 func TestFolds(t *testing.T) {
 	t.Parallel()
-	old, new := numbered(40), numbered(40, 10, 30)
+	before, after := numbered(40), numbered(40, 10, 30)
 	header := func(o, n, lines int) []string { return []string{foldText(diff.Fold{Old: o, New: n, Lines: lines})} }
 	lines := func(lo, hi int) []string {
 		var out []string
@@ -96,7 +96,7 @@ func TestFolds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			o := diff.Options{Width: 60, Expanded: tt.expanded}
-			d := diff.Render("f.txt", old, new, o)
+			d := diff.Render("f.txt", before, after, o)
 			if got := layout(d); !slices.Equal(got, tt.want) {
 				t.Errorf("layout = \n%v\nwant:\n%v", got, tt.want)
 			}
@@ -117,7 +117,7 @@ func TestFolds(t *testing.T) {
 			"…   ⋯ 13 unmodified lines  @@ -27,7 +27,7 @@\n" +
 			"…   ⋯ 7 unmodified lines"},
 	} {
-		d := diff.Render("f.txt", old, new, tt.o)
+		d := diff.Render("f.txt", before, after, tt.o)
 		if got := headers(d); got != tt.want {
 			t.Errorf("split %v: headers = \n%s\nwant:\n%s",
 				tt.o.Split, got, tt.want)

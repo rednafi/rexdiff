@@ -21,8 +21,9 @@ const pauseFactor = 20
 // directories, and of the git files. While nothing changes, it runs no
 // git process. After a change, it runs git to list the files again.
 //
-// A Watcher does not see a change of the global core.excludesFile, or a
-// copy that keeps the size and the modification time of a file.
+// A Watcher does not see a change of the global core.excludesFile. It
+// also does not see a copy that keeps the size and the modification time
+// of a file.
 type Watcher struct {
 	r              *Repo
 	gitDir, common string           // absolute paths
@@ -271,7 +272,8 @@ func (w *Watcher) sumRefs() uint64 {
 	// directory, which the worktrees of the repository share.
 	if b, err := os.ReadFile(paths[0]); err == nil {
 		ref, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "ref: ")
-		if p, err := filepath.Localize(ref); ok && err == nil { // no ".." or "/" at the start
+		// Localize refuses a ".." or a "/" at the start.
+		if p, err := filepath.Localize(ref); ok && err == nil {
 			paths = append(paths, filepath.Join(w.common, p))
 		}
 	}

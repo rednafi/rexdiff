@@ -8,7 +8,9 @@ import (
 
 // Review returns the comments as herdr-reviewr text for a coding agent. It
 // writes the prefix, if not empty, then the comments in [Comments.All] order.
-// Blank lines separate them. The text has no control characters. A comment is:
+// Blank lines separate them. The text has no control characters.
+//
+// This is an example of a comment:
 //
 //	a.go:3-4
 //	 x := 1
@@ -55,8 +57,8 @@ func format(c *Comment) string {
 }
 
 // snippet returns rows as unified diff lines. See [NewComment].
-func snippet(rows []Row, old, new string) []string {
-	oldLines, newLines := Lines(old), Lines(new)
+func snippet(rows []Row, before, after string) []string {
+	oldLines, newLines := Lines(before), Lines(after)
 	line := func(ls []string, n int) string {
 		if n >= 1 && n-1 < len(ls) {
 			return ls[n-1]

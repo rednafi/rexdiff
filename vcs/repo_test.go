@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/rednafi/rexdiff/internal/proc"
@@ -174,7 +175,7 @@ func TestScopes(t *testing.T) {
 	now := snapshot(t, r)
 	unc := changes(t, r, head(t, r), now)
 	if got := names(unc); got != "A.gitignore Ma.txt Anew.txt" {
-		t.Errorf("uncommitted: %s, want A.gitignore Ma.txt Anew.txt", got)
+		t.Fatalf("uncommitted: %s, want A.gitignore Ma.txt Anew.txt", got)
 	}
 	if unc[1].Old != "one\n" || unc[1].New != "one\ntwo\n" {
 		t.Errorf("a.txt: Old %q, New %q, want %q, %q",
@@ -273,13 +274,18 @@ func TestDiffSkipsBinaryAndBigFiles(t *testing.T) {
 	testgit.WriteFile(t, dir, "bytes", "y"+half)
 	testgit.WriteFile(t, dir, "lines", "y"+lines)
 	testgit.WriteFile(t, dir, "limit", "z"+limit)
-	testgit.WriteFile(t, dir, "bin", "a\x00b")
-	// The NUL of "late" is at byte 9000.
-	testgit.WriteFile(t, dir, "late", strings.Repeat("x", 9000)+"\x00")
-	testgit.WriteFile(t, dir, "big", strings.Repeat("x\n", 50_001))
-	testgit.WriteFile(t, dir, "huge", strings.Repeat("x", 2_000_001))
-	// Diff reads this file after the skipped content.
-	testgit.WriteFile(t, dir, "small", "after\n")
+	err := os.CopyFS(dir, fstest.MapFS{
+		"bin": {Data: []byte("a\x00b")},
+		// The NUL of "late" is at byte 9000.
+		"late": {Data: []byte(strings.Repeat("x", 9000) + "\x00")},
+		"big":  {Data: []byte(strings.Repeat("x\n", 50_001))},
+		"huge": {Data: []byte(strings.Repeat("x", 2_000_001))},
+		// Diff reads this file after the skipped content.
+		"small": {Data: []byte("after\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	got := map[string]vcs.File{}
 	for _, f := range changes(t, r, head(t, r), snapshot(t, r)) {
 		got[f.Path] = f
@@ -547,10 +553,14 @@ func TestOpenOutsideARepo(t *testing.T) {
 // with no commit and no index. The path of a root can have a newline.
 func TestNewRepo(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"repo", "a\nb"} {
-		t.Run(name, func(t *testing.T) {
+	tests := []struct{ name, root string }{
+		{"plain root", "repo"},
+		{"newline in root", "a\nb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			dir := filepath.Join(t.TempDir(), name)
+			dir := filepath.Join(t.TempDir(), tt.root)
 			testgit.InitRepo(t, dir)
 			testgit.WriteFile(t, dir, "a.txt", "one\n")
 			r, err := vcs.Open(t.Context(), dir, testgit.ToolEnv(t))

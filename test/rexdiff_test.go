@@ -24,6 +24,8 @@ import (
 
 	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
+
+	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
 // buildDev builds rexdiff once.
@@ -61,6 +63,24 @@ func build(dir, version string) (string, error) {
 var userEnv = []string{
 	"REX_SESSION", "REX_BLOCK", "REX_BIN_DIR", "REX_CONFIG",
 	"REXDIFF_AGENT", "REXDIFF_LOG", "REXDIFF_RESUME", "EDITOR", "VISUAL",
+}
+
+// cleanEnv returns the environment of the process for a run of rexdiff.
+// It has no git variable of the user, and the variables of userEnv are
+// empty. HOME is homeDir, so no file of the user applies. Git gets the
+// variables of testgit.Env.
+func cleanEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			env = append(env, kv)
+		}
+	}
+	for _, k := range userEnv {
+		env = append(env, k+"=")
+	}
+	env = append(env, "HOME="+homeDir, "XDG_CONFIG_HOME=")
+	return append(env, testgit.Env()...)
 }
 
 // opts are the options of a rexdiff run.
@@ -110,10 +130,7 @@ func start(t *testing.T, repo string, o opts) *term {
 	if o.path != "" {
 		path = o.path + string(os.PathListSeparator) + path
 	}
-	cmd.Env = append(os.Environ(), "PATH="+path, "TERM=xterm-256color")
-	for _, k := range userEnv {
-		cmd.Env = append(cmd.Env, k+"=")
-	}
+	cmd.Env = append(cleanEnv(), "PATH="+path, "TERM=xterm-256color")
 	if o.rex != nil {
 		cmd.Env = append(cmd.Env, "REX_SESSION=S", "REX_BLOCK=block:self",
 			"REX_BIN_DIR="+o.rex.dir)

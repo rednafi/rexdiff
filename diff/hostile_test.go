@@ -52,7 +52,7 @@ func TestEscapesAreVisible(t *testing.T) {
 	}
 	for _, tt := range tests {
 		d := diff.Render("x.txt", "", tt.src, diff.Options{})
-		if got := ansi.Strip(d.Lines[1]); !strings.Contains(got, tt.want) {
+		if got := plainLine(t, d, 1); !strings.Contains(got, tt.want) {
 			t.Errorf("Render(%q) = %q, want it to show %q", tt.src, got, tt.want)
 		}
 		f := diff.RenderFile("x.txt", tt.src, diff.Options{})

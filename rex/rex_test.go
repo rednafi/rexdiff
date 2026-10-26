@@ -142,7 +142,10 @@ func TestCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	b, _ := os.ReadFile(filepath.Join(dir, "calls"))
+	b, err := os.ReadFile(filepath.Join(dir, "calls"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	calls := string(b)
 	for _, want := range []string{
 		`api call -s S block.event {"block_id":"block:pi",` +
@@ -263,7 +266,11 @@ func TestReloadConfigOutsideRex(t *testing.T) {
 	if err := rex.ReloadConfig(t.Context(), env); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(log); string(b) != "config reload\n" {
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "config reload\n" {
 		t.Errorf("the app rex ran with %q, want config reload", b)
 	}
 }

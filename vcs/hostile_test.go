@@ -9,10 +9,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"testing/fstest"
 	"time"
 
-	"github.com/rednafi/rexdiff/internal/proc"
 	"github.com/rednafi/rexdiff/internal/testgit"
 	"github.com/rednafi/rexdiff/vcs"
 )
@@ -49,7 +50,11 @@ func TestRevIsNotAnOption(t *testing.T) {
 			t.Errorf("Diff(%q, HEAD): no error, want an error", rev)
 		}
 	}
-	if b, _ := os.ReadFile(out); string(b) != "keep\n" {
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "keep\n" {
 		t.Errorf("the file of --output = %q, want %q", b, "keep\n")
 	}
 }
@@ -137,9 +142,14 @@ func TestDiffFileKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	link("a.txt", "type")
-	testgit.WriteFile(t, dir, "crlf", "a\r\nb\r\n")
-	testgit.WriteFile(t, dir, "empty", "")
-	testgit.WriteFile(t, dir, "no-newline", "end")
+	err := os.CopyFS(dir, fstest.MapFS{
+		"crlf":       {Data: []byte("a\r\nb\r\n")},
+		"empty":      {},
+		"no-newline": {Data: []byte("end")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	want := []vcs.File{
 		{Path: "crlf", Status: vcs.StatusAdded, New: "a\r\nb\r\n"},
@@ -172,8 +182,7 @@ func TestSnapshotNestedRepo(t *testing.T) {
 	testgit.WriteFile(t, dir, "z.txt", "z\n")
 
 	got := changes(t, r, head(t, r), snapshot(t, r))
-	isSubmodule := strings.HasPrefix(got[0].New, "Subproject commit ")
-	if names(got) != "Afull Az.txt" || !isSubmodule {
+	if names(got) != "Afull Az.txt" || !strings.HasPrefix(got[0].New, "Subproject commit ") {
 		t.Errorf("Diff = %+v, want full as a submodule and z.txt", got)
 	}
 }
@@ -197,7 +206,7 @@ func TestReadFileStaysInRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := proc.Command(t.Context(), testgit.ToolEnv(t), "mkfifo", filepath.Join(dir, "fifo")).Run(); err != nil {
+	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bad := []string{"../secret", secret, "to-secret", "to-zero", "to-dir", "fifo"}
@@ -357,18 +366,21 @@ func TestPullRequestBadJSON(t *testing.T) {
 }
 
 // TestGrepDeadline checks that Grep returns the matches that it finds
-// before the deadline of ctx, with more set, as herdr-reviewr does with
-// its time budget.
+// before the deadline of ctx. more is true, as with the time budget of
+// herdr-reviewr.
 func TestGrepDeadline(t *testing.T) {
 	t.Parallel()
 	env, link := gitLink(t)
 	r, _ := newRepoEnv(t, env)
 	// The fake git takes the place of git after Open. It prints one match
 	// and a cut record, then hangs. With the file slow beside it, it first
-	// waits past the budget.
+	// waits much longer than the budget. With the FIFO block beside it, it
+	// waits in the shell until it stops, so it prints nothing.
 	removeGit(t, link)
 	bin := filepath.Dir(link)
-	testgit.Script(t, bin, "git", `[ -e "${0%/*}/slow" ] && /bin/sleep 0.3
+	testgit.Script(t, bin, "git", `d="${0%/*}"
+[ -e "$d/slow" ] && /bin/sleep 0.3
+[ -p "$d/block" ] && read -r _ < "$d/block"
 printf 'a.go\0001\000hit\nb.go\00012'
 exec /bin/sleep 10
 `)
@@ -377,15 +389,21 @@ exec /bin/sleep 10
 		defer cancel()
 		return r.Grep(ctx, "hit", 10, budget)
 	}
-	if ms, more, err := grep(5*time.Second, 50*time.Millisecond); err != nil || !more ||
+	if ms, more, err := grep(time.Minute, 50*time.Millisecond); err != nil || !more ||
 		len(ms) != 1 || ms[0].Text != "hit" {
 		t.Errorf("Grep past the budget = %+v, %v, %v, want the hit, more, no error", ms, more, err)
 	}
 	testgit.WriteFile(t, bin, "slow", "")
-	if ms, more, err := grep(5*time.Second, time.Millisecond); err != nil || !more || len(ms) != 1 {
+	if ms, more, err := grep(time.Minute, time.Millisecond); err != nil || !more || len(ms) != 1 {
 		t.Errorf("Grep with no line at the budget = %+v, %v, %v, want the first hit, more", ms, more, err)
 	}
-	if ms, more, err := grep(100*time.Millisecond, time.Millisecond); err != nil || !more || len(ms) != 0 {
+	if err := os.Remove(filepath.Join(bin, "slow")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(bin, "block"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ms, more, err := grep(200*time.Millisecond, time.Millisecond); err != nil || !more || len(ms) != 0 {
 		t.Errorf("Grep past the deadline = %+v, %v, %v, want none, more, no error", ms, more, err)
 	}
 }

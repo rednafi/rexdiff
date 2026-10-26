@@ -94,8 +94,8 @@ func (m *model) runWindowEditor(path, script string) tea.Cmd {
 	return wait
 }
 
-// detach starts a program with the environment env in its own session and
-// with no terminal, so that it cannot read the keys of rexdiff. The
+// detach starts a program with the environment env in its own session.
+// The program has no terminal, so it cannot read the keys of rexdiff. The
 // returned command waits for the program. If the program fails, the
 // command gives a detachedMsg with the last line of the stderr of the
 // program.

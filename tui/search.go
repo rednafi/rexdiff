@@ -121,7 +121,8 @@ func (m *model) runSearch() tea.Cmd {
 	s.files, s.fileTotal = search.Files(s.paths, m.recent, q, search.MaxFiles)
 	s.err = ""
 	m.stopGrep()
-	if strings.TrimSpace(q) == "" { // as in herdr-reviewr, a blank grep is noise
+	// A blank grep is noise, as in herdr-reviewr.
+	if strings.TrimSpace(q) == "" {
 		s.hits, s.hitsMore = nil, false
 		ov.showSearch()
 		return nil

@@ -95,7 +95,7 @@ func (m *model) updateFind(msg tea.KeyPressMsg) tea.Cmd {
 
 // paneSource returns the lines of the two sides of the file in the
 // current pane.
-func (m *model) paneSource() (old, new []string) {
+func (m *model) paneSource() (before, after []string) {
 	switch m.tab {
 	case tabChanges:
 		if f := m.selectedChange(); f != nil {
@@ -114,10 +114,10 @@ type splitLines struct {
 	oldLines, newLines []string
 }
 
-// of returns the lines of old and new.
-func (s *splitLines) of(old, new string) ([]string, []string) {
-	if old != s.old || new != s.new {
-		*s = splitLines{old, new, diff.Lines(old), diff.Lines(new)}
+// of returns the lines of before and after.
+func (s *splitLines) of(before, after string) ([]string, []string) {
+	if before != s.old || after != s.new {
+		*s = splitLines{before, after, diff.Lines(before), diff.Lines(after)}
 	}
 	return s.oldLines, s.newLines
 }
@@ -130,7 +130,7 @@ func (m *model) findHits(q string) []findHit {
 		return nil
 	}
 	p := m.cur()
-	old, new := m.paneSource()
+	before, after := m.paneSource()
 	line := func(ls []string, n int) string {
 		if n >= 1 && n <= len(ls) {
 			return ls[n-1]
@@ -143,13 +143,13 @@ func (m *model) findHits(q string) []findHit {
 		case r.Continued:
 		case r.Fold.Lines > 0:
 			for n := r.Fold.New; n < r.Fold.New+r.Fold.Lines; n++ {
-				if search.Match(line(new, n), q) {
+				if search.Match(line(after, n), q) {
 					hits = append(hits, findHit{i, n})
 				}
 			}
 		case r.Old > 0 || r.New > 0:
-			if (r.New > 0 && search.Match(line(new, r.New), q)) ||
-				(r.Old > 0 && search.Match(line(old, r.Old), q)) {
+			if (r.New > 0 && search.Match(line(after, r.New), q)) ||
+				(r.Old > 0 && search.Match(line(before, r.Old), q)) {
 				hits = append(hits, findHit{i, 0})
 			}
 		case p.hasContent(i):

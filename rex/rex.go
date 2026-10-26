@@ -62,8 +62,8 @@ func (c *Client) Block() string { return c.block }
 // binFromEnv returns the path of the rex command in env, or "" for the rex
 // in PATH. Rex sets REX_BIN_DIR in its terminals. Other programs, for
 // example brew, do not have it. If REX_BIN_DIR is empty and PATH has no
-// rex, binFromEnv returns the rex of the Rex server app in HOME on macOS,
-// if it is there.
+// rex, binFromEnv looks in HOME on macOS. It returns the rex of the Rex
+// server app, if it is there.
 func binFromEnv(env []string) string {
 	if dir := proc.Getenv(env, "REX_BIN_DIR"); dir != "" {
 		return filepath.Join(dir, "rex")

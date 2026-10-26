@@ -23,7 +23,6 @@ type realRex struct {
 func (r *realRex) run(args ...string) string {
 	r.t.Helper()
 	cmd := exec.CommandContext(r.t.Context(), r.bin, append([]string{"--autostart=false"}, args...)...)
-	cmd.Env = append(os.Environ(), "HOME="+home) // the socket of Rex is in HOME
 	out, err := cmd.Output()
 	if err != nil {
 		r.t.Fatalf("rex %s: %v", strings.Join(args, " "), err)
@@ -89,7 +88,6 @@ func TestRealRex(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 		defer cancel()
 		kill := exec.CommandContext(ctx, bin, "--autostart=false", "kill", r.session)
-		kill.Env = append(os.Environ(), "HOME="+home)
 		_ = kill.Run()
 	})
 	shell := r.blocks()["shell"]

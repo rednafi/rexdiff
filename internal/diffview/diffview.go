@@ -35,11 +35,13 @@ const (
 	symDelete = "- "
 )
 
+// file is a path and its content.
 type file struct {
 	path    string
 	content string
 }
 
+// layout is the unified or the split layout.
 type layout int
 
 const (

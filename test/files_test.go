@@ -106,7 +106,7 @@ func TestTurnRaced(t *testing.T) {
 }
 
 // TestPR checks that the PR tab shows the pull request of the branch from
-// gh, with its checks and comments, and that o opens it.
+// gh, with its checks and comments. It also checks that o opens it.
 func TestPR(t *testing.T) {
 	repo := newRepo(t)
 	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -137,7 +137,7 @@ EOF
 	})
 }
 
-// TestNoPR checks that the PR tab tells why it has no pull request: the
+// TestNoPR checks that the PR tab tells why it has no pull request. The
 // repository has no remote, or the tool of the remote is not installed.
 func TestNoPR(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})

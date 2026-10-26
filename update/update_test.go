@@ -7,15 +7,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
 	"github.com/rednafi/rexdiff/update"
@@ -43,21 +45,11 @@ func detect(t *testing.T, latest, bin, stamped string, env ...string) *update.Up
 	return u
 }
 
-// serve starts a server that answers with the file of files at the path
-// of a request, or 404. The caller can add files after serve returns. It
-// returns the address of the server.
-func serve(t *testing.T, files map[string]string) string {
+// serve starts a server with the handler h, and returns its address. The
+// test stops the server at the end.
+func serve(t *testing.T, h http.Handler) string {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		b, ok := files[req.URL.Path]
-		if !ok {
-			http.NotFound(w, req)
-			return
-		}
-		if _, err := io.WriteString(w, b); err != nil {
-			t.Error(err)
-		}
-	}))
+	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv.URL
 }
@@ -114,13 +106,13 @@ func TestLatest(t *testing.T) {
 		{"status", "0.1.0", "", "", false, "404"},
 		{"bad JSON", "0.1.0", "not json", "", false, "read the latest release"},
 	}
-	files := map[string]string{}
-	base := serve(t, files)
+	files := fstest.MapFS{}
 	for i, tt := range tests {
 		if tt.body != "" {
-			files[fmt.Sprint("/", i)] = tt.body
+			files[strconv.Itoa(i)] = &fstest.MapFile{Data: []byte(tt.body)}
 		}
 	}
+	base := serve(t, http.FileServerFS(files))
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -219,7 +211,10 @@ func TestInstallBrew(t *testing.T) {
 			if tt.calls == "" {
 				return
 			}
-			got, _ := os.ReadFile(filepath.Join(prefix, "calls"))
+			got, err := os.ReadFile(filepath.Join(prefix, "calls"))
+			if err != nil {
+				t.Fatal(err)
+			}
 			if string(got) != tt.calls {
 				t.Errorf("brew calls = \n%s\nwant:\n%s", got, tt.calls)
 			}
@@ -270,22 +265,34 @@ func TestDownload(t *testing.T) {
 	stale := archive(t, "#!/bin/sh\necho v0.1.9\n")
 	// The limit of a binary is 128 MiB.
 	big := archive(t, strings.Repeat("x", 128<<20+1))
-	files := map[string]string{}
-	base := serve(t, files)
+	files := fstest.MapFS{}
 	for dir, a := range map[string][]byte{"good": good, "stale": stale, "big": big, "bad": good} {
-		files["/"+dir+"/"+name] = string(a)
-		files["/"+dir+"/sha256sums.txt"] = sums(a)
-		var assets []string
-		for _, f := range []string{name, "sha256sums.txt"} {
-			assets = append(assets, fmt.Sprintf(
-				`{"name": %q, "browser_download_url": %q}`, f, base+"/"+dir+"/"+f))
-		}
-		files["/"+dir+"/latest"] = `{"tag_name": "v0.2.0", "assets": [` +
-			strings.Join(assets, ",") + `]}`
+		files[dir+"/"+name] = &fstest.MapFile{Data: a}
+		files[dir+"/sha256sums.txt"] = &fstest.MapFile{Data: []byte(sums(a))}
 	}
-	files["/bad/"+name] = "tampered"
+	files["bad/"+name] = &fstest.MapFile{Data: []byte("tampered")}
+	mux := http.NewServeMux()
+	mux.Handle("/", http.FileServerFS(files))
+	// The release of a directory has its files, at the URLs of the server.
 	// The release of "none" has no files.
-	files["/none/latest"] = `{"tag_name": "v0.2.0"}`
+	mux.HandleFunc("GET /{dir}/latest", func(w http.ResponseWriter, req *http.Request) {
+		type asset struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		}
+		dir := req.PathValue("dir")
+		assets := []asset{}
+		for _, f := range []string{name, "sha256sums.txt"} {
+			if _, ok := files[dir+"/"+f]; ok {
+				assets = append(assets, asset{f, "http://" + req.Host + "/" + dir + "/" + f})
+			}
+		}
+		release := map[string]any{"tag_name": "v0.2.0", "assets": assets}
+		if err := json.MarshalWrite(w, release); err != nil {
+			t.Error(err)
+		}
+	})
+	base := serve(t, mux)
 
 	tests := []struct {
 		name, dir string
@@ -326,8 +333,8 @@ func TestDownload(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
-			if b, _ := os.ReadFile(target); string(b) != want {
-				t.Errorf("target file = %q, want %q", b, want)
+			if b, err := os.ReadFile(target); err != nil || string(b) != want {
+				t.Errorf("target file = %q, %v, want %q", b, err, want)
 			}
 			if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
 				t.Errorf("after Install: %s is not a symlink, want a symlink", link)
@@ -335,7 +342,11 @@ func TestDownload(t *testing.T) {
 			if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o755 {
 				t.Errorf("Stat = %v, %v, want mode 0755", info, err)
 			}
-			if entries, _ := os.ReadDir(filepath.Dir(target)); len(entries) != 1 {
+			entries, err := os.ReadDir(filepath.Dir(target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 {
 				t.Errorf("the directory has %d files, want only rexdiff", len(entries))
 			}
 		})

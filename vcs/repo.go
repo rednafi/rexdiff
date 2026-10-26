@@ -221,7 +221,8 @@ func (r *Repo) MergeBaseTree(ctx context.Context, base string) (string, error) {
 }
 
 // MergeBaseCommit returns the best common ancestor commit of base and
-// HEAD, as git merge-base finds it.
+// HEAD, as git merge-base finds it. If git exits with an error, the error
+// wraps the [*exec.ExitError] of git.
 func (r *Repo) MergeBaseCommit(ctx context.Context, base string) (string, error) {
 	out, err := r.run(ctx, nil, "merge-base", "--end-of-options", base, "HEAD")
 	if err != nil {

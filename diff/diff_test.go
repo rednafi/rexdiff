@@ -19,9 +19,9 @@ const (
 
 // snippet returns the diff lines of a comment on rows, as
 // [diff.Comments.Review] writes them.
-func snippet(rows []diff.Row, old, new string) []string {
+func snippet(rows []diff.Row, before, after string) []string {
 	var cs diff.Comments
-	cs.Add(diff.NewComment("x", diff.SideNew, rows, old, new))
+	cs.Add(diff.NewComment("x", diff.SideNew, rows, before, after))
 	lines := strings.Split(cs.Review(""), "\n")
 	return lines[1 : len(lines)-1] // not the location and the empty text
 }
@@ -38,25 +38,25 @@ func kinds(rows []diff.Row) string {
 	return b.String()
 }
 
-// renderer is a way to show the versions old and new.
+// renderer is a way to show two versions of a file.
 type renderer struct {
 	name   string
 	render func(o diff.Options) *diff.Diff
 }
 
-// renderers returns the unified and the split diff of old and new, and the
-// file new.
-func renderers(old, new string) []renderer {
+// renderers returns the unified and the split diff of before and after,
+// and the file after.
+func renderers(before, after string) []renderer {
 	return []renderer{
 		{"unified", func(o diff.Options) *diff.Diff {
-			return diff.Render("x.go", old, new, o)
+			return diff.Render("x.go", before, after, o)
 		}},
 		{"split", func(o diff.Options) *diff.Diff {
 			o.Split = true
-			return diff.Render("x.go", old, new, o)
+			return diff.Render("x.go", before, after, o)
 		}},
 		{"file", func(o diff.Options) *diff.Diff {
-			return diff.RenderFile("x.go", new, o)
+			return diff.RenderFile("x.go", after, o)
 		}},
 	}
 }
@@ -153,11 +153,11 @@ func TestRenderKinds(t *testing.T) {
 func TestRenderTabsAndOffset(t *testing.T) {
 	t.Parallel()
 	d := diff.Render("x.go", "", "\tx := 1\n", diff.Options{Width: 80})
-	if got := ansi.Strip(d.Lines[1]); !strings.Contains(got, "▌     x := 1") {
+	if got := plainLine(t, d, 1); !strings.Contains(got, "▌     x := 1") {
 		t.Errorf("tab: line = %q, want %q in it", got, "▌     x := 1")
 	}
 	d = diff.Render("x.go", "", "\tx := 1\n", diff.Options{Width: 80, Offset: 6})
-	got := ansi.Strip(d.Lines[1])
+	got := plainLine(t, d, 1)
 	if strings.Contains(got, "x :=") || !strings.Contains(got, "= 1") {
 		t.Errorf("offset 6: line = %q, want \"= 1\" and no \"x :=\"", got)
 	}
@@ -222,7 +222,7 @@ func TestMarks(t *testing.T) {
 	}
 	// With a scroll to the right, an ellipsis shows after the bar.
 	d := diff.Render("x.txt", "", "abcdefgh\n", diff.Options{Width: 40, Offset: 2})
-	if got := ansi.Strip(d.Lines[1]); !strings.Contains(got, "▌…cdefgh") {
+	if got := plainLine(t, d, 1); !strings.Contains(got, "▌…cdefgh") {
 		t.Errorf("offset: line = %q, want ▌…cdefgh", got)
 	}
 	// The review text of a comment uses + and - for both kinds of mark.
@@ -343,9 +343,9 @@ func TestRenderFile(t *testing.T) {
 func TestWrap(t *testing.T) {
 	t.Parallel()
 	long := "x := []string{" + strings.Repeat(`"word", `, 12) + "}"
-	old, new := "a\nb\n", "a\n"+long+"\nb\n"
+	before, after := "a\nb\n", "a\n"+long+"\nb\n"
 	const width = 40
-	for _, tt := range renderers(old, new) {
+	for _, tt := range renderers(before, after) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			cut := tt.render(diff.Options{Width: width})
@@ -382,7 +382,7 @@ func TestWrap(t *testing.T) {
 					text.String(), long)
 			}
 			// Wrap does not change the snippet of a comment.
-			got, want := snippet(d.Rows, old, new), snippet(cut.Rows, old, new)
+			got, want := snippet(d.Rows, before, after), snippet(cut.Rows, before, after)
 			if !slices.Equal(got, want) {
 				t.Errorf("snippet with wrap = %q, want %q", got, want)
 			}

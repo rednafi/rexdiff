@@ -2,6 +2,8 @@ package diff_test
 
 import (
 	"encoding/json/v2"
+	"errors"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -12,11 +14,11 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// comment returns a comment with text on all rows of the diff of old and
-// new.
-func comment(path string, s diff.Side, old, new, text string) diff.Comment {
-	rows := diff.Render(path, old, new, diff.Options{}).Rows
-	c := diff.NewComment(path, s, rows, old, new)
+// comment returns a comment with text on all rows of the diff of before
+// and after.
+func comment(path string, s diff.Side, before, after, text string) diff.Comment {
+	rows := diff.Render(path, before, after, diff.Options{}).Rows
+	c := diff.NewComment(path, s, rows, before, after)
 	c.Text = text
 	return c
 }
@@ -69,18 +71,18 @@ func TestReviewMatchesHerdrReviewr(t *testing.T) {
 // TestReviewContinuedRows checks a comment on only continued rows.
 func TestReviewContinuedRows(t *testing.T) {
 	t.Parallel()
-	old, new := "", strings.Repeat("word ", 20)+"\n"
-	d := diff.Render("a.go", old, new, diff.Options{Width: 30, Wrap: true})
+	before, after := "", strings.Repeat("word ", 20)+"\n"
+	d := diff.Render("a.go", before, after, diff.Options{Width: 30, Wrap: true})
 	var cont []diff.Row
 	for _, r := range d.Rows {
 		if r.Continued {
 			cont = append(cont, r)
 		}
 	}
-	c := diff.NewComment("a.go", diff.SideNew, cont, old, new)
+	c := diff.NewComment("a.go", diff.SideNew, cont, before, after)
 	c.Text = "long"
 	// The comment has no diff lines, so Review writes the lines of its range.
-	want := "a.go:1\n+" + strings.TrimSuffix(new, "\n") + "\nlong"
+	want := "a.go:1\n+" + strings.TrimSuffix(after, "\n") + "\nlong"
 	if got := review(c); len(cont) == 0 || got != want {
 		t.Errorf("%d continued rows, Review = \n%s\nwant:\n%s",
 			len(cont), got, want)
@@ -139,14 +141,14 @@ func TestComments(t *testing.T) {
 // layouts, on each side.
 func TestNewComment(t *testing.T) {
 	t.Parallel()
-	old := "a\nb\nc\nd\n"
-	new := "a\nB\nC\nd\n"
+	before := "a\nb\nc\nd\n"
+	after := "a\nB\nC\nd\n"
 	for _, split := range []bool{false, true} {
-		rows := diff.Render("x.txt", old, new, diff.Options{Split: split}).Rows
+		rows := diff.Render("x.txt", before, after, diff.Options{Split: split}).Rows
 		// The rows from "a" to "d".
 		lo := slices.IndexFunc(rows, isEqual)
 		for _, s := range []diff.Side{diff.SideNew, diff.SideOld} {
-			c := diff.NewComment("x.txt", s, rows[lo:], old, new)
+			c := diff.NewComment("x.txt", s, rows[lo:], before, after)
 			if c.Path != "x.txt" || c.Side != s || c.Start != 1 || c.End != 4 {
 				t.Errorf("split %v, side %d: %+v, want lines 1-4", split, s, c)
 			}
@@ -167,15 +169,15 @@ func TestNewComment(t *testing.T) {
 				ins = append(ins, r)
 			}
 		}
-		got := diff.NewComment("x.txt", diff.SideNew, ins, old, new)
+		got := diff.NewComment("x.txt", diff.SideNew, ins, before, after)
 		if got.Start != 2 || got.End != 3 {
 			t.Errorf("split %v, the new lines: %+v, want lines 2-3", split, got)
 		}
 	}
 	// A hunk header has no line.
-	rows := diff.Render("x.txt", old, new, diff.Options{}).Rows
+	rows := diff.Render("x.txt", before, after, diff.Options{}).Rows
 	hunk := rows[:slices.IndexFunc(rows, isEqual)]
-	got := diff.NewComment("x.txt", diff.SideNew, hunk, old, new)
+	got := diff.NewComment("x.txt", diff.SideNew, hunk, before, after)
 	if len(hunk) == 0 || got.Start != 0 || got.End != 0 {
 		t.Errorf("a hunk header %v: %+v, want no lines", hunk, got)
 	}
@@ -185,19 +187,19 @@ func TestNewComment(t *testing.T) {
 // text and tabs, in both layouts.
 func TestSnippetIsTheRealDiff(t *testing.T) {
 	t.Parallel()
-	old := "func a() {\n\treturn 1\n}\n"
-	new := "func a() {\n\t// two\n\treturn 2\n}\n"
+	before := "func a() {\n\treturn 1\n}\n"
+	after := "func a() {\n\t// two\n\treturn 2\n}\n"
 	want := " func a() {\n-\treturn 1\n+\t// two\n+\treturn 2\n }"
 	for _, split := range []bool{false, true} {
-		d := diff.Render("x.go", old, new, diff.Options{Split: split})
-		got := strings.Join(snippet(d.Rows, old, new), "\n")
+		d := diff.Render("x.go", before, after, diff.Options{Split: split})
+		got := strings.Join(snippet(d.Rows, before, after), "\n")
 		if got != want {
 			t.Errorf("split %v: snippet = \n%s\nwant:\n%s", split, got, want)
 		}
 	}
 
 	dir := t.TempDir()
-	for name, src := range map[string]string{"old": old, "new": new} {
+	for name, src := range map[string]string{"old": before, "new": after} {
 		testgit.WriteFile(t, dir, name, src)
 	}
 	// git diff exits with 1 when the files differ.
@@ -207,7 +209,10 @@ func TestSnippetIsTheRealDiff(t *testing.T) {
 		filepath.Join(dir, "old"),
 		filepath.Join(dir, "new"),
 	)
-	out, _ := git.Output()
+	out, err := git.Output()
+	if ee, ok := errors.AsType[*exec.ExitError](err); err != nil && (!ok || ee.ExitCode() != 1) {
+		t.Fatalf("git diff --no-index: %v", err)
+	}
 	_, body, _ := strings.Cut(string(out), "@@\n")
 	if strings.TrimSuffix(body, "\n") != want {
 		t.Errorf("git diff = \n%s\nwant:\n%s", body, want)
@@ -245,7 +250,10 @@ func TestCommentsJSON(t *testing.T) {
 		t.Fatalf("UnmarshalJSON of an old file: %v", err)
 	}
 	c := cs2.Find(1)
-	if c == nil || c.Anchor != (diff.Anchor{InDiff: true}) || c.Start != 2 {
+	if c == nil {
+		t.Fatal("Find(1) = nil, want the comment of an old file")
+	}
+	if c.Anchor != (diff.Anchor{InDiff: true}) || c.Start != 2 {
 		t.Errorf("comment of an old file = %+v, want lines 2-3 on a diff", c)
 	}
 	back.SetOldRev("x..y")

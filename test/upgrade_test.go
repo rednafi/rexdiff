@@ -18,7 +18,7 @@ func TestUpgradeAtStart(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "init.lua")
 	env := []string{"REX_CONFIG=" + config}
 	install := exec.CommandContext(t.Context(), binary(t), "install")
-	install.Env = slices.Concat(os.Environ(), env, []string{"REX_BIN_DIR=" + rex.dir})
+	install.Env = slices.Concat(cleanEnv(), env, []string{"REX_BIN_DIR=" + rex.dir})
 	if out, err := install.CombinedOutput(); err != nil {
 		t.Fatalf("rexdiff install: %v\n%s", err, out)
 	}

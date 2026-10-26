@@ -117,12 +117,12 @@ type Diff struct {
 	wrap   bool
 }
 
-// Render compares the old and the new content of the file at path. The path
-// selects the syntax highlighter.
-func Render(path, old, new string, o Options) *Diff {
+// Render compares before, the old content of the file at path, with after,
+// its new content. The path selects the syntax highlighter.
+func Render(path, before, after string, o Options) *Diff {
 	dv := diffview.New().
-		Before(path, old).
-		After(path, new).
+		Before(path, before).
+		After(path, after).
 		Width(o.Width).
 		XOffset(o.Offset)
 	if o.Cache != nil {
@@ -144,7 +144,7 @@ func Render(path, old, new string, o Options) *Diff {
 		o.Theme.Green, o.Theme.Red, o.Theme.dark()))
 	out, rows, g := dv.Render()
 
-	d := &Diff{split: o.Split, src: [2]string{old, new}, wrap: o.Wrap}
+	d := &Diff{split: o.Split, src: [2]string{before, after}, wrap: o.Wrap}
 	if !o.Wrap {
 		d.offset = o.Offset
 	}
@@ -205,12 +205,12 @@ func (d *Diff) SideAt(x int) (s Side, onNumber bool) {
 	return SideNew, x < d.oldNum+d.newNum
 }
 
-// Count returns the number of lines that a change from old to new adds and
-// deletes. It ignores the difference between CRLF and LF line endings.
-func Count(old, new string) (added, deleted int) {
-	old = strings.ReplaceAll(old, "\r\n", "\n")
-	new = strings.ReplaceAll(new, "\r\n", "\n")
-	u, err := udiff.ToUnifiedDiff("", "", old, udiff.Lines(old, new), 0)
+// Count returns the number of lines that a change from before to after adds
+// and deletes. It ignores the difference between CRLF and LF line endings.
+func Count(before, after string) (added, deleted int) {
+	before = strings.ReplaceAll(before, "\r\n", "\n")
+	after = strings.ReplaceAll(after, "\r\n", "\n")
+	u, err := udiff.ToUnifiedDiff("", "", before, udiff.Lines(before, after), 0)
 	if err != nil {
 		return 0, 0
 	}

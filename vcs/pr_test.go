@@ -1,7 +1,6 @@
 package vcs_test
 
 import (
-	"cmp"
 	"errors"
 	"reflect"
 	"slices"
@@ -86,11 +85,12 @@ func TestPullRequest(t *testing.T) {
 		"repository": {"webUrl": "https://dev.azure.com/o/p/_git/r"}}]`})
 
 	tests := []struct {
+		name   string
 		remote string
 		hosts  vcs.Hosts
 		want   *vcs.PullRequest
 	}{
-		{"git@github.com:o/r.git", vcs.Hosts{}, &vcs.PullRequest{
+		{"github ssh", "git@github.com:o/r.git", vcs.Hosts{}, &vcs.PullRequest{
 			Forge:  vcs.ForgeGitHub,
 			Number: 7,
 			Title:  "Add x",
@@ -112,7 +112,7 @@ func TestPullRequest(t *testing.T) {
 				{Author: "bob", When: "2026-01-02T03:04:05Z", Body: "LGTM"},
 			},
 		}},
-		{"https://Git.Corp/o/r", vcs.Hosts{GitLab: "git.CORP"}, &vcs.PullRequest{
+		{"gitlab custom host", "https://Git.Corp/o/r", vcs.Hosts{GitLab: "git.CORP"}, &vcs.PullRequest{
 			Forge:  vcs.ForgeGitLab,
 			Number: 3,
 			Title:  "Fix y",
@@ -127,7 +127,7 @@ func TestPullRequest(t *testing.T) {
 				{Author: "cy", When: "2026-01-03T03:04:05Z", Body: "Speed."},
 			},
 		}},
-		{"https://dev.azure.com/o/p/_git/r", vcs.Hosts{}, &vcs.PullRequest{
+		{"azure", "https://dev.azure.com/o/p/_git/r", vcs.Hosts{}, &vcs.PullRequest{
 			Forge:  vcs.ForgeAzure,
 			Number: 9,
 			Title:  "Z",
@@ -139,7 +139,7 @@ func TestPullRequest(t *testing.T) {
 		}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.remote, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			r, _ := repoAt(t, env, tt.remote)
 			pr, err := r.PullRequest(t.Context(), tt.hosts)
@@ -164,34 +164,68 @@ func TestPullRequestErrors(t *testing.T) {
 	const unsupported = "the remote is not on GitHub, GitLab, or Azure DevOps"
 	corp := vcs.Hosts{GitLab: "Git.Corp"}
 	tests := []struct {
+		name           string
 		remote, branch string
 		hosts          vcs.Hosts
 		wantErr        error  // if not nil, err must wrap it
 		errText        string // if not empty, a part of the text of err
 	}{
 		// The host selects the forge, not a name in the path.
-		{remote: "https://example.com/github.com/r.git", branch: "feat", errText: unsupported},
-		{remote: "git@example.com:gitlab/r.git", branch: "feat", errText: unsupported},
-		{remote: "https://git.corp.example/r", branch: "feat", hosts: corp, errText: unsupported},
-		{remote: "git@git.corp:o/r.git", branch: "feat", hosts: corp, errText: "glab is not installed"},
-		{remote: "ssh://git@GitHub.com:22/o/r", branch: "feat", errText: "gh is not installed"},
 		{
+			name:    "github in the path",
+			remote:  "https://example.com/github.com/r.git",
+			branch:  "feat",
+			errText: unsupported,
+		},
+		{
+			name:    "gitlab in the path",
+			remote:  "git@example.com:gitlab/r.git",
+			branch:  "feat",
+			errText: unsupported,
+		},
+		{
+			name:    "other corp host",
+			remote:  "https://git.corp.example/r",
+			branch:  "feat",
+			hosts:   corp,
+			errText: unsupported,
+		},
+		{
+			name:    "gitlab custom host",
+			remote:  "git@git.corp:o/r.git",
+			branch:  "feat",
+			hosts:   corp,
+			errText: "glab is not installed",
+		},
+		{
+			name:    "github ssh with port",
+			remote:  "ssh://git@GitHub.com:22/o/r",
+			branch:  "feat",
+			errText: "gh is not installed",
+		},
+		{
+			name:    "visualstudio other branch",
 			remote:  "https://u@org.visualstudio.com/p/_git/r",
 			branch:  "other",
 			errText: "unexpected call: " + azArgs("other"),
 		},
-		{remote: "", branch: "feat", errText: "no git remote"},
-		{remote: azure, branch: "none", wantErr: vcs.ErrNoPullRequest},
+		{name: "no remote", branch: "feat", errText: "no git remote"},
+		{name: "azure no pull request", remote: azure, branch: "none", wantErr: vcs.ErrNoPullRequest},
 		{
+			name:    "azure other branch",
 			remote:  azure,
 			branch:  "other",
 			errText: "unexpected call: " + azArgs("other"),
 		},
-		{remote: "https://github.com/o/r", branch: "feat", errText: "gh is not installed"},
+		{
+			name:    "github with no gh",
+			remote:  "https://github.com/o/r",
+			branch:  "feat",
+			errText: "gh is not installed",
+		},
 	}
 	for _, tt := range tests {
-		// Two cases have the same remote, so the name has the branch.
-		t.Run(cmp.Or(tt.remote, "no remote")+" on "+tt.branch, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			r, dir := newRepoEnv(t, env)
 			if tt.remote != "" {
@@ -228,6 +262,10 @@ func TestPullRequestHostile(t *testing.T) {
 	pr, err := r.PullRequest(t.Context(), vcs.Hosts{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(pr.Comments) != 1 || len(pr.Checks) != 1 {
+		t.Fatalf("PullRequest has %d comments and %d checks, want 1 and 1",
+			len(pr.Comments), len(pr.Checks))
 	}
 	got := []string{pr.Title, pr.Body, pr.Author, pr.Comments[0].Body, pr.Checks[0].Name}
 	want := []string{"Add]0;owned", "a]0;owned\nb", "ann]0;owned", "x]0;owned", "t]0;owned"}

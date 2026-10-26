@@ -281,7 +281,7 @@ type model struct {
 	changePane, allPane, prPane pane
 	pr                          prState
 	prf                         prFetch
-	prPlace                     *resumePane // the place of prPane after a restart
+	prPlace                     *resumePane // prPane's place after a restart
 
 	split      bool // show the diff side by side
 	wrap       bool
@@ -501,8 +501,10 @@ type reloads struct {
 	gen     int  // the reload whose result shows. Other reloads are stale.
 	running bool // the reload gen runs
 	want    bool // a reload is due
-	force   bool // the due reload shows the changes even if the trees are the same
-	stale   bool // the view changes while the reload gen runs, so its result is old
+	// The due reload shows the changes, also for equal trees.
+	force bool
+	// The view changes while the reload gen runs, so its result is old.
+	stale bool
 }
 
 // loadNow reads the changes at once, for the first screen. Nothing shows

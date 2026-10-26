@@ -43,15 +43,16 @@ type Anchor struct {
 }
 
 // NewComment returns a comment with no text on side s of the file at path.
-// Rows are rows of the [Diff] of old and new. Start and End are the first and
-// the last line of the rows on side s. They are 0 if no row has a line on s.
+// Rows are rows of the [Diff] of before and after. Start and End are the
+// first and the last line of the rows on side s. They are 0 if no row has
+// a line on s.
 //
 // In the diff rows of the comment, equal, deleted, and inserted lines start
-// with " ", "-", and "+". The text comes from old and new, so tabs stay. In
-// each block of changes, deleted lines come before inserted lines, also in
-// the split layout. Continued rows add nothing.
-func NewComment(path string, s Side, rows []Row, old, new string) Comment {
-	c := Comment{Path: path, Side: s, snippet: snippet(rows, old, new)}
+// with " ", "-", and "+". The text comes from before and after, so tabs
+// stay. In each block of changes, deleted lines come before inserted
+// lines, also in the split layout. Continued rows add nothing.
+func NewComment(path string, s Side, rows []Row, before, after string) Comment {
+	c := Comment{Path: path, Side: s, snippet: snippet(rows, before, after)}
 	for _, r := range rows {
 		n := r.Line(s)
 		if n == 0 {
@@ -65,7 +66,7 @@ func NewComment(path string, s Side, rows []Row, old, new string) Comment {
 	if c.Start == 0 {
 		return c
 	}
-	lines := Lines(version(s, old, new))
+	lines := Lines(version(s, before, after))
 	c.code = slices.Clone(lines[min(c.Start-1, len(lines)):min(c.End, len(lines))])
 	return c
 }
@@ -167,12 +168,13 @@ func (cs *Comments) Count(a Anchor, path string) int {
 	return n
 }
 
-// version returns old for the [SideOld] side, and new for the [SideNew] side.
-func version(s Side, old, new string) string {
+// version returns before for the [SideOld] side, and after for the
+// [SideNew] side.
+func version(s Side, before, after string) string {
 	if s == SideOld {
-		return old
+		return before
 	}
-	return new
+	return after
 }
 
 // savedComment is a [Comment] with its private fields, for MarshalJSON.

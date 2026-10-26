@@ -111,6 +111,15 @@ func TestWatcherLastWrite(t *testing.T) {
 		t.Errorf("LastWrite before a write = %v, want zero", got)
 	}
 	testgit.WriteFile(t, dir, "c.txt", "c\n")
+	// The clock of the file system can be behind time.Now. So the test sets
+	// the times of the new file and of its directory to an hour after now.
+	// This is clearly after the start of the watch.
+	later := time.Now().Add(time.Hour)
+	for _, p := range []string{filepath.Join(dir, "c.txt"), dir} {
+		if err := os.Chtimes(p, later, later); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if w.LastWrite().IsZero() {
 		t.Error("LastWrite after a write is zero")
 	}

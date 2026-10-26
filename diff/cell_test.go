@@ -22,11 +22,21 @@ func screenRune(plain string, x int) (rune, bool) {
 	return 0, false
 }
 
+// plainLine returns line i of d without the escapes. It stops the test if d
+// has no line i.
+func plainLine(t *testing.T, d *diff.Diff, i int) string {
+	t.Helper()
+	if i < 0 || i >= len(d.Lines) {
+		t.Fatalf("line %d of a diff with %d lines", i, len(d.Lines))
+	}
+	return ansi.Strip(d.Lines[i])
+}
+
 // column returns the column of the first cell of needle in line i of d.
 // With last, it finds the last needle.
 func column(t *testing.T, d *diff.Diff, i int, needle string, last bool) int {
 	t.Helper()
-	plain := ansi.Strip(d.Lines[i])
+	plain := plainLine(t, d, i)
 	k := strings.Index(plain, needle)
 	if last {
 		k = strings.LastIndex(plain, needle)
@@ -41,11 +51,11 @@ func column(t *testing.T, d *diff.Diff, i int, needle string, last bool) int {
 // the split layout, and a file.
 func TestCell(t *testing.T) {
 	t.Parallel()
-	const old, new = "a\n\told_name := 1\n", "a\n\tnew_name := 1\n"
-	u := diff.Render("x.go", old, new, diff.Options{Width: 80})
-	off := diff.Render("x.go", old, new, diff.Options{Width: 80, Offset: 6})
-	s := diff.Render("x.go", old, new, diff.Options{Width: 80, Split: true})
-	f := diff.RenderFile("x.go", new, diff.Options{Width: 80})
+	const before, after = "a\n\told_name := 1\n", "a\n\tnew_name := 1\n"
+	u := diff.Render("x.go", before, after, diff.Options{Width: 80})
+	off := diff.Render("x.go", before, after, diff.Options{Width: 80, Offset: 6})
+	s := diff.Render("x.go", before, after, diff.Options{Width: 80, Split: true})
+	f := diff.RenderFile("x.go", after, diff.Options{Width: 80})
 	tests := []struct {
 		name   string
 		d      *diff.Diff
@@ -106,14 +116,14 @@ func TestCellMatchesScreen(t *testing.T) {
 		words = append(words, "w"+string(rune('a'+i%26))+strings.Repeat("x", i%4))
 	}
 	long := "\t" + strings.Join(words, " ") + " 日本 end"
-	old, new := "a\nb\n", "a\n"+long+"\nb\n"
+	before, after := "a\nb\n", "a\n"+long+"\nb\n"
 	opts := map[string]diff.Options{
 		"cut":    {Width: 60},
 		"offset": {Width: 60, Offset: 13},
 		"wrap":   {Width: 60, Wrap: true},
 	}
-	src := map[diff.Side][]string{diff.SideOld: diff.Lines(old), diff.SideNew: diff.Lines(new)}
-	for _, tt := range renderers(old, new) {
+	src := map[diff.Side][]string{diff.SideOld: diff.Lines(before), diff.SideNew: diff.Lines(after)}
+	for _, tt := range renderers(before, after) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			for on, o := range opts {
@@ -206,7 +216,7 @@ func TestCellOffsetInWideChar(t *testing.T) {
 		} {
 			row := len(d.Rows) - 1
 			for char, needle := range []rune(line) {
-				if !strings.ContainsRune(ansi.Strip(d.Lines[row]), needle) {
+				if !strings.ContainsRune(plainLine(t, d, row), needle) {
 					continue
 				}
 				x := column(t, d, row, string(needle), false)

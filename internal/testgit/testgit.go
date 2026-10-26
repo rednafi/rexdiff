@@ -11,69 +11,56 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/rednafi/rexdiff/internal/proc"
 )
 
 var (
 	// root is the directory of the fixtures. It is "" until Main runs.
 	root string
 	// gitPath is the path of git, from the PATH of the process. It is ""
-	// until Main runs.
+	// until Main runs, and also if PATH has no git.
 	gitPath string
 )
 
-// Main runs the tests of m in a git environment that ignores the setup of
-// the user. Each package that runs git calls it from its TestMain.
+// Main runs the tests of m. Each package that runs git calls it from its
+// TestMain. Main does not change the environment of the process.
 //
-// Git reads no global or system config, so no hooksPath, signing,
-// fsmonitor, or diff setting applies. A new repository gets no hooks from
-// a template. The variables that point git to another repository, or that
-// add config, are unset. HOME and XDG_CONFIG_HOME are a new directory, so
-// no ignore or attributes file of the user applies. The commits have a
-// fixed author.
-//
-// Main finds git in the PATH of the process, before the tests run. A test
-// that gives a library an environment of its own gets git from
-// [ToolEnv] or [LinkGit].
+// Main finds git in the PATH of the process, before the tests run. If
+// PATH has no git, each test that uses a helper of this package skips.
+// The helpers run git with [ToolEnv], so the setup of the user does not
+// apply. The tests also need /bin/sh and the tools in /usr/bin and /bin.
 func Main(m *testing.M) {
 	dir, err := os.MkdirTemp("", "testgit")
 	if err != nil {
 		panic(err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	path, err := exec.LookPath("git")
-	if err != nil {
-		panic(err)
-	}
-	if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
-		panic(err)
-	}
-	if err := os.Symlink(path, filepath.Join(dir, "bin", "git")); err != nil {
-		panic(err)
-	}
-	gitPath = path
-	env := append(Env(), "HOME="+dir, "XDG_CONFIG_HOME="+dir)
-	for _, kv := range env {
-		k, v, _ := strings.Cut(kv, "=")
-		if err := os.Setenv(k, v); err != nil {
+	if path, err := exec.LookPath("git"); err == nil {
+		if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
 			panic(err)
 		}
-	}
-	for _, k := range unset {
-		if err := os.Unsetenv(k); err != nil {
+		if err := os.Symlink(path, filepath.Join(dir, "bin", "git")); err != nil {
 			panic(err)
 		}
+		gitPath = path
 	}
 	root = dir
 	m.Run()
 }
 
-// Env returns the variables that Main sets, as "key=value" pairs. A test
-// that runs a program with an environment of its own adds them. An empty
-// GIT_TEMPLATE_DIR copies no template.
+// Env returns the git variables of a test, as "key=value" pairs. A test
+// that runs a program with an environment of its own adds them.
+//
+// Git reads no global or system config, so no hooksPath, signing,
+// fsmonitor, or diff setting applies. Git reads no system attributes
+// file. An empty GIT_TEMPLATE_DIR copies no template, so a new repository
+// gets no hooks. The commits have a fixed author.
 func Env() []string {
 	return []string{
 		"GIT_CONFIG_GLOBAL=" + os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_ATTR_NOSYSTEM=1",
 		"GIT_TEMPLATE_DIR=",
 		"GIT_AUTHOR_NAME=t",
 		"GIT_AUTHOR_EMAIL=t@t",
@@ -103,37 +90,22 @@ func LinkGit(tb testing.TB, dir string) {
 	}
 }
 
-// unset are the variables that make git use another repository, more
-// config, or another diff program.
-var unset = []string{
-	"GIT_DIR",
-	"GIT_WORK_TREE",
-	"GIT_INDEX_FILE",
-	"GIT_OBJECT_DIRECTORY",
-	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
-	"GIT_COMMON_DIR",
-	"GIT_NAMESPACE",
-	"GIT_CONFIG",
-	"GIT_CONFIG_COUNT",
-	"GIT_CONFIG_PARAMETERS",
-	"GIT_EXTERNAL_DIFF",
-	"GIT_DIFF_OPTS",
-}
-
-// ready fails tb if Main does not run.
+// ready fails tb if Main does not run. It skips tb if PATH has no git.
 func ready(tb testing.TB) {
 	tb.Helper()
 	if root == "" {
 		tb.Fatal("testgit: TestMain does not call testgit.Main")
 	}
+	if gitPath == "" {
+		tb.Skip("testgit: git is not on PATH")
+	}
 }
 
-// Git runs git in dir and returns its standard output. It fails tb if
-// git fails.
+// Git runs git in dir with [ToolEnv] and returns its standard output. It
+// fails tb if git fails.
 func Git(tb testing.TB, dir string, args ...string) string {
 	tb.Helper()
-	ready(tb)
-	cmd := exec.CommandContext(tb.Context(), "git", args...)
+	cmd := proc.Command(tb.Context(), ToolEnv(tb), "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -194,7 +166,8 @@ func NewFixture(build func(tb testing.TB, dir string)) *Fixture {
 }
 
 // Copy copies the repository of f to dir. The first call makes the
-// repository with the build function of f.
+// repository with the build function of f. If the build fails, tb of the
+// first call gets the failure, and each later call fails.
 func (f *Fixture) Copy(tb testing.TB, dir string) {
 	tb.Helper()
 	ready(tb)
