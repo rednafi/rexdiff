@@ -6,7 +6,9 @@ package tui
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"iter"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -233,7 +235,7 @@ func (m *model) renderChanges() {
 	case m.isRendered(f):
 		all := func(diff.Fold) bool { return true }
 		d := diff.Render(f.Path, f.Old, f.New, diff.Options{Expanded: all, Cache: &m.cache})
-		m.setMarkdown(p, f.New, d.Rows)
+		m.setMarkdown(p, f.Old, f.New, d.Rows)
 	default:
 		if o := m.folds[f.Path]; o != nil && o.Old != f.oldHash {
 			delete(m.folds, f.Path)
@@ -295,7 +297,7 @@ func (m *model) refreshViewer() {
 		p.path = ""
 		p.set([]string{dimStyle.Render("  could not read this file")}, nil)
 	case m.rendered && isMarkdown(path):
-		m.setMarkdown(p, content, nil)
+		m.setMarkdown(p, "", content, nil)
 	default:
 		p.setDiff(diff.RenderFile(path, content, m.diffOptions(p.xoff)))
 	}
@@ -373,33 +375,64 @@ func (m *model) rendersNothing(src string) bool {
 
 // setMarkdown shows src as rendered markdown, block by block, as
 // herdr-reviewr does. rows are the source rows that the view stands for,
-// with src as their new side. If rows is nil, no line of src changes.
-// Each rendered line shows the first source line of its block. The blank
-// line after a block shows its last source line. A comment on a block
-// covers all its lines. A block with a change has the bar.
-func (m *model) setMarkdown(p *pane, src string, rows []diff.Row) {
-	lines := diff.Lines(src)
+// with old as their old side and src as their new side. If rows is nil,
+// no line of src changes. Each rendered line shows the first source line
+// of its block. The blank line after a block shows its last source line.
+// A comment on a block covers all its lines. A block with a change has
+// the bar. A changed block that renders nothing, and the lines of a
+// removed block, show as one dim marker row.
+func (m *model) setMarkdown(p *pane, old, src string, rows []diff.Row) {
+	lines, oldLines := diff.Lines(src), diff.Lines(old)
 	if rows == nil {
 		for n := range lines {
 			rows = append(rows, diff.Row{Kind: diff.KindEqual, New: n + 1})
 		}
 	}
+	// Each block gets the link reference definitions of all the blocks.
+	var defs []string
+	for _, l := range lines {
+		if linkDef.MatchString(l) {
+			defs = append(defs, l)
+		}
+	}
+	refs := "\n\n" + strings.Join(defs, "\n")
 	r := m.markdown(m.codeWidth() - 2)
 	var out []string
 	var outRows []diff.Row
 	blank := func(l string) bool { return strings.TrimSpace(ansi.Strip(l)) == "" }
+	// removed adds a marker row for the deleted lines after the new line
+	// at, from lo to hi.
+	removed := func(lo, hi int) {
+		if n := removedLines(rows, oldLines, lo, hi); n > 0 {
+			row := diff.Row{Kind: diff.KindEqual, New: max(lo, 1), Continued: true}
+			text := fmt.Sprintf(" − %s removed", plural(n, "line"))
+			out = append(out, delStyle.Render("▌")+dimStyle.Render(text), "")
+			outRows = append(outRows, row, row)
+		}
+	}
+	see := m.keys.Rendered.Help().Key
+	prev := 0 // the last line of the block before
 	for first, last := range markdownBlocks(lines) {
-		block := renderMarkdown(r, termtext.Plain(strings.Join(lines[first-1:last], "\n")))
+		removed(prev, first)
+		prev = last
+		block := renderMarkdown(r, termtext.Plain(strings.Join(lines[first-1:last], "\n")+refs))
 		for len(block) > 0 && blank(block[0]) {
 			block = block[1:]
 		}
 		for len(block) > 0 && blank(block[len(block)-1]) {
 			block = block[:len(block)-1]
 		}
-		if len(block) == 0 {
+		bar, n := changeBar(rows, first, last)
+		switch {
+		case len(block) > 0:
+		case n == 1:
+			block = []string{dimStyle.Render("  ⚠ 1 changed line doesn't render · " + see + " to see")}
+		case n > 1:
+			block = []string{dimStyle.Render(fmt.Sprintf(
+				"  ⚠ %d changed lines don't render · %s to see", n, see))}
+		default:
 			continue
 		}
-		bar := changeBar(rows, first, last)
 		for i, l := range block {
 			if bar != "" {
 				l = bar + ansi.TruncateLeft(l, 1, "")
@@ -410,8 +443,35 @@ func (m *model) setMarkdown(p *pane, src string, rows []diff.Row) {
 		out = append(out, "")
 		outRows = append(outRows, diff.Row{Kind: diff.KindEqual, New: last, Continued: true})
 	}
+	removed(prev, len(lines)+1)
 	p.set(out, outRows)
 	p.src = rows
+}
+
+// linkDef matches the first line of a link reference definition.
+var linkDef = regexp.MustCompile(`^\s{0,3}\[[^\]]+\]:`)
+
+// removedLines returns the number of deleted lines of old, not blank,
+// that rows put after a new line from lo to hi, hi not included. A
+// deletion right before a new line is a change of that line, not a
+// removal.
+func removedLines(rows []diff.Row, old []string, lo, hi int) int {
+	n, run, at := 0, 0, 0 // at is the last new line before the row
+	for _, r := range rows {
+		switch {
+		case r.Continued:
+		case r.Kind == diff.KindDelete:
+			if at >= lo && at < hi && r.Old <= len(old) && strings.TrimSpace(old[r.Old-1]) != "" {
+				run++
+			}
+		default:
+			if r.Kind == diff.KindEqual {
+				n += run
+			}
+			run, at = 0, r.New
+		}
+	}
+	return n + run
 }
 
 // markdownBlocks yields the first and the last line of each block of
@@ -453,21 +513,27 @@ func markdownBlocks(lines []string) iter.Seq2[int, int] {
 
 // changeBar returns the bar for the source lines first to last, or "" if
 // rows do not change them. The bar is green if rows only add lines there.
-// It is yellow if rows also change or delete a line there.
-func changeBar(rows []diff.Row, first, last int) string {
-	added, changed, deleted := false, false, false
-	at := 0 // the last new line before the row
+// It is yellow if rows also change or delete a line there. n is the
+// number of the changed lines there, as herdr-reviewr counts them: the
+// new lines, or else the deleted lines.
+func changeBar(rows []diff.Row, first, last int) (bar string, n int) {
+	added, changed, deleted := 0, false, false
+	gone := 0 // the deleted lines there
+	at := 0   // the last new line before the row
 	for _, r := range rows {
 		if r.Continued {
 			continue
 		}
 		if r.Kind == diff.KindDelete {
 			deleted = true
-			changed = changed || (at >= first && at < last)
+			if at >= first && at < last {
+				changed = true
+				gone++
+			}
 			continue
 		}
 		if r.New >= first && r.New <= last && r.Kind != diff.KindEqual {
-			added = true
+			added++
 			changed = changed || deleted || r.Kind == diff.KindChange
 		}
 		deleted, at = false, r.New
@@ -475,11 +541,12 @@ func changeBar(rows []diff.Row, first, last int) string {
 			break
 		}
 	}
+	n = cmp.Or(added, gone)
 	switch {
 	case changed:
-		return noteStyle.Render("▌")
-	case added:
-		return addStyle.Render("▌")
+		return noteStyle.Render("▌"), n
+	case added > 0:
+		return addStyle.Render("▌"), n
 	}
-	return ""
+	return "", 0
 }

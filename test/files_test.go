@@ -35,7 +35,10 @@ func TestFilesTab(t *testing.T) {
 // block.
 func TestMarkdownSetting(t *testing.T) {
 	repo := newRepo(t)
-	testgit.WriteFile(t, repo, "README.md", "# Title\n\nSome text.\n\nNew text\non\nthree lines.\n")
+	testgit.WriteFile(t, repo, "README.md", "# Title\n\nGone.\n\nSome text.\n\n<!-- a -->\n")
+	testgit.Git(t, repo, "commit", "-qam", "readme")
+	testgit.WriteFile(t, repo, "README.md",
+		"# Title\n\nSome text.\n\n<!-- b -->\n\nNew text\non\nthree lines.\n")
 	bin := clipboard(t)
 	tm := start(t, repo, opts{path: bin, env: clipEnv, args: []string{
 		"-config", `{"markdown_view": "rendered"}`,
@@ -46,9 +49,11 @@ func TestMarkdownSetting(t *testing.T) {
 	tm.keys("1", "tab")
 	tm.waitFor("Some text.")
 	tm.waitUntil(func(s string) bool {
-		return sameLine(s, "▌", "New text on three lines.") && !sameLine(s, "▌", "Some text.")
-	}, "mark the changed block")
-	tm.keys(":", "6", "enter")
+		return sameLine(s, "▌", "New text on three lines.") && !sameLine(s, "▌", "Some text.") &&
+			sameLine(s, "▌", "− 1 line removed") &&
+			sameLine(s, "▌", "⚠ 1 changed line doesn't render · m to see")
+	}, "mark the changed blocks, the removed block, and the changed comment")
+	tm.keys(":", "8", "enter")
 	tm.waitCursor("New text on three lines.")
 	tm.keys("c")
 	tm.typed("hi")
@@ -56,11 +61,11 @@ func TestMarkdownSetting(t *testing.T) {
 	tm.waitFor("💬 hi")
 	tm.keys("y")
 	waitFile(t, filepath.Join(bin, "clip"), func(s string) bool {
-		return s == "README.md:5-7\n+New text\n+on\n+three lines.\nhi"
+		return s == "README.md:7-9\n+New text\n+on\n+three lines.\nhi"
 	})
 	tm.drag("Some", "text.")
 	waitFile(t, filepath.Join(bin, "clip"), func(s string) bool { return s == "Some t" })
-	tm.keys("m", ":", "6", "enter")
+	tm.keys("m", ":", "8", "enter")
 	tm.waitCursor("on")
 	tm.keys("c")
 	tm.typed("x")
