@@ -114,7 +114,8 @@ func TestSplit(t *testing.T) {
 }
 
 // TestWrap checks that rexdiff wraps a long line, that w cuts it, and
-// that → scrolls to its end.
+// that → scrolls to its end. As in herdr-reviewr, -wrap off cuts it at
+// the start.
 func TestWrap(t *testing.T) {
 	repo := newRepo(t)
 	long := "var long = \"" + strings.Repeat("ab", 60) + "end\"\n"
@@ -128,6 +129,14 @@ func TestWrap(t *testing.T) {
 	// keep its start in the view.
 	tm.keys(slices.Repeat([]string{"right"}, 12)...)
 	tm.waitFor("end\"")
+
+	repo = newRepo(t)
+	testgit.WriteFile(t, repo, "b.go", "package a\n\n"+long)
+	tm = start(t, repo, opts{width: 120, args: []string{"-wrap", "off"}})
+	tm.keys("f")
+	if s := tm.waitFor("var long"); strings.Contains(s, "end\"") {
+		t.Errorf("-wrap off wraps the long line. The screen shows:\n%s", s)
+	}
 }
 
 // column returns the column of text in the first line of s that has it,

@@ -157,12 +157,34 @@ func (m *model) renderPR() {
 	if strings.TrimSpace(pr.Body) != "" {
 		lines = append(lines, renderMarkdown(md, pr.Body)...)
 	}
+	now := time.Now()
 	for _, c := range pr.Comments {
-		author := headerStyle.Render(c.Author) + "  " + dimStyle.Render(c.When)
+		author := headerStyle.Render(c.Author) + "  " + dimStyle.Render(age(c.When, now))
 		lines = append(lines, "", "  "+author)
 		lines = append(lines, renderMarkdown(md, c.Body)...)
 	}
 	p.set(lines, make([]diff.Row, len(lines)))
+}
+
+// age returns the time from when to now, as herdr-reviewr shows it, for
+// example "5m" or "3d". when is an RFC 3339 time. A bad time gives "". A
+// time after now gives "0s".
+func age(when string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339, when)
+	if err != nil {
+		return ""
+	}
+	const day = 24 * time.Hour
+	d := max(now.Sub(t), 0)
+	for _, u := range []struct {
+		size time.Duration
+		name string
+	}{{365 * day, "y"}, {7 * day, "w"}, {day, "d"}, {time.Hour, "h"}, {time.Minute, "m"}} {
+		if d >= u.size {
+			return fmt.Sprintf("%d%s", int64(d/u.size), u.name)
+		}
+	}
+	return fmt.Sprintf("%ds", int64(d/time.Second))
 }
 
 // prHeader returns the title line and the state line of pr.

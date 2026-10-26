@@ -252,7 +252,8 @@ func (m *model) updateQuit(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 // updateList handles a key in an overlay that has no input. In the agent
-// picker, the digits 1 to 9 pick an agent.
+// picker, the digits 1 to 9 move the cursor to an agent, as in
+// herdr-reviewr. Only enter sends.
 func (m *model) updateList(msg tea.KeyPressMsg) tea.Cmd {
 	ov, k, s := m.overlay, overlayKeys, msg.String()
 	digit := len(s) == 1 && s[0] >= '1' && s[0] <= '9'
@@ -264,7 +265,6 @@ func (m *model) updateList(msg tea.KeyPressMsg) tea.Cmd {
 	case ov.kind == overlayAgents && digit:
 		if i := int(s[0] - '1'); i < len(ov.shown) {
 			ov.cur = i
-			return m.chooseOverlay()
 		}
 	}
 	return nil

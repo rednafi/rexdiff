@@ -849,6 +849,7 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 // or a click can move the cursor.
 func (m *model) followCursor() {
 	m.changePane.free, m.allPane.free, m.prPane.free = false, false, false
+	m.changeTree.free, m.allTree.free = false, false
 }
 
 // onKey gives a key to the part of the screen that takes the keys.

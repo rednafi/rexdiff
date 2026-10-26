@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -141,18 +142,81 @@ func (m *model) onEditorDone(msg editorDoneMsg) {
 }
 
 // openURL opens url with the URL opener of the settings, else with
-// the opener of the system. The opener runs with the environment env. The
-// command waits for the opener.
+// the opener of the system. As in herdr-reviewr, it opens only an http or
+// an https URL. The opener runs with the environment env, and with no
+// shell. The command waits for the opener.
 func openURL(env []string, cfg config, url string) (tea.Cmd, error) {
+	url = strings.TrimSpace(url)
+	if !isWebURL(url) {
+		return nil, errors.New("unsupported link scheme")
+	}
 	if cfg.URLOpener != "" {
-		script := strings.ReplaceAll(cfg.URLOpener, "{url}", editor.ShellQuote(url))
-		return detach(env, "open", "sh", "-c", script)
+		args := openerArgs(cfg.URLOpener, url)
+		return detach(env, "open", args[0], args[1:]...)
 	}
 	opener := "xdg-open"
 	if runtime.GOOS == "darwin" {
 		opener = "open"
 	}
 	return detach(env, "open", opener, url)
+}
+
+// isWebURL reports whether url is http or https with text after the
+// scheme, as herdr-reviewr checks it. A control character or a bidi
+// mark can hide a part of the URL, so url must have none.
+func isWebURL(url string) bool {
+	lower := strings.ToLower(url)
+	web := len(url) > len("http://") && strings.HasPrefix(lower, "http://") ||
+		len(url) > len("https://") && strings.HasPrefix(lower, "https://")
+	return web && !strings.ContainsFunc(url, func(r rune) bool {
+		return unicode.IsControl(r) || r >= '\u202a' && r <= '\u202e' ||
+			r >= '\u2066' && r <= '\u2069' || r == '\u200e' || r == '\u200f'
+	})
+}
+
+// openerArgs returns the program and the arguments of the URL opener
+// command, as herdr-reviewr splits it. The words split at spaces, and a
+// quoted text is one word. Each {url} becomes url. Without {url}, url is
+// the last argument. The check of the settings makes sure that the first
+// word is a program.
+func openerArgs(command, url string) []string {
+	var args []string
+	for _, w := range splitWords(command) {
+		args = append(args, strings.ReplaceAll(w, "{url}", url))
+	}
+	if !strings.Contains(command, "{url}") {
+		args = append(args, url)
+	}
+	return args
+}
+
+// splitWords splits command into words at spaces, as herdr-reviewr does.
+// Single or double quotes keep the spaces in a word. The quotes do not
+// stay in the word.
+func splitWords(command string) []string {
+	var words []string
+	var quote rune
+	inWord := false
+	for _, r := range command {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote != 0:
+			words[len(words)-1] += string(r)
+		case unicode.IsSpace(r):
+			inWord = false
+		default:
+			if !inWord {
+				words, inWord = append(words, ""), true
+			}
+			if r == '"' || r == '\'' {
+				quote = r
+			} else {
+				words[len(words)-1] += string(r)
+			}
+		}
+	}
+	return words
 }
 
 // command returns the command for an editor or a URL opener, with the

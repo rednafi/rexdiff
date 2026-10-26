@@ -289,7 +289,10 @@ func (m *model) sourceLines(lo, hi int, pref diff.Side) []string {
 // wheelStep is the number of rows that one step of the wheel scrolls.
 const wheelStep = 3
 
-// onWheel scrolls the overlay, the file list, or the main pane.
+// onWheel scrolls the overlay, the file list, or the main pane. As in
+// herdr-reviewr, the wheel moves the view of the file list, of the main
+// pane, and of the preview of the search, and not the cursor. In the other
+// parts of an overlay, it moves the cursor.
 func (m *model) onWheel(mouse tea.Mouse) {
 	var d int
 	switch mouse.Button {
@@ -300,12 +303,19 @@ func (m *model) onWheel(mouse tea.Mouse) {
 	default:
 		return
 	}
-	if m.mode == modeOverlay && m.overlay != nil {
-		m.overlay.move(d)
+	if ov := m.overlay; m.mode == modeOverlay && ov != nil {
+		_, _, y, _ := m.overlayBox()
+		if pv := ov.search.preview; pv != nil && mouse.Y >= y+ov.search.previewY {
+			pv.scroll(wheelStep * d)
+			return
+		}
+		ov.move(d)
 		return
 	}
-	if m.inList(mouse.X, mouse.Y) {
-		m.stepRow(d)
+	if t := m.list(); t != nil && m.inList(mouse.X, mouse.Y) {
+		h := m.listRows()
+		top := m.listStart(h) + wheelStep*d
+		t.top, t.free = min(max(top, 0), max(len(t.rows)-(h-1), 0)), true
 		return
 	}
 	p := m.cur()

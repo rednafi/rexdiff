@@ -3,14 +3,18 @@ package tui
 // The base picker picks the base of the branch scope.
 
 import (
+	"slices"
 	"strings"
+
+	"github.com/rednafi/rexdiff/vcs"
 )
 
 // openBasePicker lets the user pick the base of the branch scope. The
-// current base has a tag. As in herdr-reviewr, it does nothing if the base
-// comes from the flag.
+// current base has a tag. As in herdr-reviewr, the base of an open pull
+// request and the default branch come first, with a tag. The picker does
+// nothing on the PR tab, or if the base comes from the flag.
 func (m *model) openBasePicker() {
-	if m.baseFlag {
+	if m.baseFlag || m.tab == tabPR {
 		return
 	}
 	ov := newOverlay(overlayBase, "base branch for the branch scope (or type any ref)")
@@ -19,15 +23,29 @@ func (m *model) openBasePicker() {
 		m.flash("branch list failed: " + err.Error())
 		return
 	}
-	var items []pickItem
-	for _, b := range branches {
-		tag := ""
-		if b == m.base {
-			tag = "current"
-		}
-		items = append(items, pickItem{label: b, id: b, tag: tag})
+	prBase := ""
+	if pr := m.pr.pr; pr != nil && pr.State == vcs.PROpen {
+		prBase = pr.Base
 	}
-	ov.setItems(items)
+	defaultBase := strings.TrimPrefix(m.repo.DefaultBase(m.ctx), "origin/")
+	// groups has the PR base, then the default branch, then the others.
+	// Each group keeps the newest first.
+	var groups [3][]pickItem
+	for _, b := range branches {
+		var tags []string
+		name, g := strings.TrimPrefix(b, "origin/"), 2
+		if name == prBase {
+			tags, g = append(tags, "pr base"), 0
+		}
+		if name == defaultBase {
+			tags, g = append(tags, "default"), min(g, 1)
+		}
+		if b == m.base {
+			tags = append(tags, "current")
+		}
+		groups[g] = append(groups[g], pickItem{label: b, id: b, tag: strings.Join(tags, " ")})
+	}
+	ov.setItems(slices.Concat(groups[:]...))
 	m.open(ov)
 }
 

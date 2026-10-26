@@ -164,6 +164,36 @@ type keybindings struct {
 	Keys              []string `json:"keys"`
 	Quit              []string `json:"quit"`
 	QuitDiscard       []string `json:"quit-discard"`
+
+	// The old names of navigator-grow, navigator-shrink, and rendered.
+	// herdr-reviewr also takes them.
+	ListWider    []string `json:"list-wider"`
+	ListNarrower []string `json:"list-narrower"`
+	Preview      []string `json:"preview"`
+}
+
+// useOldNames gives the keys of each old name to its action. An action
+// and its old name cannot both have keys.
+func (kb *keybindings) useOldNames() error {
+	names := []struct {
+		name, old     string
+		keys, oldKeys *[]string
+	}{
+		{"navigator-grow", "list-wider", &kb.NavigatorGrow, &kb.ListWider},
+		{"navigator-shrink", "list-narrower", &kb.NavigatorShrink, &kb.ListNarrower},
+		{"rendered", "preview", &kb.Rendered, &kb.Preview},
+	}
+	for _, n := range names {
+		switch {
+		case *n.oldKeys == nil:
+		case *n.keys != nil:
+			return fmt.Errorf("invalid value for keybindings: %q and %q name the same action",
+				n.name, n.old)
+		default:
+			*n.keys, *n.oldKeys = *n.oldKeys, nil
+		}
+	}
+	return nil
 }
 
 // minListWidth is the smallest width of the file list, in columns.
@@ -196,6 +226,9 @@ func parseConfig(text string) (config, error) {
 	}
 	if err := json.Unmarshal([]byte(text), &c, json.RejectUnknownMembers(true)); err != nil {
 		return config{}, configError(err)
+	}
+	if err := c.Keybindings.useOldNames(); err != nil {
+		return config{}, fmt.Errorf("config: %w", err)
 	}
 	if err := c.check(set); err != nil {
 		return config{}, fmt.Errorf("config: %w", err)
@@ -302,6 +335,12 @@ func (c config) checkTexts(set map[string]jsontext.Value) error {
 		if blank || !onlyPlaceholders(k.value, k.known...) {
 			return invalid(k.key, k.want, k.value)
 		}
+	}
+	// As in herdr-reviewr, the first word of the URL opener is a program,
+	// and not the URL.
+	if w := splitWords(c.URLOpener); c.URLOpener != "" &&
+		(len(w) == 0 || w[0] == "" || strings.Contains(w[0], "{url}")) {
+		return invalid("url_opener", "a command that names a program first", c.URLOpener)
 	}
 	if set["review_prefix"] != nil && strings.TrimSpace(c.ReviewPrefix) == "" {
 		return invalid("review_prefix", "text", c.ReviewPrefix)

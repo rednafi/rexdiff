@@ -80,10 +80,14 @@ func (m *model) actionKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 // scopeKey handles a key that changes the tab or the scope. It reports
-// whether it takes the key.
+// whether it takes the key. As in herdr-reviewr, the keys of the scopes
+// and of the pickers do nothing on the PR tab.
 func (m *model) scopeKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	k := m.keys
+	onPR := m.tab == tabPR && key.Matches(msg, k.ScopeUncommitted, k.ScopeBranch,
+		k.ScopeLastTurn, k.ScopeCommits, k.BasePick, k.CommitPick)
 	switch {
+	case onPR:
 	case key.Matches(msg, k.TabChanges):
 		m.setTab(tabChanges)
 	case key.Matches(msg, k.TabAllFiles):
@@ -306,15 +310,23 @@ func (m *model) resizeList(d int) {
 	m.rerender()
 }
 
-// openPR opens the pull request in the browser.
+// openPR opens the pull request in the browser, and tells it as
+// herdr-reviewr does.
 func (m *model) openPR() tea.Cmd {
-	if m.pr.pr == nil || m.pr.pr.URL == "" {
+	pr := m.pr.pr
+	if pr == nil || pr.URL == "" {
 		return nil
 	}
-	wait, err := openURL(m.env, m.cfg, m.pr.pr.URL)
+	wait, err := openURL(m.env, m.cfg, pr.URL)
 	if err != nil {
 		m.flash("open failed: " + err.Error())
+		return nil
 	}
+	kind := "PR"
+	if pr.Forge == vcs.ForgeGitLab {
+		kind = "MR"
+	}
+	m.flash("opened " + kind + " in browser")
 	return wait
 }
 

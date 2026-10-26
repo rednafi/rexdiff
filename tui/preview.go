@@ -46,6 +46,7 @@ func (m *model) searchLines(inner int) (lines []string, listY int) {
 	}
 	pv := m.searchPreview(inner)
 	h := avail - results
+	ov.search.previewY = len(lines) + 1 // 1 for the border
 	if pv == nil {
 		lines = append(lines, paneRule("preview", inner), dimStyle.Render("  no preview"))
 	} else {

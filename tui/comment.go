@@ -176,18 +176,20 @@ func (m *model) updateComment(msg tea.KeyPressMsg) tea.Cmd {
 	switch {
 	case key.Matches(msg, m.keys.Save):
 		// As in herdr-reviewr, blank text cancels. An edit keeps the
-		// comment.
+		// comment, its ID, and its place in the list.
 		d := m.draft
-		if text := strings.TrimSpace(m.editor.Value()); text != "" {
-			flash := "comment added"
-			if d.editID > 0 {
-				m.comments.Remove(d.editID)
-				flash = "comment updated"
-			}
+		text := strings.TrimSpace(m.editor.Value())
+		edited := m.comments.Find(d.editID)
+		switch {
+		case text == "":
+		case edited != nil:
+			edited.Text = text
+			m.flash("comment updated")
+		default:
 			c := d.Comment
 			c.Text = text
 			m.comments.Add(c)
-			m.flash(flash)
+			m.flash("comment added")
 		}
 		m.closeComment()
 		return nil
@@ -234,8 +236,12 @@ func nearNewLine(rows []diff.Row, i int) int {
 }
 
 // editOrOpen edits the comment at the cursor. If there is no comment, it
-// opens the file in an editor at the cursor line.
+// opens the file in an editor at the cursor line. As in herdr-reviewr, it
+// does nothing while a selection is active, so the selection stays.
 func (m *model) editOrOpen() tea.Cmd {
+	if m.cur().anchor >= 0 {
+		return nil
+	}
 	if c := m.commentAtCursor(); c != nil {
 		return m.editComment(c, -1)
 	}

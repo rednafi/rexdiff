@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
@@ -38,13 +39,15 @@ func TestMarkdownSetting(t *testing.T) {
 }
 
 // TestSearch checks that / finds files by name and lines by code, shows a
-// preview, and opens the pick. A changed file opens in the Changes tab, at
-// the line, even in a fold.
+// preview, and opens the pick. The wheel scrolls the preview. A changed
+// file opens in the Changes tab, at the line, even in a fold.
 func TestSearch(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("/")
 	tm.typed("long")
 	tm.waitFor("files 1", "▶ long.txt", "preview · long.txt", "first")
+	tm.wheel("line 5", 1)
+	tm.waitGone("first")
 	tm.keys("enter")
 	tm.waitGone("preview ·")
 	tm.waitFor("first", "⋯ 32 unmodified lines")
@@ -106,35 +109,49 @@ func TestTurnRaced(t *testing.T) {
 }
 
 // TestPR checks that the PR tab shows the pull request of the branch from
-// gh, with its checks and comments. It also checks that o opens it.
+// gh, with its checks and comments, and the age of each comment. It also
+// checks that o opens it, as in herdr-reviewr. Without {url}, the URL goes
+// at the end of the opener command. o does not open a URL that is not
+// http or https. The keys of the scopes and of the base picker do nothing
+// on the PR tab.
 func TestPR(t *testing.T) {
 	repo := newRepo(t)
 	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
+	created := time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	bin := tools(t, map[string]string{
-		"gh": `cat <<'EOF'
+		"gh": `cat <<EOF
 {"number": 7, "title": "Add b", "state": "OPEN", "isDraft": false,
- "url": "https://github.com/o/r/pull/7", "body": "The body of the PR.",
+ "url": "${PR_URL:-https://github.com/o/r/pull/7}", "body": "The body of the PR.",
  "author": {"login": "ann"}, "headRefName": "feat", "baseRefName": "main",
  "comments": [{"author": {"login": "bob"}, "body": "Looks good.",
-   "createdAt": "2026-01-02T03:04:05Z"}],
+   "createdAt": "` + created + `"}],
  "statusCheckRollup": [{"name": "test", "conclusion": "SUCCESS"},
    {"name": "lint", "conclusion": "FAILURE"}]}
 EOF
 `,
 		"opener": `printf '%s\n' "$@" > "${0%/*}/opened"` + "\n",
 	})
-	tm := start(t, repo, opts{path: bin, args: []string{
-		"-config",
-		`{"url_opener": "opener {url}"}`,
-	}})
+	config := []string{"-config", `{"url_opener": "opener"}`}
+	tm := start(t, repo, opts{path: bin, args: config})
 	tm.keys("3")
 	tm.waitFor("Add b #7", "● open", "feat → main", "by ann",
-		"checks: ✓ 1  ✗ 1", "✗ lint", "The body of the PR.", "bob",
+		"checks: ✓ 1  ✗ 1", "✗ lint", "The body of the PR.", "bob  3h",
 		"Looks good.")
-	tm.keys("o")
+	tm.keys("u", "b", "t", "g", "B", "o")
+	if s := tm.waitFor("opened PR in browser"); !strings.Contains(s, "Add b #7") {
+		t.Errorf("a key of a scope leaves the PR tab. The screen shows:\n%s", s)
+	}
 	waitFile(t, filepath.Join(bin, "opened"), func(s string) bool {
 		return s == "https://github.com/o/r/pull/7\n"
 	})
+
+	repo = newRepo(t)
+	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
+	tm = start(t, repo, opts{path: bin, args: config, env: []string{"PR_URL=file:///etc/passwd"}})
+	tm.keys("3")
+	tm.waitFor("Add b #7")
+	tm.keys("o")
+	tm.waitFor("open failed: unsupported link scheme")
 }
 
 // TestNoPR checks that the PR tab tells why it has no pull request. The

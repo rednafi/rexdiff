@@ -261,7 +261,9 @@ const copyTimeout = 2 * time.Second
 // copyText writes text to the clipboard. If the copy works, it removes
 // the comments ids and shows done. As in herdr-reviewr, the copy runs
 // before the next frame, so two copies keep their order. A clipboard tool
-// that does not answer fails after copyTimeout.
+// that does not answer fails after copyTimeout. As in herdr-reviewr, the
+// message of a failure names only the fix that the user can make. The log
+// has the error.
 func (m *model) copyText(text, done string, ids []int) {
 	ctx, cancel := context.WithCancelCause(m.ctx)
 	ctx, cancelTimeout := context.WithTimeoutCause(ctx, copyTimeout,
@@ -270,11 +272,11 @@ func (m *model) copyText(text, done string, ids []int) {
 	defer cancel(fmt.Errorf("copy: done: %w", context.Canceled))
 	err := clipboard.Write(ctx, m.env, text)
 	switch {
+	case errors.Is(err, clipboard.ErrNoTool):
+		m.flash("copy failed: install wl-clipboard, xclip, or xsel")
 	case err != nil:
-		if !errors.Is(err, clipboard.ErrNoTool) {
-			m.log.Warn("copy failed", "err", err)
-		}
-		m.flash("copy failed: " + err.Error())
+		m.log.Warn("copy failed", "err", err)
+		m.flash("copy failed")
 	default:
 		m.clearComments(ids)
 		m.flash(done)

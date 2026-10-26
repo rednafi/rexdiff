@@ -37,6 +37,9 @@ type searchState struct {
 	hitsMore  bool   // git finds more matches than hits has
 	err       string // the error of the code search
 	preview   *preview
+	// previewY is the line of the box of the search where the preview
+	// starts, with its rule.
+	previewY int
 }
 
 // showSearch shows the results of the search in its mode, with the

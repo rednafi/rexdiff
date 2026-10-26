@@ -309,10 +309,14 @@ func (m *model) selectedRow(r string, w int) string {
 }
 
 // listStart returns the first row that the file list shows in h lines.
+// The first line is the title.
 func (m *model) listStart(h int) int {
 	t := m.list()
-	if t == nil {
+	switch {
+	case t == nil:
 		return 0
+	case t.free:
+		return min(max(t.top, 0), max(len(t.rows)-(h-1), 0))
 	}
 	return max(0, t.cur-(h-2))
 }

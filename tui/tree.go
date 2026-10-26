@@ -17,6 +17,11 @@ type fileListTree struct {
 	entries []tree.Entry
 	rows    []tree.Row
 	cur     int // the row of the cursor
+	// top is the first row on the screen while free is true. free is true
+	// after the wheel moves the view. Then the cursor can be off the
+	// screen until the next key.
+	top  int
+	free bool
 	// expanded is true if the directories start expanded. toggled has the
 	// directories that the user changes from that start.
 	expanded bool

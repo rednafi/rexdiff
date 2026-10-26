@@ -206,7 +206,8 @@ func parseFlags(args, env []string, stderr io.Writer) (flags, error) {
 	// tui.Run checks the layout and the scope, as in the settings.
 	fs.StringVar(&f.layout, "layout", "", "diff layout: unified (top to bottom) or split (side by side)")
 	fs.StringVar(&f.scope, "scope", "", "start scope: uncommitted, branch, or last-turn")
-	fs.BoolVar(&f.wrap, "wrap", true, "wrap of long lines (the key w toggles it)")
+	// As in herdr-reviewr, -wrap takes on or off, so "-wrap off" works.
+	wrap := fs.String("wrap", "on", "wrap of long lines: on or off (the key w toggles it)")
 	fs.StringVar(&f.base, "base", "", "base for the branch scope (default: the picked base, else the repo's default branch)")
 	fs.StringVar(&f.agent, "agent", proc.Getenv(env, "REXDIFF_AGENT"), "Rex block (ID or label) of the agent beside this pane")
 	fs.StringVar(&f.logPath, "log", proc.Getenv(env, "REXDIFF_LOG"), "file for a debug log")
@@ -226,7 +227,10 @@ func parseFlags(args, env []string, stderr io.Writer) (flags, error) {
 		fs.Usage()
 		return flags{}, errUsage
 	}
-	f.repo = fs.Arg(0)
+	if *wrap != "on" && *wrap != "off" {
+		return flags{}, fmt.Errorf("invalid value for -wrap: expected one of on, off, not %q", *wrap)
+	}
+	f.wrap, f.repo = *wrap == "on", fs.Arg(0)
 	return f, nil
 }
 

@@ -22,7 +22,8 @@ func comment(tm *term, text string) {
 }
 
 // TestCommentList checks that a comment shows on its line and in the
-// list. n and N move to it. The list edits the comment and deletes it. An
+// list. n and N move to it. The list edits the comment and deletes it. As
+// in herdr-reviewr, an edit keeps the place of the comment in the list. An
 // edit with blank text keeps the comment.
 func TestCommentList(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
@@ -36,12 +37,18 @@ func TestCommentList(t *testing.T) {
 	tm.waitCursor("return x")
 	tm.keys("N")
 	tm.waitCursor("return 1")
+	tm.keys("c", "z", "enter") // a second comment on the line
+	tm.waitFor("💬 z")
 	tm.keys("l")
-	tm.waitFor("Comments (1)", "a.go:4 (removed)  hi")
+	tm.waitFor("Comments (2)", "a.go:4 (removed)  hi")
 	tm.keys("e", " ")
 	tm.typed("more")
 	tm.keys("enter")
-	tm.waitFor("a.go:4 (removed)  hi more")
+	s := tm.waitFor("a.go:4 (removed)  hi more", "a.go:4 (removed)  z")
+	_, edited, _ := position(s, "(removed)  hi more")
+	if _, other, _ := position(s, "(removed)  z"); edited > other {
+		t.Errorf("the edit moves the comment down. The screen shows:\n%s", s)
+	}
 	// The flash of the edit hides the badge of the draft, so wait for
 	// the keys of the box.
 	tm.keys("e")
@@ -50,7 +57,7 @@ func TestCommentList(t *testing.T) {
 	tm.keys("enter")
 	tm.waitGone("enter save")
 	tm.waitFor("a.go:4 (removed)  hi more")
-	tm.keys("d") // the list closes with its last comment
+	tm.keys("d", "d") // the list closes with its last comment
 	tm.waitGone("Comments (", "💬")
 }
 
@@ -66,7 +73,7 @@ func TestCommentDrag(t *testing.T) {
 
 // TestCommentBox checks that the box takes more than one line, and that
 // esc drops a new comment. It also checks that v comments on a range of
-// lines.
+// lines, and that e does not end the range.
 func TestCommentBox(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	// The draft comes first, because the flash of an added comment hides
@@ -77,7 +84,12 @@ func TestCommentBox(t *testing.T) {
 	tm.waitGone("✎")
 	tm.keys("k", "c", "a", "ctrl+j", "b", "enter")
 	tm.waitFor("💬 a", "b")
-	tm.keys("j", "v", "j", "c", "r", "enter", "l")
+	// As in herdr-reviewr, e does nothing while a selection is active.
+	tm.keys("j", "v", "j", "e", "c")
+	if s := tm.waitFor("enter save"); strings.Contains(s, "editor failed") {
+		t.Errorf("e with a selection opens the editor. The screen shows:\n%s", s)
+	}
+	tm.keys("r", "enter", "l")
 	tm.waitFor("a.go:4-5  r")
 }
 
@@ -112,8 +124,8 @@ func TestSendWithoutAgent(t *testing.T) {
 	tm.waitFor("💬 hi")
 }
 
-// TestAgentPicker checks that a send with two agents asks which one, and
-// that a digit picks it.
+// TestAgentPicker checks that a send with two agents asks which one. As
+// in herdr-reviewr, a digit moves the cursor to an agent, and enter sends.
 func TestAgentPicker(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -124,6 +136,8 @@ func TestAgentPicker(t *testing.T) {
 	tm.keys("s")
 	tm.waitFor("send to which agent?", "1  agent", "2  cc")
 	tm.keys("2")
+	tm.waitCursor("2  cc")
+	tm.keys("enter")
 	tm.waitFor("sent 1 comment to cc")
 	rex.expectCalls(t, `block.event {"block_id":"block:cc"`)
 }
@@ -157,7 +171,8 @@ func TestCopy(t *testing.T) {
 
 // TestMouse checks that a click picks a file, and a triple click copies a
 // line. It also checks that a drag on the code copies the lines, and that
-// the wheel scrolls.
+// the wheel scrolls. As in herdr-reviewr, the wheel on the file list does
+// not pick a file.
 func TestMouse(t *testing.T) {
 	// The fake pbcopy is slow, as a real tool can be. Its copy takes longer
 	// than the time between the clicks of a triple click. The triple click
@@ -169,6 +184,7 @@ func TestMouse(t *testing.T) {
 	tm.click("M long.txt", 1)
 	tm.waitFor("⋯ 32 unmodified lines")
 	tm.click("M a.go", 1)
+	tm.wheel("M a.go", 1)
 	tm.click("func A() int {", 3)
 	tm.waitFor("copied 14 chars")
 	waitFile(t, clip, func(s string) bool { return s == "func A() int {" })
