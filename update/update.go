@@ -114,7 +114,7 @@ func Version(stamped string) string {
 // environment env, and finds them in the PATH of env. If env sets
 // REXDIFF_LATEST_URL, the Updater gets the latest release from that
 // address. Set it to test a release before it is public.
-func Detect(bin, stamped string, env []string) *Updater {
+func Detect(env []string, bin, stamped string) *Updater {
 	return detect(bin, Version(stamped), stamped == "", env)
 }
 
@@ -217,7 +217,8 @@ func (u *Updater) Install(ctx context.Context, r Release) error {
 func (u *Updater) checkVersion(ctx context.Context, bin, tag string) error {
 	out, err := u.runProgram(ctx, nil, bin, "-version")
 	if err != nil {
-		return fmt.Errorf("check the new rexdiff: %w", err)
+		// The error of runProgram names rexdiff.
+		return fmt.Errorf("check the new version: %w", err)
 	}
 	if got := strings.TrimSpace(string(out)); got != tag {
 		return fmt.Errorf("the update left rexdiff %s, not %s", cmp.Or(got, "of no version"), tag)
@@ -251,11 +252,9 @@ func (u *Updater) runProgram(ctx context.Context, env []string, name string, arg
 // PATH of its environment. tool looks in dirs first, because Rex starts
 // panes with a PATH without Homebrew or Go.
 func tool(name string, dirs ...string) string {
-	for _, dir := range dirs {
-		path := filepath.Join(dir, name)
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
-			return path
-		}
+	env := []string{"PATH=" + strings.Join(dirs, string(os.PathListSeparator))}
+	if path, err := proc.LookPath(env, name); err == nil {
+		return path
 	}
 	return name
 }
@@ -395,7 +394,8 @@ func get(ctx context.Context, url string, limit int64) ([]byte, error) {
 
 // Restart runs the rexdiff at bin with args and the environment env in
 // place of this process. The process ID and the terminal stay, so Rex sees
-// the same program. Restart returns only if it fails.
+// the same program. Restart returns only if it fails. Its parameters have
+// the order of [syscall.Exec], so env comes last.
 func Restart(bin string, args, env []string) error {
 	return syscall.Exec(bin, append([]string{bin}, args...), env)
 }

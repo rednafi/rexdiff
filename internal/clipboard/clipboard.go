@@ -24,21 +24,21 @@ var tools = [][]string{
 }
 
 // Write pipes text into the first clipboard tool on the PATH of env. The
-// tool runs with the environment env. Write fails if the tool exits with a
-// status that is not zero.
+// tool runs with the environment env. If PATH has no clipboard tool, Write
+// returns [ErrNoTool]. Write fails if the tool exits with a status that is
+// not zero. If ctx is done, the error has the text of [context.Cause].
 func Write(ctx context.Context, env []string, text string) error {
 	for _, t := range tools {
-		path, err := proc.LookPath(env, t[0])
-		if err != nil {
+		if _, err := proc.LookPath(env, t[0]); err != nil {
 			continue
 		}
-		cmd := proc.Command(ctx, env, path, t[1:]...)
+		cmd := proc.Command(ctx, env, t[0], t[1:]...)
 		cmd.Stdin = strings.NewReader(text)
 		// The output goes to the null device. xclip and wl-copy leave a
 		// process that keeps the clipboard, and a pipe stays open while it
-		// runs.
+		// runs. Thus the error has no stderr.
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%s: %w", t[0], err)
+			return fmt.Errorf("%s: %w", t[0], proc.Error(ctx, t[0], err, nil))
 		}
 		return nil
 	}

@@ -90,8 +90,10 @@ only after one of them changes.
 Bubble Tea handles keys and timers on one goroutine, so the model has no locks.
 
 A reload, each call to Rex or to a forge, and each code search run on another goroutine
-with a time limit, and report back with a message. One reload runs at a time. A snapshot
-keeps a private index, so git reads only the files that change.
+with a time limit, and report back with a message. The first calls to Rex at the start,
+and the snapshots at the start and the end of a turn, run on the model's goroutine, also
+with a time limit. One reload runs at a time. A snapshot keeps a private index, so git
+reads only the files that change.
 
 A turn starts when an agent in the repository starts working, and ends when every agent
 is idle. At the start of a turn, rexdiff saves a snapshot of the working tree. The

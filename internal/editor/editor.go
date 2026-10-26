@@ -20,16 +20,25 @@ type Command struct {
 	Window  bool   // the editor opens a window, not a terminal editor
 }
 
-// Resolve returns the command that opens file at line. It uses template,
-// the editor command of the settings, if it is not empty. Else it uses the
-// first of visual, env, and git that is not blank. They are $VISUAL,
-// $EDITOR, and core.editor. Each error is a message for the user.
-func Resolve(template, visual, env, git, file string, line int) (Command, error) {
+// Sources are the places that can name the editor, in the order that
+// Resolve tries them.
+type Sources struct {
+	Template string // the editor command of the settings
+	Visual   string // $VISUAL
+	Editor   string // $EDITOR
+	Git      string // core.editor
+}
+
+// Resolve returns the command that opens file at line. It uses
+// s.Template if it is not empty. Else it uses the first of s.Visual,
+// s.Editor, and s.Git that is not blank. Each error is a message for the
+// user.
+func Resolve(s Sources, file string, line int) (Command, error) {
 	var c Command
-	if template != "" {
-		c = fromTemplate(template, file, line)
+	if s.Template != "" {
+		c = fromTemplate(s.Template, file, line)
 	} else {
-		e := cmp.Or(strings.TrimSpace(visual), strings.TrimSpace(env), strings.TrimSpace(git))
+		e := cmp.Or(strings.TrimSpace(s.Visual), strings.TrimSpace(s.Editor), strings.TrimSpace(s.Git))
 		if e == "" {
 			return Command{}, errors.New(`no editor: set "editor" in rexdiff.lua, $EDITOR, or git's core.editor`)
 		}

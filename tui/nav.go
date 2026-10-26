@@ -327,9 +327,9 @@ func (m *model) refresh() tea.Cmd {
 	if m.tab != tabPR {
 		return nil
 	}
-	m.pr.loading = true
+	cmd := m.requestPR(true)
 	m.renderPR()
-	return m.requestPR(true)
+	return cmd
 }
 
 // setTab shows tab t.

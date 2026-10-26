@@ -1,26 +1,15 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
-
-	"github.com/rednafi/rexdiff/update"
 )
 
 // The footer tells the user about a newer release. A key or a click
 // starts the update to it in the background. Then rexdiff starts again in
 // the same pane, with the comments and the place of the user. The update
 // package installs the release. This file shows the state of the update.
-
-// Updater finds and installs releases. *update.Updater implements it.
-type Updater interface {
-	// Latest returns the latest release, and whether it is newer.
-	Latest(ctx context.Context) (update.Release, bool, error)
-	// Install installs the release, so that the next start runs it.
-	Install(ctx context.Context, r update.Release) error
-}
 
 // updatePhase is the step of the update of rexdiff.
 type updatePhase int
@@ -51,7 +40,7 @@ func (m *model) releaseBadge() string {
 	case phaseUpdating:
 		return fmt.Sprintf("updating rexdiff to %s…", m.release.Tag)
 	case phaseUpdated:
-		return fmt.Sprintf("rexdiff %s is installed; it starts when you are done", m.release.Tag)
+		return fmt.Sprintf("rexdiff %s is installed. It starts when you are done", m.release.Tag)
 	}
 	return fmt.Sprintf("rexdiff %s is out: press %s or click here to update",
 		m.release.Tag, firstKey(m.keys.Update))
@@ -91,7 +80,7 @@ func (m *model) restartIfReady(pending tea.Cmd) bool {
 	if err != nil {
 		m.phase, m.release = phaseIdle, nil
 		m.flash("updated, but the save of your comments failed: " + err.Error() +
-			"; open rexdiff again for the new version")
+			". Open rexdiff again for the new version")
 		return false
 	}
 	m.resumePath = path

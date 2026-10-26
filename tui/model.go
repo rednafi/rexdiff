@@ -146,8 +146,7 @@ type changedFile struct {
 // turnState is a turn of the agents in the repository. It keeps a
 // snapshot of the working tree from the start of the turn.
 type turnState struct {
-	block   string // the first agent that works in the turn
-	app     string // the name of that agent, for example "pi"
+	app     string // the name of the first agent of the turn, for example "pi"
 	tree    string // the snapshot at the start of the turn
 	running bool
 	at      time.Time // the start of the turn
@@ -173,9 +172,8 @@ type draft struct {
 
 // prState is the content of the PR tab.
 type prState struct {
-	loading bool
-	pr      *vcs.PullRequest
-	err     string
+	pr  *vcs.PullRequest
+	err string
 }
 
 // agentState is what the program knows about the agent in a block.
@@ -202,7 +200,7 @@ type model struct {
 	keys   keyMap
 	notice string // a problem that the footer shows, or ""
 
-	updater    Updater         // nil if rexdiff cannot update itself
+	updater    *update.Updater // nil if rexdiff cannot update itself
 	release    *update.Release // a newer release, or nil
 	phase      updatePhase
 	resumePath string // the file of the resume state for the restart, or ""
@@ -265,6 +263,7 @@ type model struct {
 	// is nil if the program does not know.
 	agentsHere *bool
 	memberDirs map[string]bool // the working directories of the members
+	ownsErr    string          // the last error of owns, which the log has
 
 	changeFiles []changedFile // the Changes tab
 	changeSel   int           // the file that shows in the Changes tab
@@ -278,6 +277,7 @@ type model struct {
 	// tab, to notice edits. The path of the pane is "" for Markdown.
 	viewed     string
 	viewedPath string
+	readErr    string // the last error of the read, which the log has
 
 	changePane, allPane, prPane pane
 	pr                          prState
@@ -373,7 +373,12 @@ func newModel(ctx context.Context, o Options, cfg config) model {
 	if o.Rex != nil && o.Agent != "" {
 		// If Rex does not know the agent, the picker selects no agent
 		// first. The picker still lists all the agents.
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("rex resolve: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
 		m.beside, _ = o.Rex.Resolve(ctx, o.Agent)
+		cancel(fmt.Errorf("rex resolve: done: %w", context.Canceled))
+		cancelTimeout()
 	}
 	m.changePane.anchor, m.allPane.anchor, m.prPane.anchor = -1, -1, -1
 	m.cfg = cfg
@@ -463,6 +468,9 @@ func tick(d time.Duration) tea.Cmd {
 // the pull request and the agents.
 func (m *model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tick(tickInterval), m.requestPR(true)}
+	// After a restart, the PR tab can show first. It tells that the read
+	// runs.
+	m.renderPR()
 	cmds = append(cmds, requestColors...)
 	if m.rex != nil {
 		cmds = append(cmds, m.listAgents(agentsMsg{}))
@@ -639,7 +647,7 @@ func (in reloadInput) changedFiles(ctx context.Context, from, to string) ([]chan
 		c := &out[i]
 		if p, ok := in.prev[f.Path]; ok && p.Old == f.Old && p.New == f.New {
 			*c = p // the same change, so the counts stay
-		} else if !f.Binary && !f.TooBig {
+		} else if f.Skip == nil {
 			c.adds, c.dels = diff.Count(f.Old, f.New)
 			c.oldHash = hash(f.Old)
 		}

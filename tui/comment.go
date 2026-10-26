@@ -47,7 +47,9 @@ func (m *model) selectedChange() *changedFile {
 	return &m.changeFiles[m.changeSel]
 }
 
-// contentFor returns the text of side s of the file at path.
+// contentFor returns the text of side s of the file at path, as the pane
+// shows it. Thus a comment quotes the lines on the screen, and not a newer
+// version of the file. A file that the pane does not show gives "".
 func (m *model) contentFor(path string, s diff.Side) string {
 	if f := m.selectedChange(); m.tab == tabChanges && f != nil && f.Path == path {
 		if s == diff.SideOld {
@@ -55,9 +57,10 @@ func (m *model) contentFor(path string, s diff.Side) string {
 		}
 		return f.New
 	}
-	// An unreadable file gives a comment with no code.
-	content, _ := m.repo.ReadFile(path)
-	return content
+	if m.tab == tabFiles && path == m.viewedPath {
+		return m.viewed
+	}
+	return ""
 }
 
 // diffRev returns the revision of the diff in the Changes tab, for
@@ -175,20 +178,16 @@ func (m *model) updateComment(msg tea.KeyPressMsg) tea.Cmd {
 		// As in herdr-reviewr, blank text cancels. An edit keeps the
 		// comment.
 		d := m.draft
-		text := strings.TrimSpace(m.editor.Value())
-		switch {
-		case text == "":
-		case d.editID > 0:
-			m.comments.Remove(d.editID)
+		if text := strings.TrimSpace(m.editor.Value()); text != "" {
+			flash := "comment added"
+			if d.editID > 0 {
+				m.comments.Remove(d.editID)
+				flash = "comment updated"
+			}
 			c := d.Comment
 			c.Text = text
 			m.comments.Add(c)
-			m.flash("comment updated")
-		default:
-			c := d.Comment
-			c.Text = text
-			m.comments.Add(c)
-			m.flash("comment added")
+			m.flash(flash)
 		}
 		m.closeComment()
 		return nil

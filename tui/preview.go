@@ -99,9 +99,9 @@ func (m *model) searchPreview(width int) *preview {
 	}
 	pv := &preview{path: it.id, line: it.line, width: width, hit: -1, center: true}
 	content, err := m.repo.ReadFile(it.id)
-	note, isNote := fileNote(err)
+	note := fileNote(err)
 	switch {
-	case isNote:
+	case note != "":
 		pv.lines = []string{dimStyle.Render("  " + note)}
 	case err != nil || content == "":
 		pv.lines = []string{dimStyle.Render("  no preview")}

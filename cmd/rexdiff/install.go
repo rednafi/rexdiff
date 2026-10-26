@@ -80,12 +80,13 @@ func toggleLua(bin string) string {
 // it to find which rexdiff the file runs.
 func binLine(bin string) string { return "local BIN = " + luaQuote(bin) }
 
+// luaEscapes escapes the characters that a Lua string cannot have as they
+// are. A Replacer is safe for concurrent use.
+var luaEscapes = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\x00", `\0`)
+
 // luaQuote returns s as a Lua string. Go's %q writes escapes, such as
 // \u200b, that Lua 5.1 does not know.
-func luaQuote(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\x00", `\0`)
-	return `"` + r.Replace(s) + `"`
-}
+func luaQuote(s string) string { return `"` + luaEscapes.Replace(s) + `"` }
 
 // luaPath returns the path of the file name in the environment env,
 // beside the init.lua of Rex.
@@ -162,7 +163,7 @@ func install(ctx context.Context, env []string, bin string, args []string, stdou
 	if added {
 		fmt.Fprintf(stdout, "added %s to %s\n", requireLine, initPath)
 	}
-	reload(ctx, env, stdout)
+	reload(ctx, env, stdout, stderr)
 	fmt.Fprintln(stdout, "press the key of the settings (shift+cmd+r by default), or run \"Toggle rexdiff\" from the command palette, beside an agent")
 	return nil
 }
@@ -212,7 +213,7 @@ func upgrade(ctx context.Context, env []string, bin string) string {
 	defer cancelTimeout()
 	defer cancel(fmt.Errorf("rex config reload: done: %w", context.Canceled))
 	if err := rex.ReloadConfig(ctx, env); err != nil {
-		return "upgraded " + toggleFile + "; reload Rex's config yourself: rex config reload"
+		return "upgraded " + toggleFile + ". Reload Rex's config yourself: rex config reload"
 	}
 	return ""
 }
@@ -280,7 +281,7 @@ func uninstall(ctx context.Context, env, args []string, stdout, stderr io.Writer
 		}
 	}
 	fmt.Fprintln(stdout, "removed the rexdiff action, its key, and its settings from Rex")
-	reload(ctx, env, stdout)
+	reload(ctx, env, stdout, stderr)
 	return nil
 }
 
@@ -297,12 +298,12 @@ func removeRequire(path string) error {
 }
 
 // reload tells Rex to read its configuration file again. rex runs with
-// the environment env. If Rex fails, reload tells the user how to reload.
-// The reload has no deadline, because the user sees it in a terminal and
-// can press Ctrl-C.
-func reload(ctx context.Context, env []string, stdout io.Writer) {
+// the environment env. If Rex fails, reload tells the user on stderr how
+// to reload. The reload has no deadline, because the user sees it in a
+// terminal and can press Ctrl-C.
+func reload(ctx context.Context, env []string, stdout, stderr io.Writer) {
 	if err := rex.ReloadConfig(ctx, env); err != nil {
-		fmt.Fprintf(stdout, "reload Rex's config yourself: rex config reload (%v)\n", err)
+		fmt.Fprintf(stderr, "reload Rex's config yourself: rex config reload (%v)\n", err)
 		return
 	}
 	fmt.Fprintln(stdout, "reloaded Rex's config")

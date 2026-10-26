@@ -55,9 +55,9 @@ func (m *model) updateCommentList(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, overlayKeys.Choose):
 		return m.chooseOverlay()
 	case key.Matches(msg, k.Down):
-		ov.down()
+		ov.move(1)
 	case key.Matches(msg, k.Up):
-		ov.up()
+		ov.move(-1)
 	case key.Matches(msg, k.Send):
 		return m.startSend()
 	case key.Matches(msg, k.Copy):

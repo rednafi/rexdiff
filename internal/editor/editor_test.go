@@ -40,7 +40,7 @@ func TestCommands(t *testing.T) {
 		{"", "myeditor --wait", `myeditor --wait +12 '/r/a b.go'`, true},
 	}
 	for _, tt := range tests {
-		got, err := editor.Resolve(tt.template, "", tt.editor, "", abs, 12)
+		got, err := editor.Resolve(editor.Sources{Template: tt.template, Editor: tt.editor}, abs, 12)
 		if err != nil || got.Script != tt.script || got.Window != tt.window {
 			t.Errorf("editor %q%q = %+v, %v, want script %q, window %v",
 				tt.template, tt.editor, got, err, tt.script, tt.window)
@@ -63,7 +63,7 @@ func TestCommandProgram(t *testing.T) {
 	const noProgram = "the editor command names no program"
 	for _, tt := range tests {
 		for _, c := range []struct{ template, env string }{{tt.command, ""}, {"", tt.command}} {
-			got, err := editor.Resolve(c.template, "", c.env, "", "/a", 1)
+			got, err := editor.Resolve(editor.Sources{Template: c.template, Editor: c.env}, "/a", 1)
 			switch {
 			case tt.want == "" && (err == nil || err.Error() != noProgram):
 				t.Errorf("Resolve(%q, %q) error = %v, want %q", c.template, c.env, err, noProgram)
@@ -88,14 +88,14 @@ func TestResolveOrder(t *testing.T) {
 		{"", "", "\t", "hx", "hx"},
 	}
 	for _, tt := range tests {
-		got, err := editor.Resolve(tt.template, tt.visual, tt.env, tt.git, "/a", 1)
+		got, err := editor.Resolve(editor.Sources{Template: tt.template, Visual: tt.visual, Editor: tt.env, Git: tt.git}, "/a", 1)
 		if err != nil || got.Program != tt.want {
 			t.Errorf("Resolve(%q, %q, %q, %q) = %q, %v, want %q",
 				tt.template, tt.visual, tt.env, tt.git, got.Program, err, tt.want)
 		}
 	}
 	const noEditor = `no editor: set "editor" in rexdiff.lua, $EDITOR, or git's core.editor`
-	if _, err := editor.Resolve("", " ", "", "\n", "/a", 1); err == nil || err.Error() != noEditor {
+	if _, err := editor.Resolve(editor.Sources{Visual: " ", Git: "\n"}, "/a", 1); err == nil || err.Error() != noEditor {
 		t.Errorf("Resolve with no editor: error = %v, want %q", err, noEditor)
 	}
 }

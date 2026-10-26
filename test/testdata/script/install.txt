@@ -83,7 +83,7 @@ cmp .config/rex/init.lua mine.lua
 # If Rex does not reload, install still writes the files and says what to do.
 env REX_FAIL=1
 exec rexdiff install
-stdout 'reload Rex''s config yourself: rex config reload'
+stderr 'reload Rex''s config yourself: rex config reload'
 
 # On macOS, the action runs a symlinked rexdiff through the link, so that
 # it still works after brew upgrade.

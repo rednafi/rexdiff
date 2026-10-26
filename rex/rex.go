@@ -258,6 +258,8 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 			if err != nil || status.App == "" {
 				return
 			}
+			// If Rex cannot tell the directory, Cwd is "". The agent stays
+			// in the list.
 			cwd, _ := c.Cwd(ctx, b.ID)
 			agents[i] = Agent{
 				Block:  b.ID,

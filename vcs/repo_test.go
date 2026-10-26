@@ -70,7 +70,7 @@ func open(t *testing.T, dir string) *vcs.Repo {
 // openEnv is like open, but the repository has the environment env.
 func openEnv(t *testing.T, dir string, env []string) *vcs.Repo {
 	t.Helper()
-	r, err := vcs.Open(t.Context(), dir, env)
+	r, err := vcs.Open(t.Context(), env, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,19 +291,19 @@ func TestDiffSkipsBinaryAndBigFiles(t *testing.T) {
 		got[f.Path] = f
 	}
 	for _, p := range []string{"bin", "late"} {
-		if f := got[p]; !f.Binary || f.New != "" {
-			t.Errorf("%s: %+v, want Binary with no New", p, f)
+		if f := got[p]; !errors.Is(f.Skip, vcs.ErrBinary) || f.New != "" {
+			t.Errorf("%s: %+v, want Skip ErrBinary with no New", p, f)
 		}
 	}
 	for _, p := range []string{"bytes", "lines", "big", "huge"} {
-		if f := got[p]; !f.TooBig || f.Old != "" || f.New != "" {
-			t.Errorf("%s: TooBig = %v, Old has %d bytes, New has %d bytes, want true, 0, 0",
-				p, f.TooBig, len(f.Old), len(f.New))
+		if f := got[p]; !errors.Is(f.Skip, vcs.ErrTooBig) || f.Old != "" || f.New != "" {
+			t.Errorf("%s: Skip = %v, Old has %d bytes, New has %d bytes, want ErrTooBig, 0, 0",
+				p, f.Skip, len(f.Old), len(f.New))
 		}
 	}
-	if f := got["limit"]; f.TooBig || f.New != "z"+limit {
-		t.Errorf("limit: TooBig = %v, New has %d bytes, want false, %d",
-			f.TooBig, len(f.New), len(limit)+1)
+	if f := got["limit"]; f.Skip != nil || f.New != "z"+limit {
+		t.Errorf("limit: Skip = %v, New has %d bytes, want nil, %d",
+			f.Skip, len(f.New), len(limit)+1)
 	}
 	if f := got["small"]; f.New != "after\n" {
 		t.Errorf("small: New = %q, want %q", f.New, "after\n")
@@ -544,7 +544,7 @@ func TestDiffRenameAndSubmodule(t *testing.T) {
 // TestOpenOutsideARepo checks that Open fails outside a repository.
 func TestOpenOutsideARepo(t *testing.T) {
 	t.Parallel()
-	if _, err := vcs.Open(t.Context(), t.TempDir(), testgit.ToolEnv(t)); err == nil {
+	if _, err := vcs.Open(t.Context(), testgit.ToolEnv(t), t.TempDir()); err == nil {
 		t.Error("Open outside a repository: no error, want an error")
 	}
 }
@@ -563,7 +563,7 @@ func TestNewRepo(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), tt.root)
 			testgit.InitRepo(t, dir)
 			testgit.WriteFile(t, dir, "a.txt", "one\n")
-			r, err := vcs.Open(t.Context(), dir, testgit.ToolEnv(t))
+			r, err := vcs.Open(t.Context(), testgit.ToolEnv(t), dir)
 			if err != nil {
 				t.Fatal(err)
 			}

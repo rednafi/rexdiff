@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/rednafi/rexdiff/rex"
+	"github.com/rednafi/rexdiff/update"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -49,14 +50,14 @@ type Options struct {
 	Notice string
 	// Updater installs a newer release, or is nil if rexdiff cannot update
 	// itself. If it is not nil, the program asks for the latest release.
-	Updater Updater
+	Updater *update.Updater
 	// Resume is the file of the state that Run returned before an update,
 	// or "". Run reads it and removes it.
 	Resume string
 	// Env is the environment of the editor, the URL opener, and the
 	// clipboard tool, for example the environment of the process from
-	// os.Environ. Run finds them in its PATH, and reads $VISUAL and
-	// $EDITOR from it.
+	// os.Environ. Run finds them in its PATH, and reads $VISUAL, $EDITOR,
+	// $TMPDIR, and the variables of the terminal from it.
 	Env []string
 }
 
@@ -94,7 +95,10 @@ func CheckConfig(text string) error {
 // settings are not valid. It also returns an error if Repo is nil, or if
 // Run does not know the Layout or the Scope. After an update, Run returns
 // the file of the saved state. The caller then runs the new rexdiff with
-// Options.Resume set to that file.
+// Options.Resume set to that file. In that case Run keeps the alternate
+// screen on, with the last frame and no cursor, so that the restart does
+// not show the shell. If the restart fails, the caller leaves the
+// alternate screen and shows the cursor.
 func Run(ctx context.Context, o Options) (resume string, err error) {
 	if err := o.check(); err != nil {
 		return "", err
@@ -107,7 +111,13 @@ func Run(ctx context.Context, o Options) (resume string, err error) {
 	defer cancel(errQuit)
 
 	m := startModel(ctx, o, cfg)
-	program := tea.NewProgram(&m, tea.WithContext(ctx))
+	// Bubble Tea reads TERM and COLORTERM from env. A nil env makes it
+	// read the environment of the process.
+	env := o.Env
+	if env == nil {
+		env = []string{}
+	}
+	program := tea.NewProgram(&m, tea.WithContext(ctx), tea.WithEnvironment(env))
 	var wg sync.WaitGroup
 	if o.Rex != nil {
 		// Watch returns only the cause of ctx, when ctx is done.
@@ -154,9 +164,14 @@ func startModel(ctx context.Context, o Options, cfg config) model {
 		m.restorePlaces(saved)
 	}
 	if o.Rex != nil && o.Rex.Block() != "" {
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("rex label: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
 		if err := o.Rex.SetLabel(ctx, o.Rex.Block(), appName); err != nil {
 			m.log.Debug("set label failed", "err", err)
 		}
+		cancel(fmt.Errorf("rex label: done: %w", context.Canceled))
+		cancelTimeout()
 	}
 	return m
 }

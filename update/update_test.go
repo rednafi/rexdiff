@@ -38,9 +38,9 @@ func mkdir(t *testing.T, dir string) string {
 func detect(t *testing.T, latest, bin, stamped string, env ...string) *update.Updater {
 	t.Helper()
 	env = append([]string{"REXDIFF_LATEST_URL=" + latest, "PATH=/usr/bin:/bin"}, env...)
-	u := update.Detect(bin, stamped, env)
+	u := update.Detect(env, bin, stamped)
 	if u == nil {
-		t.Fatalf("Detect(%s, %s, %q) = nil, want an Updater", bin, stamped, env)
+		t.Fatalf("Detect(%q, %s, %s) = nil, want an Updater", env, bin, stamped)
 	}
 	return u
 }
@@ -71,8 +71,8 @@ func TestVersion(t *testing.T) {
 		{"", "0.1.0"},
 	}
 	for _, tt := range tests {
-		if u := update.Detect(tt.bin, tt.stamped, nil); u != nil {
-			t.Errorf("Detect(%q, %q) = %+v, want nil", tt.bin, tt.stamped, u)
+		if u := update.Detect(nil, tt.bin, tt.stamped); u != nil {
+			t.Errorf("Detect(nil, %q, %q) = %+v, want nil", tt.bin, tt.stamped, u)
 		}
 	}
 }

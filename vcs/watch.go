@@ -2,6 +2,9 @@ package vcs
 
 import (
 	"context"
+	"encoding/binary"
+	"hash"
+	"hash/fnv"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -194,7 +197,7 @@ func (w *Watcher) relist(ctx context.Context) (uint64, error) {
 		addDirs(filepath.Join(root, d))
 	}
 	w.listed = true
-	return uint64(s), nil
+	return s.Sum64(), nil
 }
 
 // untrackedDirs returns the untracked directories, relative to the root,
@@ -221,6 +224,7 @@ func (r *Repo) untrackedDirs(ctx context.Context) ([]string, error) {
 			if _, err := os.Lstat(filepath.Join(abs, ".git")); err == nil {
 				continue // a nested repository
 			}
+			// A directory that goes away has no directories to watch.
 			des, _ := os.ReadDir(abs)
 			for _, de := range des {
 				if de.IsDir() {
@@ -293,7 +297,7 @@ func sumPaths(paths []string) uint64 {
 	for _, p := range paths {
 		s.stat(p, os.Stat)
 	}
-	return uint64(s)
+	return s.Sum64()
 }
 
 // sumFiles is like sumPaths. For a directory, it also adds the git files
@@ -306,43 +310,31 @@ func sumFiles(paths []string) uint64 {
 			s.nested(p)
 		}
 	}
-	return uint64(s)
+	return s.Sum64()
 }
 
-// sum is a 64-bit FNV-1a hash. It does not allocate, as hash/fnv does for a
-// string.
-type sum uint64
+// sum is a 64-bit FNV-1a hash of paths and of the states of files. The
+// sums stay in the process, so their values can change between versions.
+// The Write of a hash never fails.
+type sum struct{ hash.Hash64 }
 
-// newSum returns the sum of no bytes, the FNV-1a offset basis.
-func newSum() sum { return 14695981039346656037 }
-
-// byte adds the byte b.
-func (s *sum) byte(b byte) { *s = (*s ^ sum(b)) * 1099511628211 }
+// newSum returns the sum of no bytes.
+func newSum() sum { return sum{fnv.New64a()} }
 
 // str adds v and a NUL, so that two strings do not join.
-func (s *sum) str(v string) {
-	for i := range len(v) {
-		s.byte(v[i])
-	}
-	s.byte(0)
-}
+func (s sum) str(v string) { _, _ = s.Write(append([]byte(v), 0)) }
 
-// num adds the 8 bytes of v, the low byte first.
-func (s *sum) num(v uint64) {
-	for range 8 {
-		s.byte(byte(v))
-		v >>= 8
-	}
-}
+// num adds the 8 bytes of v.
+func (s sum) num(v uint64) { _, _ = s.Write(binary.LittleEndian.AppendUint64(nil, v)) }
 
 // int adds v, for example a size or a time.
-func (s *sum) int(v int64) {
+func (s sum) int(v int64) {
 	s.num(uint64(v)) //nolint:gosec // a hash keeps all bits, so a wrap is fine
 }
 
 // stat adds the path and the file status that stat gives for p. A missing
 // file adds a marker. stat reports whether p is a directory.
-func (s *sum) stat(p string, stat func(string) (fs.FileInfo, error)) (isDir bool) {
+func (s sum) stat(p string, stat func(string) (fs.FileInfo, error)) (isDir bool) {
 	s.str(p)
 	fi, err := stat(p)
 	if err != nil {
@@ -361,7 +353,7 @@ func (s *sum) stat(p string, stat func(string) (fs.FileInfo, error)) (isDir bool
 // nested adds the git files of the repository in the directory p, if p
 // has one. A commit there changes HEAD or its log, and the directory of
 // the git files.
-func (s *sum) nested(p string) {
+func (s sum) nested(p string) {
 	dotGit := filepath.Join(p, ".git")
 	fi, err := os.Lstat(dotGit)
 	if err != nil {

@@ -13,6 +13,7 @@ package vcs
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -72,7 +73,7 @@ var errClosed = errors.New("the repository is closed")
 // Open returns the repository that contains dir. The repository runs git
 // and the forge tools with the environment env, and finds them in the
 // PATH of env. Open does not change env.
-func Open(ctx context.Context, dir string, env []string) (*Repo, error) {
+func Open(ctx context.Context, env []string, dir string) (*Repo, error) {
 	// git gets the root in PWD. PWD must be an absolute path.
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -381,11 +382,9 @@ type File struct {
 	From     string // for a rename, the old path
 	Status   FileStatus
 	Old, New string
-	// Binary is true if a version of the file has a NUL byte.
-	Binary bool
-	// TooBig is true if the two versions together are larger than
-	// 2,000,000 bytes or have more than 50,000 lines.
-	TooBig bool
+	// Skip is ErrBinary if a version of the file has a NUL byte. Else it
+	// is ErrTooBig if the two versions together are too big, or nil.
+	Skip error
 }
 
 // gitlink is the mode of a submodule in a tree.
@@ -432,8 +431,10 @@ func (r *Repo) Diff(ctx context.Context, from, to string) ([]File, error) {
 	for i := range files {
 		f := &files[i]
 		f.Old, f.New = f.use(blobs[2*i]), f.use(blobs[2*i+1])
-		f.TooBig = f.TooBig || isTooBig(f.Old, f.New)
-		if f.Binary || f.TooBig {
+		if f.Skip == nil && isTooBig(f.Old, f.New) {
+			f.Skip = ErrTooBig
+		}
+		if f.Skip != nil {
 			f.Old, f.New = "", ""
 		}
 	}
@@ -454,10 +455,12 @@ func diffSide(mode, id string) (string, blob) {
 	return id, blob{}
 }
 
-// use returns the content of b, and marks f if b is binary or too big.
+// use returns the content of b. If b is binary or too big, use sets
+// f.Skip. A binary side wins over a side that is too big.
 func (f *File) use(b blob) string {
-	f.Binary = f.Binary || errors.Is(b.err, ErrBinary)
-	f.TooBig = f.TooBig || errors.Is(b.err, ErrTooBig)
+	if f.Skip == nil || errors.Is(b.err, ErrBinary) {
+		f.Skip = cmp.Or(b.err, f.Skip)
+	}
 	return b.data
 }
 
@@ -621,7 +624,9 @@ func (r *Repo) Owns(ctx context.Context, dir string) (bool, error) {
 	}
 	cmd, stderr := r.command(ctx, nil, "git", "-C", dir, "rev-parse", "--show-toplevel")
 	out, err := output(ctx, cmd, stderr)
-	if _, ok := errors.AsType[*exec.ExitError](err); ok {
+	// A git that a signal stops, for example at the end of ctx, does not
+	// answer.
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok && ee.Exited() {
 		return false, nil // dir is in no working tree
 	}
 	if err != nil {

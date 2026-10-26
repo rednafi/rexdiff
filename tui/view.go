@@ -389,7 +389,7 @@ func (m *model) emptyNote() string {
 		return ""
 	case p.note != "":
 		return termtext.Quote(p.note) // the note can come from git or a forge
-	case m.tab == tabPR && m.pr.loading:
+	case m.tab == tabPR && m.prf.inFlight:
 		return "loading the pull request…"
 	case m.tab == tabFiles && len(m.allFiles) == 0:
 		return "no files"

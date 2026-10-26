@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rednafi/rexdiff/diff"
+	"github.com/rednafi/rexdiff/internal/proc"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -51,9 +52,9 @@ type resumeState struct {
 	Beside   string         `json:"beside"`
 }
 
-// resumeTurn is a [turnState], with exported fields for JSON.
+// resumeTurn is a [turnState], with exported fields for JSON. The state
+// of an older version can have the member "block", which Unmarshal skips.
 type resumeTurn struct {
-	Block   string    `json:"block"`
 	App     string    `json:"app"`
 	Tree    string    `json:"tree"`
 	Running bool      `json:"running"`
@@ -101,7 +102,7 @@ func (m *model) saveResume() (string, error) {
 		Beside:     m.beside,
 	}
 	if t := m.turn; t != nil {
-		s.Turn = &resumeTurn{Block: t.block, App: t.app, Tree: t.tree, Running: t.running, At: t.at}
+		s.Turn = &resumeTurn{App: t.app, Tree: t.tree, Running: t.running, At: t.at}
 	}
 	if m.prPlace != nil { // the PR has not loaded since the last restart
 		s.PR = *m.prPlace
@@ -116,7 +117,7 @@ func (m *model) saveResume() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp("", "rexdiff-state-*.json")
+	f, err := os.CreateTemp(proc.Getenv(m.env, "TMPDIR"), "rexdiff-state-*.json")
 	if err != nil {
 		return "", err
 	}
@@ -148,7 +149,7 @@ func loadResume(path string) (*resumeState, error) {
 func (m *model) restoreSettings(s *resumeState) {
 	m.tab, m.scope, m.base, m.from, m.to = s.Tab, s.Scope, s.Base, s.From, s.To
 	if t := s.Turn; t != nil {
-		m.turn = &turnState{block: t.Block, app: t.App, tree: t.Tree, running: t.Running, at: t.At}
+		m.turn = &turnState{app: t.App, tree: t.Tree, running: t.Running, at: t.At}
 	}
 	m.split, m.wrap, m.rendered = s.Split, s.Wrap, s.Rendered
 	m.listPos, m.listHidden, m.focusList, m.listW = s.ListPos, s.ListHidden, s.FocusList, s.ListW
@@ -173,17 +174,20 @@ func (m *model) restoreSettings(s *resumeState) {
 // restorePlaces selects the files of s and moves the cursors to the places
 // in s. Call it after the first reload.
 func (m *model) restorePlaces(s *resumeState) {
+	// The directories above the selected files expand. Expand them before
+	// the list of all files is read, so that the list has a file in an
+	// ignored directory.
+	m.changeTree.reveal(s.ChangePath)
+	m.allTree.reveal(s.FilePath)
 	if i := slices.IndexFunc(m.changeFiles, func(f changedFile) bool { return f.Path == s.ChangePath }); i >= 0 {
 		m.changeSel = i
 	}
-	m.allFiles, _ = m.repo.Files(m.ctx) // an error shows an empty list
+	files, _ := m.repo.Files(m.ctx) // an error shows an empty list
+	m.allFiles = m.withIgnored(files)
 	if i := slices.IndexFunc(m.allFiles, func(e vcs.Entry) bool { return e.Path == s.FilePath }); i >= 0 {
 		m.allSel = i
 	}
-	// The cursors go to the selected files, and the directories above
-	// them expand.
-	m.changeTree.reveal(s.ChangePath)
-	m.allTree.reveal(s.FilePath)
+	// The cursors go to the selected files.
 	m.changeTree.cur, m.allTree.cur = -1, -1
 	m.buildTrees()
 	m.renderChanges()

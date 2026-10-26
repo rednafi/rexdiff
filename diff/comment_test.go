@@ -94,9 +94,10 @@ func TestComments(t *testing.T) {
 	t.Parallel()
 	var cs diff.Comments
 	d := diff.Anchor{InDiff: true}
-	a := cs.Add(diff.Comment{Path: "a.go", Side: diff.SideNew, Start: 2, End: 4, Anchor: d})
-	b := cs.Add(diff.Comment{Path: "a.go", Side: diff.SideOld, Start: 4, End: 4, Anchor: d})
+	cs.Add(diff.Comment{Path: "a.go", Side: diff.SideNew, Start: 2, End: 4, Anchor: d})
+	cs.Add(diff.Comment{Path: "a.go", Side: diff.SideOld, Start: 4, End: 4, Anchor: d})
 	cs.Add(diff.Comment{Path: "b.go", Side: diff.SideNew, Start: 1, End: 1, Anchor: d})
+	a, b := cs.All()[0], cs.All()[1]
 	if cs.Len() != 3 || cs.Count(d, "a.go") != 2 || a.ID == b.ID {
 		t.Fatalf("Len = %d, Count(a.go) = %d, IDs %d %d; "+
 			"want 3, 2, two different IDs",
@@ -131,7 +132,8 @@ func TestComments(t *testing.T) {
 		t.Errorf("after Remove(%d): Find = %v, Len = %d, want nil, 2",
 			b.ID, cs.Find(b.ID), cs.Len())
 	}
-	if c := cs.Add(diff.Comment{}); c.ID == a.ID || c.ID == b.ID {
+	cs.Add(diff.Comment{Path: "c.go"})
+	if c := cs.All()[2]; c.ID == a.ID || c.ID == b.ID {
 		t.Errorf("Add gives ID %d, want an ID other than %d and %d",
 			c.ID, a.ID, b.ID)
 	}

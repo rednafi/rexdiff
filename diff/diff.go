@@ -123,6 +123,9 @@ func Render(path, before, after string, o Options) *Diff {
 	dv := diffview.New(path, before, after).
 		Width(o.Width).
 		XOffset(o.Offset).
+		Split(o.Split).
+		Signs(o.Signs).
+		Wrap(o.Wrap).
 		Theme(o.Theme.Background, o.Theme.Foreground, o.Theme.Green,
 			o.Theme.Red, o.Theme.dark())
 	if o.Cache != nil {
@@ -130,15 +133,6 @@ func Render(path, before, after string, o Options) *Diff {
 	}
 	if o.Expanded != nil {
 		dv = dv.Expand(func(f diffview.Fold) bool { return o.Expanded(foldOf(f)) })
-	}
-	if o.Split {
-		dv = dv.Split()
-	}
-	if o.Signs {
-		dv = dv.Signs()
-	}
-	if o.Wrap {
-		dv = dv.Wrap()
 	}
 	out, rows, g := dv.Render()
 

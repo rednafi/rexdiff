@@ -256,12 +256,13 @@ func FuzzComments(f *testing.F) {
 		s := int(start) % len(lines)
 		e := min(s+int(size), len(lines)-1)
 		var cs diff.Comments
-		c := cs.Add(commentOn(path, diff.SideNew, before, s+1, e+1))
+		c := commentOn(path, diff.SideNew, before, s+1, e+1)
 		c.Text = text
 		if c.Start != s+1 || c.End != e+1 {
 			t.Errorf("commentOn lines %d-%d = %+v, want lines %d-%d",
 				s+1, e+1, c, s+1, e+1)
 		}
+		cs.Add(c)
 		cs.Add(comment(path, diff.SideOld, before, after, text))
 		r := cs.Review(text)
 		if strings.ContainsFunc(r, isUnsafeControl) {

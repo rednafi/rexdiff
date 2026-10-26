@@ -109,7 +109,7 @@ func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) erro
 	// variable of the resume file.
 	resumePath, env := takeResume(env)
 	dir := cmp.Or(f.repo, ".")
-	repo, err := vcs.Open(ctx, dir, env)
+	repo, err := vcs.Open(ctx, env, dir)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", dir, err)
 	}
@@ -128,15 +128,11 @@ func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) erro
 	if binErr == nil && client != nil {
 		notice = upgrade(ctx, env, bin)
 	}
-	var updater tui.Updater
-	if u := update.Detect(bin, version, env); u != nil {
-		updater = u // an interface with a nil *update.Updater is not nil
-	}
 	resume, err := tui.Run(ctx, tui.Options{
 		Repo:    repo,
 		Rex:     client,
 		Notice:  notice,
-		Updater: updater,
+		Updater: update.Detect(env, bin, version),
 		Resume:  resumePath,
 		Env:     env,
 		Config:  f.config,

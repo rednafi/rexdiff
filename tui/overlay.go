@@ -121,10 +121,6 @@ func (o *overlay) selected() *pickItem {
 	return &o.items[o.shown[o.cur]]
 }
 
-// down and up move the cursor of the list by one row.
-func (o *overlay) down() { o.move(1) }
-func (o *overlay) up()   { o.move(-1) }
-
 // move moves the cursor of the list by d rows. It skips the rows that
 // cannot have the cursor, and it stops at the ends.
 func (o *overlay) move(d int) {
@@ -206,10 +202,10 @@ func (m *model) updateOverlay(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, k.Choose):
 		return m.chooseOverlay()
 	case key.Matches(msg, k.Up):
-		ov.up()
+		ov.move(-1)
 		return nil
 	case key.Matches(msg, k.Down):
-		ov.down()
+		ov.move(1)
 		return nil
 	}
 	if !ov.hasInput() {
@@ -262,9 +258,9 @@ func (m *model) updateList(msg tea.KeyPressMsg) tea.Cmd {
 	digit := len(s) == 1 && s[0] >= '1' && s[0] <= '9'
 	switch {
 	case key.Matches(msg, k.ListDown):
-		ov.down()
+		ov.move(1)
 	case key.Matches(msg, k.ListUp):
-		ov.up()
+		ov.move(-1)
 	case ov.kind == overlayAgents && digit:
 		if i := int(s[0] - '1'); i < len(ov.shown) {
 			ov.cur = i

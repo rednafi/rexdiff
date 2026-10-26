@@ -26,12 +26,15 @@ import (
 // The messages are the same as in herdr-reviewr.
 func (m *model) openEditor(path string, line int) tea.Cmd {
 	abs := filepath.Join(m.repo.Root(), path)
-	var git string
-	if m.cfg.Editor == "" {
-		git = m.repo.Editor(m.ctx)
+	src := editor.Sources{
+		Template: m.cfg.Editor,
+		Visual:   proc.Getenv(m.env, "VISUAL"),
+		Editor:   proc.Getenv(m.env, "EDITOR"),
 	}
-	ed, err := editor.Resolve(m.cfg.Editor,
-		proc.Getenv(m.env, "VISUAL"), proc.Getenv(m.env, "EDITOR"), git, abs, line)
+	if src.Template == "" {
+		src.Git = m.repo.Editor(m.ctx)
+	}
+	ed, err := editor.Resolve(src, abs, line)
 	if err != nil {
 		m.flash("editor failed: " + err.Error())
 		return nil

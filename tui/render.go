@@ -76,13 +76,17 @@ func (m *model) listHeight(h int) int {
 	return 0
 }
 
+// mainMinWidth is the width of the main pane, with its gutter, if the
+// file list leaves less, or if the terminal is narrower.
+const mainMinWidth = 24
+
 // mainWidth returns the width of the main pane, with its gutter.
 func (m *model) mainWidth() int {
 	w := m.w
 	if lw := m.listWidth(); lw > 0 && !m.listPos.stacked() {
 		w -= lw + sepWidth
 	}
-	return max(w, 24)
+	return max(w, mainMinWidth)
 }
 
 // mainHeight returns the number of rows of the main pane.
@@ -144,7 +148,7 @@ func (m *model) splitAllowed() bool {
 		return false
 	}
 	f := m.selectedChange()
-	return f != nil && !f.Binary && !f.TooBig && !m.isRendered(f) &&
+	return f != nil && f.Skip == nil && !m.isRendered(f) &&
 		f.Old != "" && f.New != "" && f.Old != f.New
 }
 
@@ -193,16 +197,16 @@ const (
 	noteTooBig = "file too large to show"
 )
 
-// fileNote returns the note for a file that ReadFile does not read, and
-// reports whether err has a note.
-func fileNote(err error) (string, bool) {
+// fileNote returns the note for a file that vcs does not read, or "" if
+// err has no note. err is the error of ReadFile, or File.Skip.
+func fileNote(err error) string {
 	switch {
 	case errors.Is(err, vcs.ErrBinary):
-		return noteBinary, true
+		return noteBinary
 	case errors.Is(err, vcs.ErrTooBig):
-		return noteTooBig, true
+		return noteTooBig
 	}
-	return "", false
+	return ""
 }
 
 // renderChanges shows the selected file in the Changes tab.
@@ -216,10 +220,8 @@ func (m *model) renderChanges() {
 	}
 	p.path = f.Path
 	switch {
-	case f.Binary:
-		p.setNote(noteBinary)
-	case f.TooBig:
-		p.setNote(noteTooBig)
+	case f.Skip != nil:
+		p.setNote(fileNote(f.Skip))
 	case f.Old == f.New:
 		// The change is a rename with no edit, or a change of the file mode.
 		note := "no change to the content"
@@ -267,18 +269,26 @@ func (m *model) refreshViewer() {
 	}
 	path := m.allFiles[m.allSel].Path
 	content, err := m.repo.ReadFile(path)
+	if err == nil {
+		m.readErr = ""
+	}
 	if err == nil && content == m.viewed && m.viewedPath == path {
 		return
 	}
 	m.viewed, m.viewedPath = content, path
 	p.path = path
-	note, isNote := fileNote(err)
+	note := fileNote(err)
 	switch {
-	case isNote:
+	case note != "":
 		p.path = ""
 		p.set([]string{dimStyle.Render("  " + note)}, nil)
 	case err != nil:
-		m.log.Warn("read file failed", "path", path, "err", err)
+		// Without a watcher, each tick reads the file again. The log has
+		// each error once.
+		if text := err.Error(); text != m.readErr {
+			m.readErr = text
+			m.log.Warn("read file failed", "path", path, "err", err)
+		}
 		p.path = ""
 		p.set([]string{dimStyle.Render("  could not read this file")}, nil)
 	case m.rendered && isMarkdown(path):

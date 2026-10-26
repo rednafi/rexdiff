@@ -52,10 +52,10 @@ func New(path, before, after string) *View {
 	}
 }
 
-// Split sets the split layout. The old lines are on the left and the new
-// lines are on the right.
-func (v *View) Split() *View {
-	v.split = true
+// Split sets the split layout if split is true. The old lines are on the
+// left and the new lines are on the right.
+func (v *View) Split(split bool) *View {
+	v.split = split
 	return v
 }
 
@@ -71,17 +71,17 @@ func (v *View) XOffset(xOffset int) *View {
 	return v
 }
 
-// Wrap makes long lines continue on the next screen lines, instead of
-// cutting them. The x offset does not apply.
-func (v *View) Wrap() *View {
-	v.wrap = true
+// Wrap makes long lines continue on the next screen lines if wrap is
+// true, instead of cutting them. Then the x offset does not apply.
+func (v *View) Wrap(wrap bool) *View {
+	v.wrap = wrap
 	return v
 }
 
-// Signs marks an inserted line with + and a deleted line with -, in place
-// of a bar.
-func (v *View) Signs() *View {
-	v.signs = true
+// Signs marks an inserted line with + and a deleted line with - if signs
+// is true, in place of a bar.
+func (v *View) Signs(signs bool) *View {
+	v.signs = signs
 	return v
 }
 

@@ -38,13 +38,18 @@ func (m *model) members() (ms []member, ask string, ok bool) {
 		}
 		in, err := m.owns(a.cwd)
 		if err != nil {
-			m.log.Warn("agent membership failed", "err", err)
+			// Each event asks again. The log has each error once.
+			if text := err.Error(); text != m.ownsErr {
+				m.ownsErr = text
+				m.log.Warn("agent membership failed", "err", err)
+			}
 			return nil, "", false
 		}
 		if in {
 			ms = append(ms, member{block, a.app, a.state, a.since})
 		}
 	}
+	m.ownsErr = ""
 	return ms, "", true
 }
 
@@ -156,7 +161,12 @@ const raceBefore = time.Second
 // in the snapshot. Then the turn is not known, and the scope says so.
 func (m *model) startTurn(ms []member) {
 	m.pending = nil
-	tree, err := m.repo.Snapshot(m.ctx)
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
+		fmt.Errorf("turn snapshot: %v timeout: %w", reloadTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("turn snapshot: done: %w", context.Canceled))
+	tree, err := m.repo.Snapshot(ctx)
 	if err != nil {
 		m.log.Warn("turn snapshot failed", "err", err)
 		return
@@ -173,7 +183,6 @@ func (m *model) startTurn(ms []member) {
 	}
 	m.log.Debug("turn start", "block", ms[i].block, "tree", tree)
 	m.pending = &turnState{
-		block:   ms[i].block,
 		app:     ms[i].app,
 		tree:    tree,
 		running: true,
@@ -224,7 +233,12 @@ func (m *model) onTurnCheck(msg turnCheckMsg) {
 // differs from its start. Else the last turn stays. The end of a turn
 // checks at once, before the turn stops being pending.
 func (m *model) checkTurn() {
-	tree, err := m.repo.Snapshot(m.ctx)
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
+		fmt.Errorf("turn check: %v timeout: %w", reloadTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("turn check: done: %w", context.Canceled))
+	tree, err := m.repo.Snapshot(ctx)
 	if err != nil {
 		m.log.Warn("turn change check failed", "err", err)
 		return

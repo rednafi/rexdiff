@@ -95,7 +95,8 @@ type PRComment struct {
 // forge from the host of the remote "upstream", or else "origin". Then it runs
 // the command-line tool of the forge: gh, glab, or az. The tool must be
 // installed and signed in. The text of the pull request has no control
-// characters.
+// characters. If the branch has no pull request, PullRequest returns
+// [ErrNoPullRequest].
 func (r *Repo) PullRequest(ctx context.Context, h Hosts) (*PullRequest, error) {
 	remote := r.remoteURL(ctx)
 	if remote == "" {

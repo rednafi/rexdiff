@@ -94,9 +94,10 @@ func (m *model) refsChanged() tea.Cmd {
 		return nil
 	}
 	if old != "" && b != old {
-		m.pr = prState{loading: true}
+		m.pr = prState{}
+		cmd := m.requestPR(true)
 		m.renderPR()
-		return m.requestPR(true)
+		return cmd
 	}
 	return m.requestPR(false)
 }
@@ -143,7 +144,7 @@ func (m *model) renderPR() {
 		p.set(nil, nil)
 		return
 	case pr == nil:
-		if !m.pr.loading {
+		if !m.prf.inFlight {
 			p.note = vcs.ErrNoPullRequest.Error()
 		}
 		p.set(nil, nil)
@@ -217,7 +218,6 @@ func (m *model) onPR(msg prMsg) tea.Cmd {
 	// As in herdr-reviewr, a failed read keeps the last good pull request.
 	// The end of the pull request is not a failure.
 	if msg.err != nil && m.pr.pr != nil && !errors.Is(msg.err, vcs.ErrNoPullRequest) {
-		m.pr.loading = false
 		m.flash("refresh failed: " + msg.err.Error())
 		m.renderPR()
 		return next

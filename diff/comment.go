@@ -95,12 +95,11 @@ type Comments struct {
 // Len returns the number of comments.
 func (cs *Comments) Len() int { return len(cs.items) }
 
-// Add adds c with a new ID, and returns the comment in the set.
-func (cs *Comments) Add(c Comment) *Comment {
+// Add adds c with a new ID.
+func (cs *Comments) Add(c Comment) {
 	cs.last++
 	c.ID = cs.last
 	cs.items = append(cs.items, &c)
-	return &c
 }
 
 // Remove removes the comment with the given ID, if there is one.
