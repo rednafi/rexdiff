@@ -7,6 +7,7 @@
 local settings = {
   -- key = "shift+cmd+r", -- the key of the toggle, or false for none
   -- placement = "split", -- split, zoomed, tab, or overlay
+  -- direction = "right", -- of the split: right or down
   -- layout = "unified", -- or split
 }
 

@@ -3,6 +3,7 @@
 -- rexdiff.lua calls the function at the end with the settings.
 
 local PLACEMENTS = { split = true, zoomed = true, tab = true, overlay = true }
+local DIRECTIONS = { right = "horizontal", down = "vertical" }
 local TERM = "com.superlogical.terminal"
 
 -- must returns res, or fails the action with err. A Rex call returns nil
@@ -52,11 +53,11 @@ local function check(config)
 end
 
 -- open_rexdiff opens rexdiff at placement, beside the agent in ctx, with
--- the settings in config. rexdiff starts in the current directory of the
+-- the settings in config. A split opens in direction, right or down. rexdiff starts in the current directory of the
 -- agent. The rex package of rexdiff finds the directory the same way.
 -- rexdiff starts through the login shell of the user, so that it gets the
 -- login environment of the user, for example EDITOR and PATH.
-local function open_rexdiff(ctx, placement, config)
+local function open_rexdiff(ctx, placement, direction, config)
   local p = call("process", ctx.block_id)
   local cwd = (p.foreground or {}).cwd or (p.child or {}).cwd
   local node = rex.layout.block{
@@ -78,7 +79,7 @@ local function open_rexdiff(ctx, placement, config)
   end
   local s = must(rex.session.new_split{
     anchor_id = ctx.block_id,
-    direction = "horizontal",
+    direction = DIRECTIONS[direction],
     side = "after",
     ratio = 0.45,
     focus = true,
@@ -93,7 +94,7 @@ end
 -- The function gets the settings of rexdiff.lua, and adds the action
 -- and its key.
 return function(settings)
-  -- The key and the placement are for Rex. rexdiff gets the other settings
+  -- The key, the placement, and the direction are for Rex. rexdiff gets the other settings
   -- as JSON.
   if type(settings) ~= "table" then
     error("config: settings must be a table, as in: local settings = { }", 0)
@@ -103,7 +104,11 @@ return function(settings)
   local key = opts.key
   if key == nil then key = "shift+cmd+r" end
   local default_placement = opts.placement or "split"
-  opts.key, opts.placement = nil, nil
+  local direction = opts.direction or "right"
+  if not DIRECTIONS[direction] then
+    error("config: unknown direction " .. tostring(direction) .. "; use right or down", 0)
+  end
+  opts.key, opts.placement, opts.direction = nil, nil, nil
   local config, encode_err = rex.json.encode(opts)
 
   rex.action{
@@ -123,7 +128,7 @@ return function(settings)
       if #open == 0 then
         if config == nil then error("config: " .. encode_err, 0) end
         check(config)
-        return open_rexdiff(ctx, placement, config)
+        return open_rexdiff(ctx, placement, direction, config)
       end
       for _, id in ipairs(open) do
         must(rex.call("block.close", { session_id = ctx.session_id, block_id = id }))

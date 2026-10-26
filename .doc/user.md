@@ -98,6 +98,7 @@ The settings are in `~/.config/rex/rexdiff.lua`:
 local settings = {
   key = "shift+cmd+r",   -- the toggle key, or false for none
   placement = "split",   -- split, zoomed, tab, or overlay
+  direction = "right",   -- of the split: right or down
   layout = "unified",    -- or split
   editor = "code -g {file}:{line}",
   keybindings = { send = { "S" } },
