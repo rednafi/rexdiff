@@ -31,7 +31,7 @@ type Row struct {
 	Expanded bool
 	// Changed is true for a directory that holds a changed file.
 	Changed bool
-	Ignored bool
+	Ignored bool // git ignores the path
 }
 
 // node is a directory of the tree.

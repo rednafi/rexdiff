@@ -61,7 +61,7 @@ GitHub Actions runs the tests, builds the binaries, and updates the Homebrew cas
   `internal/termtext` before you show it.
 - Start a program with `internal/proc`, so that its errors have the same form as the
   others.
-- `internal/diffview` is copied from crush. Record each change to it in
-  `internal/VENDORED.md`.
+- Parts of `internal/diffview` derive from crush. Keep the crush notice in the header
+  of each derived file, and the list in `internal/DERIVED.md`.
 - When the right behaviour is unclear, follow herdr-reviewr.
 - Write commit messages in this form: `fix(tui): keep the view on failed reloads`.

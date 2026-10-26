@@ -120,11 +120,11 @@ type Diff struct {
 // Render compares before, the old content of the file at path, with after,
 // its new content. The path selects the syntax highlighter.
 func Render(path, before, after string, o Options) *Diff {
-	dv := diffview.New().
-		Before(path, before).
-		After(path, after).
+	dv := diffview.New(path, before, after).
 		Width(o.Width).
-		XOffset(o.Offset)
+		XOffset(o.Offset).
+		Theme(o.Theme.Background, o.Theme.Foreground, o.Theme.Green,
+			o.Theme.Red, o.Theme.dark())
 	if o.Cache != nil {
 		dv = dv.Cache(&o.Cache.lines)
 	}
@@ -140,8 +140,6 @@ func Render(path, before, after string, o Options) *Diff {
 	if o.Wrap {
 		dv = dv.Wrap()
 	}
-	dv = dv.Style(diffview.TerminalStyle(o.Theme.Background, o.Theme.Foreground,
-		o.Theme.Green, o.Theme.Red, o.Theme.dark()))
 	out, rows, g := dv.Render()
 
 	d := &Diff{split: o.Split, src: [2]string{before, after}, wrap: o.Wrap}

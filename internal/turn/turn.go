@@ -56,11 +56,7 @@ type Tracker struct {
 // time. A turn starts when one agent works after all rest. A turn ends
 // when all rest after work, also through a prompt.
 func (t *Tracker) Observe(states ...rex.State) (started, ended bool) {
-	return t.observe(fold(states...))
-}
-
-// observe takes the next state of the repository.
-func (t *Tracker) observe(s state) (started, ended bool) {
+	s := fold(states...)
 	started = s == stateWorking && t.prevResting
 	ended = t.worked && s == stateResting
 	t.prevResting = s == stateResting

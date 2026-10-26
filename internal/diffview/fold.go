@@ -1,10 +1,6 @@
 package diffview
 
-import (
-	"fmt"
-
-	"github.com/aymanbagabas/go-udiff"
-)
+import "github.com/aymanbagabas/go-udiff"
 
 // foldMargin is the number of equal lines that show beside a change. A
 // longer run of equal lines folds into one row, as in herdr-reviewr.
@@ -15,13 +11,6 @@ const foldMargin = 3
 // is 0 if the view hides no line.
 type Fold struct {
 	Before, After, Lines int
-}
-
-// Expand shows the lines of each fold for which expanded returns true.
-func (v *View) Expand(expanded func(Fold) bool) *View {
-	v.expanded = expanded
-	v.isComputed = false
-	return v
 }
 
 // foldHunk splits h into the hunks that show. folds[i] is the run of lines
@@ -80,19 +69,4 @@ func foldHunk(h *udiff.Hunk, expanded func(Fold) bool) (hunks []*udiff.Hunk, fol
 		folds = append(folds, above)
 	}
 	return hunks, folds
-}
-
-// headerText returns the text of the header of hunk i, for example
-// "  ⋯ 12 unmodified lines  @@ -15,7 +15,8 @@ ". The text has the fold
-// above the hunk if lines hide. It has the hunk header if the hunk has
-// lines. The text ends with a space, as the hunk header does.
-func (v *View) headerText(i int) string {
-	h, s := v.unified.Hunks[i], ""
-	if f := v.folds[i]; f.Lines > 0 {
-		s = fmt.Sprintf("  ⋯ %d unmodified lines", f.Lines)
-	}
-	if len(h.Lines) == 0 {
-		return s + " "
-	}
-	return s + hunkHeader(h)
 }
