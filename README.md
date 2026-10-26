@@ -1,4 +1,6 @@
-<img src=".asset/logo.png" alt="rexdiff" width="360" align="right">
+<img src=".asset/logo.svg" alt="rexdiff logo" width="160" align="right">
+
+# rexdiff
 
 A diff viewer for coding agents in [Rex]. Think [herdr-reviewr], but for Rex.
 
