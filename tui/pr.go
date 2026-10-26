@@ -179,15 +179,15 @@ var (
 // details returns src with each <details> block as its summary line, as
 // herdr-reviewr shows it. The line starts with ▸ for a closed block, and
 // with ▾ for an open block. The body of an open block follows the line.
-// The last block is done first. Thus an inner block is done before the
+// The last block is done first, so an inner block is done before the
 // block that holds it.
 func (m *model) details(src string) string {
 	for _, o := range slices.Backward(detailsOpenRE.FindAllStringIndex(src, -1)) {
-		sub := detailsRE.FindStringSubmatchIndex(src[o[0]:])
+		b := src[o[0]:]
+		sub := detailsRE.FindStringSubmatchIndex(b)
 		if sub == nil {
 			continue
 		}
-		b := src[o[0]:]
 		summary := strings.Join(strings.Fields(b[sub[2]:sub[3]]), " ")
 		block := "\n\n▸ " + summary + "\n\n"
 		if m.prDetails {

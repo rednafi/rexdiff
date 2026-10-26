@@ -268,15 +268,13 @@ func (m *model) onMouseUp() tea.Cmd {
 	if !d.active || d.start >= len(p.rows) {
 		return nil
 	}
-	switch {
-	case d.gutter: // a drag on the line numbers opens the comment box
+	if d.gutter { // a drag on the line numbers opens the comment box
 		if d.moved {
 			p.anchor = d.start
 		}
 		return m.startComment(d.pref)
-	default:
-		m.copyChars(m.dragText(d))
 	}
+	m.copyChars(m.dragText(d))
 	return nil
 }
 
@@ -286,9 +284,9 @@ func (m *model) onMouseUp() tea.Cmd {
 // rune is a click, and gives "".
 func (m *model) dragText(d dragState) string {
 	p := m.cur()
-	a, b := p.head(d.row), p.head(d.toRow)
-	if p.src != nil {
-		a, b = d.row, d.toRow // rendered markdown gives the text on the screen
+	a, b := d.row, d.toRow // rendered markdown gives the text on the screen
+	if p.src == nil {
+		a, b = p.head(a), p.head(b)
 	}
 	_, ca, _ := m.textAt(d.row, d.x)
 	_, cb, _ := m.textAt(d.toRow, d.toX)

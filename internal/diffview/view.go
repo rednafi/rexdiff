@@ -164,8 +164,8 @@ const crMark = "^M"
 // markEndings removes the CR of each line ending, so that it does not
 // show. In a block of changes, the deleted lines and the inserted lines
 // pair up in their order. As in herdr-reviewr, a line of a pair that
-// differs from the other line only in a CR gets crMark. Thus a change of
-// only the line ending shows.
+// differs from the other line only in a CR gets crMark. A change of only
+// the line ending shows.
 func (v *View) markEndings() {
 	for _, h := range v.hunks {
 		ls := h.Lines
@@ -206,15 +206,11 @@ func markPair(old, new *udiff.Line) {
 // reports whether line has that CR. The last line of a file can have a CR
 // and no LF.
 func cutCR(line, mark string) (string, bool) {
-	body, lf := strings.CutSuffix(line, "\n")
-	body, cr := strings.CutSuffix(body, "\r")
-	if cr {
-		body += mark
+	body, cr := strings.CutSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	if !cr {
+		return line, false
 	}
-	if lf {
-		body += "\n"
-	}
-	return body, cr
+	return body + mark + line[len(body)+1:], true
 }
 
 // replaceTabs replaces the tabs in the lines of the diff with spaces. It runs

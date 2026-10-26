@@ -375,8 +375,8 @@ func (m *model) rendersNothing(src string) bool {
 // herdr-reviewr does. rows are the source rows that the view stands for,
 // with src as their new side. If rows is nil, no line of src changes.
 // Each rendered line shows the first source line of its block. The blank
-// line after a block shows its last source line. Thus a comment on a
-// block covers all its lines. A block with a change has the bar.
+// line after a block shows its last source line. A comment on a block
+// covers all its lines. A block with a change has the bar.
 func (m *model) setMarkdown(p *pane, src string, rows []diff.Row) {
 	lines := diff.Lines(src)
 	if rows == nil {

@@ -291,7 +291,7 @@ type model struct {
 	pr                          prState
 	prf                         prFetch
 	prPlace                     *resumePane // prPane's place after a restart
-	prDetails                   bool        // the <details> blocks of the PR tab are open
+	prDetails                   bool        // the PR <details> blocks are open
 
 	split      bool // show the diff side by side
 	wrap       bool
