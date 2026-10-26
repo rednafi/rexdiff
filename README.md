@@ -41,6 +41,9 @@ them, run `rexdiff uninstall`.
   the line numbers.
 - Send: press `s`. rexdiff pastes the comments into the agent's input. It does
   not press Enter.
+- Flip: run "Flip rexdiff" from the command palette to move an open
+  rexdiff from beside the agent to below it, or back. Set `flip_key` to bind
+  it to a key.
 - Update: when rexdiff shows a new version at the bottom, press `U`. Your
   comments stay.
 
@@ -67,6 +70,8 @@ Edit the settings at the top of `~/.config/rex/rexdiff.lua`:
 local settings = {
   key = "shift+cmd+r",   -- toggle key, or false for none
   placement = "split",   -- split, zoomed, tab, or overlay
+  direction = "right",   -- where a split opens: right or below
+  flip_key = false,      -- key of "Flip rexdiff", or false for none
   layout = "split",      -- unified or split
   editor = "code -g {file}:{line}",
   keybindings = { send = { "S" } },

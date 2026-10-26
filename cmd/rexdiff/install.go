@@ -43,6 +43,8 @@ const defaultSettings = `-- "rexdiff install" wrote this file. To remove it, run
 local settings = {
   -- key = "shift+cmd+r", -- the key of the toggle, or false for none
   -- placement = "split", -- split, zoomed, tab, or overlay
+  -- direction = "right", -- where a split opens: right or below
+  -- flip_key = false, -- the key of "Flip rexdiff", or false for none
   -- layout = "split",
 }
 
@@ -52,6 +54,8 @@ local settings = {
 // line from binLine.
 const codeTemplate = `%s
 local PLACEMENTS = { split = true, zoomed = true, tab = true, overlay = true }
+-- DIRECTIONS maps where a split opens to how Rex divides the agent's space.
+local DIRECTIONS = { right = "horizontal", below = "vertical" }
 local TERM = "com.superlogical.terminal"
 
 -- must returns res, or fails the action with err. A Rex call returns nil
@@ -101,9 +105,10 @@ local function check(config)
 end
 
 -- open_rexdiff opens rexdiff at placement, beside the agent in ctx, with
--- the settings in config. rexdiff starts in the current directory of the
+-- the settings in config. A split opens on the side of the agent that
+-- direction names. rexdiff starts in the current directory of the
 -- agent. The rex package of rexdiff finds the directory the same way.
-local function open_rexdiff(ctx, placement, config)
+local function open_rexdiff(ctx, placement, direction, config)
   local p = call("process", ctx.block_id)
   local cwd = (p.foreground or {}).cwd or (p.child or {}).cwd
   local node = rex.layout.block{
@@ -126,7 +131,7 @@ local function open_rexdiff(ctx, placement, config)
   end
   local s = must(rex.session.new_split{
     anchor_id = ctx.block_id,
-    direction = "horizontal",
+    direction = DIRECTIONS[direction],
     side = "after",
     ratio = 0.45,
     focus = true,
@@ -138,7 +143,42 @@ local function open_rexdiff(ctx, placement, config)
   return s
 end
 
--- The key and the placement are for Rex. rexdiff gets the other settings
+-- find_split returns the split under node that holds the block id on one
+-- side, and the node on the other side.
+local function find_split(node, id)
+  local s = node and node.split
+  if s == nil then return nil end
+  if s.before.block_id == id then return s, s.after end
+  if s.after.block_id == id then return s, s.before end
+  local found, other = find_split(s.before, id)
+  if found then return found, other end
+  return find_split(s.after, id)
+end
+
+-- flip moves the rexdiff block id from beside the pane next to it to below
+-- it, or back. rexdiff keeps its side and its share of the space.
+local function flip(id)
+  for _, w in ipairs(must(rex.session.view{}).windows or {}) do
+    for _, l in ipairs(w.layers or {}) do
+      local s, other = find_split(l.layout, id)
+      if s then
+        if other.block_id == nil then
+          error("rexdiff can flip only beside one pane", 0)
+        end
+        return must(rex.session.move_block{
+          block_id = id,
+          anchor_block_id = other.block_id,
+          direction = s.direction == "horizontal" and "vertical" or "horizontal",
+          side = s.before.block_id == id and "before" or "after",
+          ratio = s.ratio,
+        })
+      end
+    end
+  end
+  error("rexdiff is not in a split", 0)
+end
+
+-- The keys, the placement, and the direction are for Rex. rexdiff gets the other settings
 -- as JSON.
 if type(settings) ~= "table" then
   error("rexdiff.lua: settings must be a table, as in: local settings = { }", 0)
@@ -148,7 +188,9 @@ for k, v in pairs(settings) do opts[k] = v end
 local key = opts.key
 if key == nil then key = "shift+cmd+r" end
 local default_placement = opts.placement or "split"
-opts.key, opts.placement = nil, nil
+local direction = opts.direction or "right"
+local flip_key = opts.flip_key
+opts.key, opts.placement, opts.direction, opts.flip_key = nil, nil, nil, nil
 local config, encode_err = rex.json.encode(opts)
 
 rex.action{
@@ -167,8 +209,12 @@ rex.action{
     local open = reviewers()
     if #open == 0 then
       if config == nil then error("rexdiff settings: " .. encode_err, 0) end
+      if not DIRECTIONS[direction] then
+        error("rexdiff settings: unknown direction " .. tostring(direction)
+          .. "; use right or below", 0)
+      end
       check(config)
-      return open_rexdiff(ctx, placement, config)
+      return open_rexdiff(ctx, placement, direction, config)
     end
     for _, id in ipairs(open) do
       must(rex.call("block.close", { session_id = ctx.session_id, block_id = id }))
@@ -177,6 +223,21 @@ rex.action{
   end,
 }
 if key then rex.bind(key, "rexdiff_toggle") end
+
+rex.action{
+  name = "rexdiff_flip",
+  title = "Flip rexdiff",
+  description = "Move rexdiff from beside the agent to below it, or back",
+  category = "rexdiff",
+  keywords = "diff review split direction rotate below right",
+  run = function()
+    local open = reviewers()
+    if #open == 0 then error("rexdiff is not open", 0) end
+    for _, id in ipairs(open) do flip(id) end
+    return { flipped = open }
+  end,
+}
+if flip_key then rex.bind(flip_key, "rexdiff_flip") end
 `
 
 // luaCode returns the code part of rexdiff.lua for bin, the path of

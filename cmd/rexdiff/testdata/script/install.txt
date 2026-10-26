@@ -11,10 +11,10 @@ cmp .config/rex/init.lua installed.lua
 grep '^local settings = \{$' .config/rex/rexdiff.lua
 grep '^-- rexdiff code below. Install and upgrades replace it. Do not edit this line.$' .config/rex/rexdiff.lua
 
-# Rex accepts the action and its key.
+# Rex accepts the actions and the key of the toggle. Flip has no key.
 [realrex] exec $REALREX config check .config/rex/init.lua
 [realrex] stdout 'bindings: 2'
-[realrex] stdout 'actions: 1'
+[realrex] stdout 'actions: 2'
 [realrex] ! stderr .
 
 # A second install keeps the settings and the one line of init.lua, and
@@ -30,6 +30,14 @@ cmp rex.log reloads.log
 # Rex binds the key of the settings.
 [realrex] exec $REALREX config check .config/rex/init.lua
 [realrex] stdout 'bindings: 2'
+[realrex] ! stderr .
+
+# Rex binds flip_key too, and rexdiff does not get it.
+exec sh -c 'sed "s/^local settings = { key/local settings = { flip_key = \"ctrl+cmd+f\", direction = \"below\", key/" .config/rex/rexdiff.lua > flip.lua'
+cp flip.lua .config/rex/rexdiff.lua
+grep 'flip_key = "ctrl\+cmd\+f", direction = "below",' .config/rex/rexdiff.lua
+[realrex] exec $REALREX config check .config/rex/init.lua
+[realrex] stdout 'bindings: 3'
 [realrex] ! stderr .
 
 # Without the line above the code, install cannot tell the settings from
