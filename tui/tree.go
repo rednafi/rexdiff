@@ -12,11 +12,16 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// navTree is the file list of a tab.
-type navTree struct {
+// fileListTree is the file list of a tab.
+type fileListTree struct {
 	entries []tree.Entry
 	rows    []tree.Row
 	cur     int // the row of the cursor
+	// top is the first row on the screen while free is true. free is true
+	// after the wheel moves the view. Then the cursor can be off the
+	// screen until the next key.
+	top  int
+	free bool
 	// expanded is true if the directories start expanded. toggled has the
 	// directories that the user changes from that start.
 	expanded bool
@@ -26,7 +31,7 @@ type navTree struct {
 // rebuild makes the rows of entries. The cursor stays on its directory or
 // its file. If the row is gone, or the cursor is -1, the cursor goes to
 // the file with index open, else to the first file.
-func (t *navTree) rebuild(entries []tree.Entry, expanded bool, open int) {
+func (t *fileListTree) rebuild(entries []tree.Entry, expanded bool, open int) {
 	var dir, path string
 	if t.cur >= 0 && t.cur < len(t.rows) {
 		if r := t.rows[t.cur]; r.File < 0 {
@@ -53,7 +58,7 @@ func (t *navTree) rebuild(entries []tree.Entry, expanded bool, open int) {
 }
 
 // file returns the index of the file at the cursor, or -1 on a directory.
-func (t *navTree) file() int {
+func (t *fileListTree) file() int {
 	if t.cur >= len(t.rows) {
 		return -1
 	}
@@ -61,7 +66,7 @@ func (t *navTree) file() int {
 }
 
 // dir returns the row at the cursor if it is a directory.
-func (t *navTree) dir() (tree.Row, bool) {
+func (t *fileListTree) dir() (tree.Row, bool) {
 	if t.cur >= len(t.rows) || t.rows[t.cur].File >= 0 {
 		return tree.Row{}, false
 	}
@@ -70,7 +75,7 @@ func (t *navTree) dir() (tree.Row, bool) {
 
 // rowOf returns the row of the file with index i, or -1 if no row shows
 // it.
-func (t *navTree) rowOf(i int) int {
+func (t *fileListTree) rowOf(i int) int {
 	if i < 0 {
 		return -1
 	}
@@ -79,7 +84,7 @@ func (t *navTree) rowOf(i int) int {
 
 // nextFile returns the first file row after row from in direction d (1 or
 // -1), or -1.
-func (t *navTree) nextFile(from, d int) int {
+func (t *fileListTree) nextFile(from, d int) int {
 	for r := from + d; r >= 0 && r < len(t.rows); r += d {
 		if t.rows[r].File >= 0 {
 			return r
@@ -90,7 +95,7 @@ func (t *navTree) nextFile(from, d int) int {
 
 // setExpanded expands or collapses the directory dir. It reports whether
 // the state changes.
-func (t *navTree) setExpanded(dir string, want bool) bool {
+func (t *fileListTree) setExpanded(dir string, want bool) bool {
 	if (t.expanded != t.toggled[dir]) == want {
 		return false
 	}
@@ -107,25 +112,21 @@ func (t *navTree) setExpanded(dir string, want bool) bool {
 
 // reveal expands each directory above path. It reports whether one
 // changes.
-func (t *navTree) reveal(path string) bool {
+func (t *fileListTree) reveal(path string) bool {
 	changed := false
-	for dir := path; ; {
-		i := strings.LastIndexByte(dir, '/')
-		if i < 0 {
-			return changed
-		}
-		dir = dir[:i]
+	for dir, _, ok := strings.CutLast(path, "/"); ok; dir, _, ok = strings.CutLast(dir, "/") {
 		changed = t.setExpanded(dir, true) || changed
 	}
+	return changed
 }
 
 // list returns the file list of the current tab, or nil on the PR tab.
-func (m *model) list() *navTree {
+func (m *model) list() *fileListTree {
 	switch m.tab {
 	case tabChanges:
 		return &m.changeTree
 	case tabFiles:
-		return &m.fileTree
+		return &m.allTree
 	}
 	return nil
 }
@@ -133,8 +134,8 @@ func (m *model) list() *navTree {
 // buildChangeTree makes the rows of the Changes tab. The selected file is
 // the file at the cursor, if the cursor is on a file.
 func (m *model) buildChangeTree() {
-	es := make([]tree.Entry, len(m.files))
-	for i, f := range m.files {
+	es := make([]tree.Entry, len(m.changeFiles))
+	for i, f := range m.changeFiles {
 		es[i] = tree.Entry{Path: f.Path, Changed: true}
 	}
 	t := &m.changeTree
@@ -149,8 +150,8 @@ func (m *model) buildChangeTree() {
 // change if a file under it is in the Changes tab. The selected file is
 // the file at the cursor, if the cursor is on a file.
 func (m *model) buildFileTree() {
-	changed := make(map[string]bool, len(m.files))
-	for _, f := range m.files {
+	changed := make(map[string]bool, len(m.changeFiles))
+	for _, f := range m.changeFiles {
 		changed[f.Path] = true
 	}
 	es := make([]tree.Entry, len(m.allFiles))
@@ -158,7 +159,7 @@ func (m *model) buildFileTree() {
 		p, isDir := strings.CutSuffix(e.Path, "/")
 		es[i] = tree.Entry{Path: p, Changed: changed[p], Ignored: e.Ignored, Dir: isDir}
 	}
-	t := &m.fileTree
+	t := &m.allTree
 	t.rebuild(es, false, m.allSel)
 	if i := t.file(); i >= 0 {
 		m.allSel = i
@@ -182,8 +183,7 @@ func (m *model) withIgnored(es []vcs.Entry) []vcs.Entry {
 	// The loop also reads the entries that it adds, for the directories
 	// in an ignored directory.
 	for i := 0; i < len(es); i++ {
-		dir, isDir := strings.CutSuffix(es[i].Path, "/")
-		if isDir && es[i].Ignored && m.fileTree.toggled[dir] {
+		if dir, ok := m.openIgnored(es[i]); ok {
 			es = append(es, m.repo.IgnoredDir(dir)...)
 		}
 	}
@@ -191,25 +191,38 @@ func (m *model) withIgnored(es []vcs.Entry) []vcs.Entry {
 	return es
 }
 
-// shownIgnored returns the ignored directories that the user expands in
-// the Files tab, when that tab shows. The watcher reports their changes.
-func (m *model) shownIgnored() []string {
+// shownPaths returns the paths for Watcher.Show when the Files tab
+// shows: the ignored directories that the user expands and the open file.
+// The watcher reports their changes, as in herdr-reviewr.
+func (m *model) shownPaths() []string {
 	if m.tab != tabFiles {
 		return nil
 	}
-	var dirs []string
+	var paths []string
 	for _, e := range m.allFiles {
-		dir, isDir := strings.CutSuffix(e.Path, "/")
-		if isDir && e.Ignored && m.fileTree.toggled[dir] {
-			dirs = append(dirs, dir)
+		if dir, ok := m.openIgnored(e); ok {
+			paths = append(paths, dir)
 		}
 	}
-	return dirs
+	if m.allSel < len(m.allFiles) {
+		if e := m.allFiles[m.allSel]; !strings.HasSuffix(e.Path, "/") {
+			paths = append(paths, e.Path)
+		}
+	}
+	return paths
 }
 
-// onDir reports whether the file list has the focus and its cursor is on
+// openIgnored returns the path of e without the last "/". It also reports
+// whether e is an ignored directory that the user expands in the Files
+// tab.
+func (m *model) openIgnored(e vcs.Entry) (string, bool) {
+	dir, isDir := strings.CutSuffix(e.Path, "/")
+	return dir, isDir && e.Ignored && m.allTree.toggled[dir]
+}
+
+// atDir reports whether the file list has the focus and its cursor is on
 // a directory.
-func (m *model) onDir() bool {
+func (m *model) atDir() bool {
 	if t := m.list(); t != nil && m.focusList {
 		_, ok := t.dir()
 		return ok

@@ -1,16 +1,16 @@
 package tui
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/rednafi/rexdiff/internal/clipboard"
-	"github.com/rednafi/rexdiff/internal/turn"
 	"github.com/rednafi/rexdiff/rex"
 )
 
@@ -23,17 +23,27 @@ const maxSend = 256 << 10
 // msg.send to send the review to them.
 func (m *model) listAgents(msg agentsMsg) tea.Cmd {
 	c, ctx := m.rex, m.ctx
+	msg.gen = m.agentsGen
 	return func() tea.Msg {
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("agent list: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("agent list: done: %w", context.Canceled))
 		agents, err := c.Agents(ctx)
-		isRexdiff := func(a rex.Agent) bool { return a.App == appName }
+		isRexdiff := func(a rex.Agent) bool { return a.Status.App == appName }
 		agents = slices.DeleteFunc(agents, isRexdiff)
 		msg.agents, msg.err = agents, err
 		return msg
 	}
 }
 
-// inRepo tells if dir is in the repository. An empty dir is unknown, and
-// counts as in the repository.
+// rexTimeout is the longest time of the calls to Rex for one action. A
+// Rex that does not answer then fails the action.
+const rexTimeout = 10 * time.Second
+
+// inRepo reports whether dir is in the repository. An empty dir is
+// unknown, and counts as in the repository.
 func (m *model) inRepo(dir string) bool { return dir == "" || m.repo.Contains(dir) }
 
 // agent returns the state of the agent in block. If the block is new, agent
@@ -48,196 +58,57 @@ func (m *model) agent(block string) *agentState {
 }
 
 // onEvent keeps the state of the agent in the block of e, and follows the
-// turns.
-func (m *model) onEvent(e rex.Event) {
+// turns. After a reconnect, it forgets the agents and lists them again,
+// as herdr-reviewr does after a lost connection. Nobody sees the agents
+// in the gap, so the next state starts no turn. A list from before the
+// gap is stale. An event with an error only goes to the log.
+func (m *model) onEvent(e rex.Event) tea.Cmd {
+	if e.Err != nil {
+		m.log.Warn("rex events failed", "err", e.Err)
+		return nil
+	}
+	if e.Reconnect {
+		m.tracker.Gap()
+		clear(m.agents)
+		m.sampled = false
+		m.agentsGen++
+		return m.listAgents(agentsMsg{})
+	}
 	if e.Closed {
 		delete(m.agents, e.Block)
 	} else {
 		app, state := e.Status.App, e.Status.State
 		m.log.Debug("status", "block", e.Block, "app", app, "state", state)
 		a := m.agent(e.Block)
-		a.app, a.state = app, state
+		a.app, a.state, a.since = app, state, cmp.Or(e.Status.At, time.Now())
 	}
-	m.observeTurn()
-}
-
-// member is an agent that works in the repository.
-type member struct {
-	block, app string
-	state      rex.State
-}
-
-// members returns the agents that work in the repository, in the order
-// of their blocks. As in herdr-reviewr, an agent is a member if its
-// working directory is absolute and in this working tree. If the place of
-// an agent is not known, members returns false.
-func (m *model) members() ([]member, bool) {
-	var out []member
-	for _, block := range slices.Sorted(maps.Keys(m.agents)) {
-		a := m.agents[block]
-		if a.state == "" || a.app == appName || (m.rex != nil && block == m.rex.Block) {
-			continue
-		}
-		if !a.hasCwd {
-			if m.rex == nil {
-				return nil, false
-			}
-			cwd, err := m.rex.Cwd(m.ctx, block)
-			if err != nil {
-				m.log.Debug("agent cwd failed", "block", block, "err", err)
-				return nil, false // ask again with the next state
-			}
-			a.cwd, a.hasCwd = cwd, true
-		}
-		in, err := m.owns(a.cwd)
-		if err != nil {
-			m.log.Warn("agent membership failed", "err", err)
-			return nil, false
-		}
-		if in {
-			out = append(out, member{block, a.app, a.state})
-		}
-	}
-	return out, true
-}
-
-// owns tells if dir is in this working tree. It keeps the directories
-// that are, because their top directory does not move.
-func (m *model) owns(dir string) (bool, error) {
-	if m.memberDirs[dir] {
-		return true, nil
-	}
-	in, err := m.repo.Owns(m.ctx, dir)
-	if in {
-		if m.memberDirs == nil {
-			m.memberDirs = map[string]bool{}
-		}
-		m.memberDirs[dir] = true
-	}
-	return in, err
-}
-
-// observeTurn gives the state of the repository to the tracker, and
-// follows the start and the end of a turn.
-//
-// herdr-reviewr also drops a turn whose first write can be in its start
-// snapshot. That needs the time of each write, and the watcher has no
-// such times. Thus a write just before the snapshot does not show in the
-// turn.
-func (m *model) observeTurn() {
-	if !m.sampled {
-		return
-	}
-	ms, ok := m.members()
-	if !ok {
-		return // keep the last state, as herdr-reviewr does
-	}
-	here := len(ms) > 0
-	if m.agentsHere == nil || *m.agentsHere != here {
-		m.agentsHere = &here
-		if m.scope == ScopeLastTurn && m.turn == nil {
-			m.reload() // show the new wait message
-		}
-	}
-	states := make([]rex.State, len(ms))
-	for i, a := range ms {
-		states[i] = a.state
-	}
-	started, ended := m.tracker.Observe(turn.Fold(states...))
-	if started {
-		m.startTurn(ms)
-	}
-	if ended {
-		m.endTurn()
-	}
-}
-
-// turnWaitMessage tells why the last-turn scope has no turn. The messages
-// come from herdr-reviewr.
-func (m *model) turnWaitMessage() string {
-	if m.agentsHere != nil && !*m.agentsHere {
-		return "no agent works here"
-	}
-	return "waiting for the first turn"
-}
-
-// startTurn takes a snapshot of the working tree at the start of a turn
-// of the members ms. The turn stays pending until it changes a file.
-func (m *model) startTurn(ms []member) {
-	m.pending = nil
-	tree, err := m.repo.Snapshot(m.ctx)
-	if err != nil {
-		m.log.Warn("turn snapshot failed", "err", err)
-		return
-	}
-	i := slices.IndexFunc(ms, func(a member) bool { return a.state == rex.StateWorking })
-	m.pending = &turnState{
-		block:   ms[i].block,
-		app:     ms[i].app,
-		tree:    tree,
-		running: true,
-		at:      time.Now(),
-	}
-}
-
-// checkTurn makes the pending turn the last turn if the working tree
-// differs from its start. Else the last turn stays.
-func (m *model) checkTurn() {
-	tree, err := m.repo.Snapshot(m.ctx)
-	if err != nil {
-		m.log.Warn("turn change check failed", "err", err)
-		return
-	}
-	if tree != m.pending.tree {
-		m.promote()
-	}
-}
-
-// promote makes the pending turn the last turn, and saves its tree.
-func (m *model) promote() {
-	m.turn, m.pending = m.pending, nil
-	if err := m.repo.SaveTurn(m.ctx, m.turn.tree); err != nil {
-		m.log.Warn("turn baseline ref write failed", "err", err)
-	}
-	if m.scope == ScopeLastTurn {
-		m.reload()
-	}
-}
-
-// endTurn ends the turn. A pending turn that changes the working tree
-// becomes the last turn. After the end, a change is not from the turn.
-func (m *model) endTurn() {
-	if m.pending != nil {
-		m.checkTurn()
-		m.pending = nil
-	}
-	if m.turn != nil {
-		m.turn.running = false
-	}
-	if m.scope == ScopeLastTurn {
-		m.reload()
-	}
+	return m.observeTurn()
 }
 
 // onAgents keeps the states of the agents. For a send, onAgents sends the
-// review to the agent, or lets the user pick one.
+// review to the agent, or lets the user pick one. A list from before a
+// reconnect does not change the states, because they can be old.
 func (m *model) onAgents(msg agentsMsg) tea.Cmd {
-	for _, a := range msg.agents {
-		*m.agent(a.Block) = agentState{app: a.App, state: a.State, cwd: a.Cwd, hasCwd: true}
+	stale := msg.gen != m.agentsGen
+	if stale && !msg.send {
+		return nil // the list after the reconnect follows
+	}
+	if !stale {
+		m.keepAgents(msg.agents)
 	}
 	switch {
+	case stale:
 	case msg.err == nil:
 		m.sampled = true
 	case !m.sampled && !msg.send:
 		// Without a list, the turns do not start. Thus list again later.
 		m.log.Warn("agent list failed", "err", msg.err)
-		wait := max(m.sampleWait, retryFirst)
-		m.sampleWait = min(2*wait, retryMax)
-		m.sampleAt = time.Now().Add(wait)
+		m.sampleRetry.fail(time.Now())
 	}
-	m.observeTurn()
+	// A send drops the question for a cwd. The next state asks again.
+	turn := m.observeTurn()
 	if !msg.send {
-		return nil
+		return turn
 	}
 	m.sends--
 	if msg.err != nil {
@@ -266,11 +137,34 @@ func (m *model) onAgents(msg agentsMsg) tea.Cmd {
 		// load. A picker on top can hide the box and lose the comment. The
 		// picker can take the place of the comment list, as in
 		// herdr-reviewr.
-		m.flash("several agents: close the box, then press s to pick one")
+		m.flash("several agents: close the box, then press " +
+			firstKey(m.keys.Send) + " to pick one")
 		return nil
 	}
 	m.openAgentPicker(here)
 	return nil
+}
+
+// keepAgents keeps the states of the agents of a list.
+func (m *model) keepAgents(agents []rex.Agent) {
+	for _, a := range agents {
+		*m.agent(a.Block) = agentState{
+			app:    a.Status.App,
+			state:  a.Status.State,
+			since:  cmp.Or(a.Status.At, time.Now()),
+			cwd:    a.Cwd,
+			hasCwd: a.Cwd != "", // else askCwd asks Rex again
+		}
+	}
+}
+
+// commentTexts returns the texts of the comments, by ID.
+func (m *model) commentTexts() map[int]string {
+	texts := map[int]string{}
+	for _, c := range m.comments.All() {
+		texts[c.ID] = c.Text
+	}
+	return texts
 }
 
 // reviewText returns the text of the review that a send pastes.
@@ -284,13 +178,14 @@ func (m *model) reviewText() string {
 func (m *model) deliver(a rex.Agent) tea.Cmd {
 	m.sends++
 	c, ctx := m.rex, m.ctx
-	text := m.reviewText()
-	var ids []int
-	for _, cm := range m.comments.All() {
-		ids = append(ids, cm.ID)
-	}
-	focus := m.cfg.focusAgent()
+	text, sent := m.reviewText(), m.commentTexts()
+	focus := m.cfg.focusesAgent()
 	return func() tea.Msg {
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("send: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("send: done: %w", context.Canceled))
 		status, err := c.Status(ctx, a.Block)
 		if err != nil {
 			return sentMsg{agent: a, err: fmt.Errorf("check %s: %w", a.Name, err)}
@@ -303,28 +198,27 @@ func (m *model) deliver(a rex.Agent) tea.Cmd {
 			return sentMsg{agent: a, err: err}
 		}
 		if err := c.Paste(ctx, a.Block, text); err != nil {
-			return sentMsg{agent: a, err: err}
+			return sentMsg{agent: a, err: fmt.Errorf("paste into %s: %w", a.Name, err)}
 		}
 		if focus {
 			// Ignore the error, because the paste works.
 			_ = c.Focus(ctx, a.Block)
 		}
-		return sentMsg{agent: a, ids: ids}
+		return sentMsg{agent: a, sent: sent}
 	}
 }
 
 // onSent removes the sent comments if the send worked. The comments that
-// the user adds or changes during the send stay. A saved edit gives a
-// comment a new ID, and msg does not have that ID.
+// the user adds or changes during the send stay.
 func (m *model) onSent(msg sentMsg) {
 	m.sends--
 	if msg.err != nil {
 		m.flashCopy(msg.err.Error())
 		return
 	}
-	m.clearComments(msg.ids)
+	m.clearComments(msg.sent)
 	m.lastSent = msg.agent.Block
-	sent := plural(len(msg.ids), "comment")
+	sent := plural(len(msg.sent), "comment")
 	m.flash(fmt.Sprintf("sent %s to %s", sent, msg.agent.Name))
 }
 
@@ -338,7 +232,10 @@ func (m *model) startSend() tea.Cmd {
 		m.flashCopy("review too large to send")
 		return nil
 	case m.rex == nil:
-		m.flashCopy("not inside Rex")
+		m.flashCopy("not in Rex")
+		return nil
+	case m.sends > 0:
+		m.flash("a send runs")
 		return nil
 	}
 	m.flash("sending…")
@@ -348,58 +245,57 @@ func (m *model) startSend() tea.Cmd {
 
 // copyComments copies the review to the clipboard. A good copy clears
 // the comments, as a send does.
-func (m *model) copyComments() tea.Cmd {
+func (m *model) copyComments() {
 	if m.comments.Len() == 0 {
 		m.flash("no comments yet")
-		return nil
+		return
 	}
-	var ids []int
-	for _, c := range m.comments.All() {
-		ids = append(ids, c.ID)
-	}
-	m.sends++
-	return m.copyText(m.reviewText(), "copied "+plural(len(ids), "comment"), ids)
+	texts := m.commentTexts()
+	m.copyText(m.reviewText(), "copied "+plural(len(texts), "comment"), texts)
 }
 
-// copyText returns a command that writes text to the clipboard. If the
-// copy works, onCopied removes the comments ids and shows done.
-func (m *model) copyText(text, done string, ids []int) tea.Cmd {
-	ctx := m.ctx
-	return func() tea.Msg {
-		err := clipboard.Write(ctx, text)
-		return copiedMsg{ids: ids, done: done, err: err}
-	}
-}
+// copyTimeout is the longest time of a copy.
+const copyTimeout = 2 * time.Second
 
-// onCopied shows the result of a copy. A good copy of the comments
-// removes them. The comments that the user adds or changes during the
-// copy stay.
-func (m *model) onCopied(msg copiedMsg) {
-	if msg.ids != nil {
-		m.sends--
-	}
+// copyText writes text to the clipboard. If the copy works, it removes
+// the comments texts and shows done. As in herdr-reviewr, the copy runs
+// before the next frame, so two copies keep their order. A clipboard tool
+// that does not answer fails after copyTimeout. As in herdr-reviewr, the
+// message of a failure names only the fix that the user can make. The log
+// has the error.
+func (m *model) copyText(text, done string, texts map[int]string) {
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, copyTimeout,
+		fmt.Errorf("copy: %v timeout: %w", copyTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("copy: done: %w", context.Canceled))
+	err := clipboard.Write(ctx, m.env, text)
 	switch {
-	case errors.Is(msg.err, clipboard.ErrNoTool):
+	case errors.Is(err, clipboard.ErrNoTool):
 		m.flash("copy failed: install wl-clipboard, xclip, or xsel")
-	case msg.err != nil:
-		m.log.Warn("copy failed", "err", msg.err)
+	case err != nil:
+		m.log.Warn("copy failed", "err", err)
 		m.flash("copy failed")
 	default:
-		m.clearComments(msg.ids)
-		m.flash(msg.done)
+		m.clearComments(texts)
+		m.flash(done)
 	}
 }
 
-// inCommentList tells if the comment list is open.
+// inCommentList reports whether the comment list is open.
 func (m *model) inCommentList() bool {
 	return m.mode == modeOverlay && m.overlay != nil && m.overlay.kind == overlayComments
 }
 
-// clearComments removes the comments ids after a send or a copy. An open
-// comment list shows the rest, or closes if no comment stays.
-func (m *model) clearComments(ids []int) {
-	for _, id := range ids {
-		m.comments.Remove(id)
+// clearComments removes the comments of texts after a send or a copy. A
+// comment whose text is not the text in texts stays, because the user
+// edits it during the send. An open comment list shows the rest, or
+// closes if no comment stays.
+func (m *model) clearComments(texts map[int]string) {
+	for id, text := range texts {
+		if c := m.comments.Find(id); c != nil && c.Text == text {
+			m.comments.Remove(id)
+		}
 	}
 	if m.inCommentList() {
 		if m.comments.Len() == 0 {
@@ -412,7 +308,9 @@ func (m *model) clearComments(ids []int) {
 
 // flashCopy shows why the review cannot go to an agent, and tells the
 // user to copy it.
-func (m *model) flashCopy(why string) { m.flash(why + ", press y to copy") }
+func (m *model) flashCopy(why string) {
+	m.flash(why + ", press " + firstKey(m.keys.Copy) + " to copy")
+}
 
 // plural returns n and word, with an s if n is not 1.
 func plural(n int, word string) string {

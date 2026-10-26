@@ -18,6 +18,7 @@ const lineNumberColor = "8"
 // RenderFile shows src, the content of the file at path, with line numbers
 // and syntax colours. Each row is a [KindEqual] row, with the same line
 // number on the two sides. The line numbers count as the [SideNew] side.
+// RenderFile uses only the Width, Offset, Wrap, and Cache fields of o.
 func RenderFile(path, src string, o Options) *Diff {
 	// Chroma makes a lone CR a line break. RenderFile shows a lone CR as a
 	// symbol, so that the lines are the same as [Lines] gives.
@@ -25,13 +26,15 @@ func RenderFile(path, src string, o Options) *Diff {
 	src = strings.NewReplacer(
 		"\r\n", "\n",
 		"\r", "\u240d",
-		"\t", strings.Repeat(" ", tabWidth),
+		"\t", strings.Repeat(" ", diffview.TabWidth),
 	).Replace(src)
-	hl := strings.Split(o.Cache.fileColours(path, src), "\n")
-	hl = hl[:min(len(hl), len(Lines(src)))] // chroma can add a final newline
+	hl := strings.Split(o.Cache.fileColors(path, src), "\n")
+	hl = hl[:min(len(hl), countLines(src))] // chroma can add a final newline
 	digits := len(strconv.Itoa(len(hl)))
 	numWidth := digits + 2 // a space on each side of the number
-	numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(lineNumberColor))
+	// The style renders once, around a format for the number.
+	numFmt := lipgloss.NewStyle().Foreground(lipgloss.Color(lineNumberColor)).
+		Render(" %*d ") + " "
 	d := &Diff{newNum: numWidth, src: [2]string{raw, raw}, wrap: o.Wrap}
 	d.codeAt = [2]int{numWidth + 1, numWidth + 1}
 	if !o.Wrap {
@@ -43,7 +46,7 @@ func RenderFile(path, src string, o Options) *Diff {
 		for k, p := range fileLineParts(l, code, o) {
 			num := blank
 			if k == 0 {
-				num = numStyle.Render(fmt.Sprintf(" %*d ", digits, i+1)) + " "
+				num = fmt.Sprintf(numFmt, digits, i+1)
 			}
 			line := num + p
 			if o.Width > 0 { // the number or a wide character can be too wide
@@ -74,14 +77,14 @@ func fileLineParts(l string, code int, o Options) []string {
 		wrapped := ansi.Hardwrap(lipgloss.Wrap(l, code, ""), code, true)
 		return strings.Split(wrapped, "\n")
 	case o.Width > 0:
-		return []string{ansi.Truncate(ansi.TruncateLeft(l, o.Offset, ""), code, "…")}
+		return []string{ansi.Truncate(diffview.CutLeft(l, o.Offset), code, "…")}
 	}
-	return []string{ansi.TruncateLeft(l, o.Offset, "")}
+	return []string{diffview.CutLeft(l, o.Offset)}
 }
 
-// fileColours returns highlight(path, src), and keeps it for the next
+// fileColors returns highlight(path, src), and keeps it for the next
 // call. A nil c keeps nothing.
-func (c *Cache) fileColours(path, src string) string {
+func (c *Cache) fileColors(path, src string) string {
 	if c == nil {
 		return highlight(path, src)
 	}

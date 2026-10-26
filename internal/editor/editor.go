@@ -1,9 +1,11 @@
-// Package editor makes the sh command that opens a file at a line in a
-// text editor. It also tells if the editor opens a window or draws in the
-// terminal.
+// Package editor picks the text editor of the user, and makes the sh
+// command that opens a file at a line in it. It also reports whether the
+// editor opens a window or draws in the terminal.
 package editor
 
 import (
+	"cmp"
+	"errors"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -18,26 +20,56 @@ type Command struct {
 	Window  bool   // the editor opens a window, not a terminal editor
 }
 
-// Template returns the command that opens file at line with template,
+// Sources are the places that can name the editor, in the order that
+// Resolve tries them.
+type Sources struct {
+	Template string // the editor command of the settings
+	Visual   string // $VISUAL
+	Editor   string // $EDITOR
+	Git      string // core.editor
+}
+
+// Resolve returns the command that opens file at line. It uses
+// s.Template if it is not empty. Else it uses the first of s.Visual,
+// s.Editor, and s.Git that is not blank. Each error is a message for the
+// user.
+func Resolve(s Sources, file string, line int) (Command, error) {
+	var c Command
+	if s.Template != "" {
+		c = fromTemplate(s.Template, file, line)
+	} else {
+		e := cmp.Or(strings.TrimSpace(s.Visual), strings.TrimSpace(s.Editor), strings.TrimSpace(s.Git))
+		if e == "" {
+			return Command{}, errors.New(`no editor: set "editor" in rexdiff.lua, $EDITOR, or git's core.editor`)
+		}
+		c = fromEditor(e, file, line)
+	}
+	if c.Program == "" {
+		return Command{}, errors.New("the editor command names no program")
+	}
+	return c, nil
+}
+
+// fromTemplate returns the command that opens file at line with template,
 // a command that the user writes. The template gets file in place of
 // {file}, and line in place of {line}. Without {file}, file goes at the
 // end.
-func Template(template, file string, line int) Command {
-	r := strings.NewReplacer("{file}", ShellQuote(file), "{line}", strconv.Itoa(line))
+func fromTemplate(template, file string, line int) Command {
+	r := strings.NewReplacer("{file}", shellQuote(file), "{line}", strconv.Itoa(line))
 	script := r.Replace(template)
 	if !strings.Contains(template, "{file}") {
-		script += " " + ShellQuote(file)
+		script += " " + shellQuote(file)
 	}
-	return Command{script, program(template), dialectOf(template).window}
+	return Command{Script: script, Program: program(template), Window: dialectOf(template).window}
 }
 
-// Program returns the command that opens file at line with command, the
-// command of an editor program such as the value of $EDITOR. Program adds
-// file and line in the form that the editor expects.
-func Program(command, file string, line int) Command {
+// fromEditor returns the command that opens file at line in an editor.
+// command starts the editor, for example the value of $EDITOR. fromEditor
+// adds file and line in the form that the editor expects.
+func fromEditor(command, file string, line int) Command {
 	d := dialectOf(command)
-	n, f := strconv.Itoa(line), ShellQuote(file)
-	at := ShellQuote(file + ":" + n)
+	n, f := strconv.Itoa(line), shellQuote(file)
+	at := shellQuote(file + ":" + n)
 	var args string
 	switch d.line {
 	case argNone:
@@ -51,11 +83,11 @@ func Program(command, file string, line int) Command {
 	case argFlag:
 		args = "--line " + n + " " + f
 	}
-	return Command{command + " " + args, program(command), d.window}
+	return Command{Script: command + " " + args, Program: program(command), Window: d.window}
 }
 
-// ShellQuote quotes s as one word for sh.
-func ShellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+// shellQuote quotes s as one word for sh.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // lineArg is how an editor takes the line to open at.
 type lineArg int
@@ -76,9 +108,10 @@ type dialect struct {
 
 // dialects has the known editors, by program name. The table is the same
 // as in herdr-reviewr. The table also lists fresh, open, and xdg-open.
-var dialects = makeDialects()
+var dialects = knownDialects()
 
-func makeDialects() map[string]dialect {
+// knownDialects returns the table of dialects.
+func knownDialects() map[string]dialect {
 	d := map[string]dialect{}
 	add := func(dl dialect, names ...string) {
 		for _, n := range names {

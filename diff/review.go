@@ -8,7 +8,9 @@ import (
 
 // Review returns the comments as herdr-reviewr text for a coding agent. It
 // writes the prefix, if not empty, then the comments in [Comments.All] order.
-// Blank lines separate them. The text has no control characters. A comment is:
+// Blank lines separate them. The text has no control characters.
+//
+// This is an example of a comment:
 //
 //	a.go:3-4
 //	 x := 1
@@ -33,7 +35,8 @@ func format(c *Comment) string {
 	// diff.
 	if len(c.snippet) > 0 {
 		for _, l := range c.snippet {
-			b.WriteString("\n" + termtext.Plain(l))
+			b.WriteString("\n")
+			b.WriteString(termtext.Plain(l))
 		}
 	} else {
 		mark := "+"
@@ -41,7 +44,9 @@ func format(c *Comment) string {
 			mark = "-"
 		}
 		for _, l := range c.code {
-			b.WriteString("\n" + mark + termtext.Plain(l))
+			b.WriteString("\n")
+			b.WriteString(mark)
+			b.WriteString(termtext.Plain(l))
 		}
 	}
 	var text []string
@@ -50,13 +55,14 @@ func format(c *Comment) string {
 			text = append(text, strings.TrimRight(l, " \t"))
 		}
 	}
-	b.WriteString("\n" + strings.Join(text, "\n"))
+	b.WriteString("\n")
+	b.WriteString(strings.Join(text, "\n"))
 	return b.String()
 }
 
 // snippet returns rows as unified diff lines. See [NewComment].
-func snippet(rows []Row, old, new string) []string {
-	oldLines, newLines := Lines(old), Lines(new)
+func snippet(rows []Row, before, after string) []string {
+	oldLines, newLines := Lines(before), Lines(after)
 	line := func(ls []string, n int) string {
 		if n >= 1 && n-1 < len(ls) {
 			return ls[n-1]

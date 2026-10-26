@@ -1,5 +1,5 @@
-// Package search finds the files of the search screen. The limits come
-// from herdr-reviewr.
+// Package search finds the files of the search screen, and the lines of
+// the find band. The limits and the smart case come from herdr-reviewr.
 package search
 
 import (
@@ -8,11 +8,13 @@ import (
 	"github.com/sahilm/fuzzy"
 )
 
-// The search shows at most these numbers of results. A "… more" row
-// tells that there are others.
+// The limits of the results. A "… more" row tells that there are others.
 const (
-	FileLimit = 50
-	CodeLimit = 200
+	// MaxFiles is the largest number of files that the search shows.
+	MaxFiles = 50
+	// MaxCodeLines is the largest number of matching lines that the search
+	// shows.
+	MaxCodeLines = 200
 )
 
 // Files returns at most limit of paths that match q, the best match
@@ -43,4 +45,15 @@ func Files(paths, recent []string, q string, limit int) (hits []string, total in
 		hits = append(hits, m.Str)
 	}
 	return hits, len(ms)
+}
+
+// Indices returns the indices of the labels that match q, the best match
+// first. The match is the same fuzzy match as in Files.
+func Indices(q string, labels []string) []int {
+	ms := fuzzy.Find(q, labels)
+	is := make([]int, len(ms))
+	for i, m := range ms {
+		is[i] = m.Index
+	}
+	return is
 }

@@ -2,6 +2,7 @@ package diff
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -14,7 +15,7 @@ import (
 // side. The index can be past the end of the line, for a cell after the
 // code. ok is false if the cell is not on code, for example on a line
 // number, a mark, or a hunk header.
-func (d *Diff) Cell(row, x int) (s Side, line, char int, ok bool) {
+func (d *Diff) Cell(row, x int) (s Side, line, index int, ok bool) {
 	if row < 0 || row >= len(d.Rows) || d.Rows[row].Kind == KindHunk {
 		return 0, 0, 0, false
 	}
@@ -30,16 +31,15 @@ func (d *Diff) Cell(row, x int) (s Side, line, char int, ok bool) {
 	if onNumber || line == 0 || x < d.codeAt[s] {
 		return 0, 0, 0, false
 	}
-	lines := Lines(d.src[s])
-	if line > len(lines) {
+	text, ok := lineAt(d.src[s], line)
+	if !ok {
 		return 0, 0, 0, false
 	}
-	text := lines[line-1]
 	col := x - d.codeAt[s] + d.offset
 	if d.wrap {
 		start, width := d.segmentStart(row, s, text)
 		if col >= width { // the blank cells after a wrapped part
-			return s, line, len([]rune(text)), true
+			return s, line, utf8.RuneCountInString(text), true
 		}
 		col += start
 	}
@@ -85,23 +85,36 @@ func (d *Diff) segment(i int, s Side) string {
 // expand returns line as the screen shows it, with the tabs as spaces and
 // the control characters as symbols.
 func expand(line string) string {
-	return diffview.Escape(strings.ReplaceAll(line, "\t", strings.Repeat(" ", tabWidth)))
+	return diffview.Escape(strings.ReplaceAll(line, "\t", strings.Repeat(" ", diffview.TabWidth)))
 }
 
-// runeAt returns the index of the rune of line that covers column col.
-// It returns the number of runes if col is past the end.
+// runeAt returns the index of the first rune of the grapheme cluster of
+// line that covers column col. It returns the number of runes if col is
+// past the end.
 func runeAt(line string, col int) int {
 	i, c := 0, 0
-	for _, r := range line {
-		w := tabWidth
-		if r != '\t' {
-			w = ansi.StringWidth(diffview.Escape(string(r)))
+	for line != "" {
+		g, _ := ansi.FirstGraphemeCluster(line, ansi.GraphemeWidth)
+		w := diffview.TabWidth
+		if g != "\t" {
+			w = ansi.StringWidth(diffview.Escape(g))
 		}
 		if col < c+w {
 			return i
 		}
 		c += w
-		i++
+		i += utf8.RuneCountInString(g)
+		line = line[len(g):]
 	}
 	return i
+}
+
+// lineAt returns line n of src, from 1, as [Lines] splits it.
+func lineAt(src string, n int) (string, bool) {
+	for l := range strings.Lines(src) {
+		if n--; n == 0 {
+			return trimEOL(l), true
+		}
+	}
+	return "", false
 }

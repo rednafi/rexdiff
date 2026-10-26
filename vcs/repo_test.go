@@ -7,71 +7,91 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
+	"github.com/rednafi/rexdiff/internal/proc"
+	"github.com/rednafi/rexdiff/internal/testgit"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// newRepo makes a repository with two commits: "init" on main and "b" on
-// the branch feat. The working tree has uncommitted changes, an untracked
-// file, and an ignored file.
-func newRepo(t *testing.T) (*vcs.Repo, string) {
-	t.Helper()
-	dir := filepath.Join(t.TempDir(), "a repo ") // git keeps the space
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
+// testRepo is the repository of newRepo. It has two commits: "init" on
+// main and "b" on the branch feat. The working tree has uncommitted
+// changes, an untracked file, and an ignored file.
+var testRepo = testgit.NewFixture(func(tb testing.TB, dir string) {
+	tb.Helper()
+	testgit.InitRepo(tb, dir)
+	run := func(args ...string) {
+		tb.Helper()
+		testgit.Git(tb, dir, args...)
 	}
-	run := func(args ...string) { git(t, dir, args...) }
-	run("init", "-q", "-b", "main")
-	write(t, dir, "a.txt", "one\n")
+	testgit.WriteFile(tb, dir, "a.txt", "one\n")
 	run("add", ".")
 	run("commit", "-qm", "init")
 	run("checkout", "-qb", "feat")
-	write(t, dir, "b.txt", "bee\n")
+	testgit.WriteFile(tb, dir, "b.txt", "bee\n")
 	run("add", ".")
 	run("commit", "-qm", "b")
-	write(t, dir, "a.txt", "one\ntwo\n")
-	write(t, dir, "new.txt", "untracked\n")
-	write(t, dir, ".gitignore", "ignored.txt\nbuild/\n")
-	write(t, dir, "ignored.txt", "x\n")
-	write(t, dir, "build/out", "x\n")
+	testgit.WriteFile(tb, dir, "a.txt", "one\ntwo\n")
+	testgit.WriteFile(tb, dir, "new.txt", "untracked\n")
+	testgit.WriteFile(tb, dir, ".gitignore", "ignored.txt\nbuild/\n")
+	testgit.WriteFile(tb, dir, "ignored.txt", "x\n")
+	testgit.WriteFile(tb, dir, "build/out", "x\n")
+})
+
+// newRepo copies testRepo to a new directory, and returns the repository
+// and its directory. The repository has the environment of
+// [testgit.ToolEnv].
+func newRepo(t *testing.T) (*vcs.Repo, string) {
+	t.Helper()
+	return newRepoEnv(t, testgit.ToolEnv(t))
+}
+
+// newRepoEnv is like newRepo, but the repository has the environment env.
+func newRepoEnv(t *testing.T, env []string) (*vcs.Repo, string) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "a repo ") // git keeps the space
+	testRepo.Copy(t, dir)
 
 	// Open from a subdirectory. Open must find the root.
-	r, err := vcs.Open(t.Context(), filepath.Join(dir, "build"))
+	return openEnv(t, filepath.Join(dir, "build"), env), dir
+}
+
+// open opens the repository at dir with the environment of
+// [testgit.ToolEnv], and closes it at the end of the test.
+func open(t *testing.T, dir string) *vcs.Repo {
+	t.Helper()
+	return openEnv(t, dir, testgit.ToolEnv(t))
+}
+
+// openEnv is like open, but the repository has the environment env.
+func openEnv(t *testing.T, dir string, env []string) *vcs.Repo {
+	t.Helper()
+	r, err := vcs.Open(t.Context(), env, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return r, dir
+	t.Cleanup(func() { _ = r.Close() })
+	return r
 }
 
-// git runs git in dir and fails the test if git fails.
-func git(t *testing.T, dir string, args ...string) {
+// gitLink returns an environment with a PATH of only a new directory, and
+// the link to git in that directory. A test removes the link to take git
+// away from a repository that is open.
+func gitLink(t *testing.T) (env []string, link string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=t",
-		"GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t",
-		"GIT_COMMITTER_EMAIL=t@t",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %s", args, out)
-	}
+	bin := t.TempDir()
+	testgit.LinkGit(t, bin)
+	return append(testgit.Env(), "PATH="+bin), filepath.Join(bin, "git")
 }
 
-// write writes s to the file name in dir, and makes its parent directories.
-func write(t *testing.T, dir, name, s string) {
+// removeGit removes the link to git of gitLink.
+func removeGit(t *testing.T, link string) {
 	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+	if err := os.Remove(link); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -89,7 +109,7 @@ func snapshot(t *testing.T, r *vcs.Repo) string {
 // head returns the tree of HEAD.
 func head(t *testing.T, r *vcs.Repo) string {
 	t.Helper()
-	tree, err := r.Head(t.Context())
+	tree, err := r.HeadTree(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +119,7 @@ func head(t *testing.T, r *vcs.Repo) string {
 // parent returns the tree of the parent of rev.
 func parent(t *testing.T, r *vcs.Repo, rev string) string {
 	t.Helper()
-	tree, err := r.Parent(t.Context(), rev)
+	tree, err := r.ParentTree(t.Context(), rev)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,42 +146,64 @@ func names(fs []vcs.File) string {
 	return strings.Join(n, " ")
 }
 
+// uncommitted returns the names of the files that differ from HEAD to the
+// working tree.
+func uncommitted(t *testing.T, r *vcs.Repo) string {
+	t.Helper()
+	return names(changes(t, r, head(t, r), snapshot(t, r)))
+}
+
+// paths returns the path of each entry. An ignored path starts with "!".
+func paths(es []vcs.Entry) []string {
+	var out []string
+	for _, e := range es {
+		if e.Ignored {
+			out = append(out, "!"+e.Path)
+		} else {
+			out = append(out, e.Path)
+		}
+	}
+	return out
+}
+
 // TestScopes checks the trees that each scope of a review compares.
 func TestScopes(t *testing.T) {
+	t.Parallel()
 	r, dir := newRepo(t)
 	ctx := t.Context()
 
 	now := snapshot(t, r)
 	unc := changes(t, r, head(t, r), now)
 	if got := names(unc); got != "A.gitignore Ma.txt Anew.txt" {
-		t.Errorf("uncommitted: %s, want A.gitignore Ma.txt Anew.txt", got)
+		t.Fatalf("uncommitted: %s, want A.gitignore Ma.txt Anew.txt", got)
 	}
 	if unc[1].Old != "one\n" || unc[1].New != "one\ntwo\n" {
-		t.Errorf("a.txt: Old %q, New %q; want %q, %q",
+		t.Errorf("a.txt: Old %q, New %q, want %q, %q",
 			unc[1].Old, unc[1].New, "one\n", "one\ntwo\n")
 	}
 
-	mb, err := r.MergeBase(ctx, "main")
+	mb, err := r.MergeBaseTree(ctx, "main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := names(changes(t, r, mb, now)); got != "A.gitignore Ma.txt Ab.txt Anew.txt" {
 		t.Errorf("branch: %s, want A.gitignore Ma.txt Ab.txt Anew.txt", got)
 	}
-	if _, err := r.MergeBase(ctx, "nosuchbranch"); err == nil {
-		t.Error("MergeBase(nosuchbranch): no error, want an error")
+	_, err = r.MergeBaseTree(ctx, "nosuchbranch")
+	if _, ok := errors.AsType[*exec.ExitError](err); !ok {
+		t.Errorf("MergeBaseTree(nosuchbranch) = %v, want the error of git", err)
 	}
 
 	// In a turn, rexdiff takes a snapshot and then the agent edits a file.
-	write(t, dir, "new.txt", "untracked\nmore\n")
+	testgit.WriteFile(t, dir, "new.txt", "untracked\nmore\n")
 	tf := changes(t, r, now, snapshot(t, r))
 	if got := names(tf); got != "Mnew.txt" || tf[0].New != "untracked\nmore\n" {
 		t.Errorf("turn: %s, want Mnew.txt with the new line", got)
 	}
 
 	// Snapshot must not change the real index.
-	st, _ := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
-	if !strings.Contains(string(st), "?? new.txt") {
+	st := testgit.Git(t, dir, "status", "--porcelain")
+	if !strings.Contains(st, "?? new.txt") {
 		t.Errorf("git status after Snapshot = %q, want ?? new.txt", st)
 	}
 
@@ -183,9 +225,10 @@ func TestScopes(t *testing.T) {
 	}
 }
 
-// TestMissingCommit checks that Head and Parent fail when a commit object
-// is missing.
+// TestMissingCommit checks that HeadTree and ParentTree fail when a commit
+// object is missing.
 func TestMissingCommit(t *testing.T) {
+	t.Parallel()
 	// The empty tree is not a correct result. It shows every file as added.
 	r, dir := newRepo(t)
 	ctx := t.Context()
@@ -201,15 +244,15 @@ func TestMissingCommit(t *testing.T) {
 		}
 	}
 	remove(cs[1].SHA)
-	if id, err := r.Parent(ctx, "HEAD"); err == nil {
-		t.Errorf("Parent(HEAD) = %s with no parent commit, want an error", id)
+	if id, err := r.ParentTree(ctx, "HEAD"); err == nil {
+		t.Errorf("ParentTree(HEAD) = %s with no parent commit, want an error", id)
 	}
-	if id, err := r.Parent(ctx, "nope"); err == nil {
-		t.Errorf("Parent(nope) = %s, want an error", id)
+	if id, err := r.ParentTree(ctx, "nope"); err == nil {
+		t.Errorf("ParentTree(nope) = %s, want an error", id)
 	}
 	remove(cs[0].SHA)
-	if id, err := r.Head(ctx); err == nil {
-		t.Errorf("Head = %s with no HEAD commit, want an error", id)
+	if id, err := r.HeadTree(ctx); err == nil {
+		t.Errorf("HeadTree = %s with no HEAD commit, want an error", id)
 	}
 }
 
@@ -217,43 +260,50 @@ func TestMissingCommit(t *testing.T) {
 // and big files, and do not read their content. The limits are the same as
 // in herdr-reviewr. Diff adds the sizes of the two versions.
 func TestDiffSkipsBinaryAndBigFiles(t *testing.T) {
+	t.Parallel()
 	r, dir := newRepo(t)
 	half := strings.Repeat("x", 1_100_000) + "\n" // two make 2,200,002 bytes
 	lines := strings.Repeat("x\n", 30_000)        // two make 60,000 lines
 	// Two versions with 25,000 lines each are not too big.
 	limit := strings.Repeat("y\n", 25_000)
-	write(t, dir, "bytes", half)
-	write(t, dir, "lines", lines)
-	write(t, dir, "limit", limit)
-	git(t, dir, "add", ".")
-	git(t, dir, "commit", "-qm", "base")
-	write(t, dir, "bytes", "y"+half)
-	write(t, dir, "lines", "y"+lines)
-	write(t, dir, "limit", "z"+limit)
-	write(t, dir, "bin", "a\x00b")
-	write(t, dir, "late", strings.Repeat("x", 9000)+"\x00") // NUL at byte 9000
-	write(t, dir, "big", strings.Repeat("x\n", 50_001))
-	write(t, dir, "huge", strings.Repeat("x", 2_000_001))
-	// Diff reads this file after the skipped content.
-	write(t, dir, "small", "after\n")
+	testgit.WriteFile(t, dir, "bytes", half)
+	testgit.WriteFile(t, dir, "lines", lines)
+	testgit.WriteFile(t, dir, "limit", limit)
+	testgit.Git(t, dir, "add", ".")
+	testgit.Git(t, dir, "commit", "-qm", "base")
+	testgit.WriteFile(t, dir, "bytes", "y"+half)
+	testgit.WriteFile(t, dir, "lines", "y"+lines)
+	testgit.WriteFile(t, dir, "limit", "z"+limit)
+	err := os.CopyFS(dir, fstest.MapFS{
+		"bin": {Data: []byte("a\x00b")},
+		// The NUL of "late" is at byte 9000.
+		"late": {Data: []byte(strings.Repeat("x", 9000) + "\x00")},
+		"big":  {Data: []byte(strings.Repeat("x\n", 50_001))},
+		"huge": {Data: []byte(strings.Repeat("x", 2_000_001))},
+		// Diff reads this file after the skipped content.
+		"small": {Data: []byte("after\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	got := map[string]vcs.File{}
 	for _, f := range changes(t, r, head(t, r), snapshot(t, r)) {
 		got[f.Path] = f
 	}
 	for _, p := range []string{"bin", "late"} {
-		if f := got[p]; !f.Binary || f.New != "" {
-			t.Errorf("%s: %+v, want Binary with no New", p, f)
+		if f := got[p]; !errors.Is(f.Skip, vcs.ErrBinary) || f.New != "" {
+			t.Errorf("%s: %+v, want Skip ErrBinary with no New", p, f)
 		}
 	}
 	for _, p := range []string{"bytes", "lines", "big", "huge"} {
-		if f := got[p]; !f.TooBig || f.Old != "" || f.New != "" {
-			t.Errorf("%s: TooBig = %v, Old has %d bytes, New has %d bytes; want true, 0, 0",
-				p, f.TooBig, len(f.Old), len(f.New))
+		if f := got[p]; !errors.Is(f.Skip, vcs.ErrTooBig) || f.Old != "" || f.New != "" {
+			t.Errorf("%s: Skip = %v, Old has %d bytes, New has %d bytes, want ErrTooBig, 0, 0",
+				p, f.Skip, len(f.Old), len(f.New))
 		}
 	}
-	if f := got["limit"]; f.TooBig || f.New != "z"+limit {
-		t.Errorf("limit: TooBig = %v, New has %d bytes; want false, %d",
-			f.TooBig, len(f.New), len(limit)+1)
+	if f := got["limit"]; f.Skip != nil || f.New != "z"+limit {
+		t.Errorf("limit: Skip = %v, New has %d bytes, want nil, %d",
+			f.Skip, len(f.New), len(limit)+1)
 	}
 	if f := got["small"]; f.New != "after\n" {
 		t.Errorf("small: New = %q, want %q", f.New, "after\n")
@@ -274,36 +324,33 @@ func TestDiffSkipsBinaryAndBigFiles(t *testing.T) {
 // TestFilesInConflict checks that Files lists a path in a merge conflict
 // once.
 func TestFilesInConflict(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	run := func(args ...string) { git(t, dir, args...) }
-	run("init", "-q", "-b", "main")
-	write(t, dir, "f.txt", "base\n")
+	testgit.InitRepo(t, dir)
+	run := func(args ...string) {
+		t.Helper()
+		testgit.Git(t, dir, args...)
+	}
+	testgit.WriteFile(t, dir, "f.txt", "base\n")
 	run("add", ".")
 	run("commit", "-qm", "base")
 	run("checkout", "-qb", "other")
-	write(t, dir, "f.txt", "other\n")
+	testgit.WriteFile(t, dir, "f.txt", "other\n")
 	run("commit", "-qam", "other")
 	run("checkout", "-q", "main")
-	write(t, dir, "f.txt", "main\n")
+	testgit.WriteFile(t, dir, "f.txt", "main\n")
 	run("commit", "-qam", "main")
-	cmd := exec.Command("git", "merge", "other")
+	cmd := proc.Command(t.Context(), testgit.ToolEnv(t), "git", "merge", "other")
 	cmd.Dir = dir
 	if err := cmd.Run(); err == nil {
 		t.Fatal("git merge other: no error, want a conflict")
 	}
-	r, err := vcs.Open(t.Context(), dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := open(t, dir)
 	es, err := r.Files(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, e := range es {
-		got = append(got, e.Path)
-	}
-	if want := []string{"f.txt"}; !slices.Equal(got, want) {
+	if got, want := paths(es), []string{"f.txt"}; !slices.Equal(got, want) {
 		t.Errorf("Files = %q, want %q", got, want)
 	}
 }
@@ -311,6 +358,7 @@ func TestFilesInConflict(t *testing.T) {
 // TestWorktree checks Files, Grep, ReadFile, and Contains in the working
 // tree.
 func TestWorktree(t *testing.T) {
+	t.Parallel()
 	r, dir := newRepo(t)
 	ctx := t.Context()
 
@@ -318,43 +366,33 @@ func TestWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, e := range es {
-		if e.Ignored {
-			got = append(got, "!"+e.Path)
-		} else {
-			got = append(got, e.Path)
-		}
-	}
 	want := ".gitignore a.txt b.txt !build/ !ignored.txt new.txt"
-	if got := strings.Join(got, " "); got != want {
+	if got := strings.Join(paths(es), " "); got != want {
 		t.Errorf("Files = %s, want %s", got, want)
 	}
 
-	write(t, dir, "build/sub/x", "x\n")
-	var ignored []string
-	for _, e := range r.IgnoredDir("build") {
-		ignored = append(ignored, e.Path)
-	}
-	if want := []string{"build/out", "build/sub/"}; !slices.Equal(ignored, want) {
+	testgit.WriteFile(t, dir, "build/sub/x", "x\n")
+	ignored := paths(r.IgnoredDir("build"))
+	if want := []string{"!build/out", "!build/sub/"}; !slices.Equal(ignored, want) {
 		t.Errorf("IgnoredDir(build) = %q, want %q", ignored, want)
 	}
 	if es := r.IgnoredDir("no such dir"); len(es) != 0 {
 		t.Errorf("IgnoredDir(no such dir) = %v, want none", es)
 	}
 
-	ms, _, err := r.Grep(ctx, "TWO", 10)
-	match := vcs.Match{Path: "a.txt", Line: 2, Text: "two"}
-	if err != nil || len(ms) != 1 || ms[0] != match {
-		t.Errorf("Grep(TWO) = %+v, %v, want [%+v], nil", ms, err, match)
+	// The search has smart case. An upper case letter matches only the
+	// same case. A query in lower case ignores case.
+	if ms, _, err := r.Grep(ctx, "TWO", 10, time.Minute); err != nil || len(ms) != 0 {
+		t.Errorf("Grep(TWO) = %+v, %v, want none, nil", ms, err)
 	}
-	write(t, dir, "a:é\n.txt", "x: two\n") // git quotes this name unless -z
-	ms, _, err = r.Grep(ctx, "x: two", 10)
-	match = vcs.Match{Path: "a:é\n.txt", Line: 1, Text: "x: two"}
+	// git quotes this name unless -z.
+	testgit.WriteFile(t, dir, "a:é\n.txt", "x: Two\n")
+	ms, _, err := r.Grep(ctx, "x: two", 10, time.Minute)
+	match := vcs.Match{Path: "a:é\n.txt", Line: 1, Text: "x: Two"}
 	if err != nil || len(ms) != 1 || ms[0] != match {
 		t.Errorf("Grep(x: two) = %+v, %v, want [%+v], nil", ms, err, match)
 	}
-	if ms, _, err := r.Grep(ctx, "nothing has this", 10); err != nil || len(ms) != 0 {
+	if ms, _, err := r.Grep(ctx, "nothing has this", 10, time.Minute); err != nil || len(ms) != 0 {
 		t.Errorf("Grep with no match = %+v, %v, want none, nil", ms, err)
 	}
 
@@ -362,7 +400,7 @@ func TestWorktree(t *testing.T) {
 		t.Errorf("ReadFile(a.txt) = %q, %v, want %q, nil",
 			s, err, "one\ntwo\n")
 	}
-	contains := []struct {
+	tests := []struct {
 		path string
 		want bool
 	}{
@@ -370,7 +408,7 @@ func TestWorktree(t *testing.T) {
 		{filepath.Dir(dir), false},
 		{dir + "x", false}, // a sibling with the same prefix
 	}
-	for _, tt := range contains {
+	for _, tt := range tests {
 		if got := r.Contains(tt.path); got != tt.want {
 			t.Errorf("Contains(%q) = %v, want %v", tt.path, got, tt.want)
 		}
@@ -378,15 +416,13 @@ func TestWorktree(t *testing.T) {
 }
 
 // TestOwns checks which directories are in the working tree, as in
-// herdr-reviewr: a subdirectory is, a nested repository and a relative or
-// outside path are not, and without git the answer is an error.
+// herdr-reviewr. A subdirectory is in it. A nested repository, a relative
+// path, and an outside path are not.
 func TestOwns(t *testing.T) {
+	t.Parallel()
 	r, dir := newRepo(t)
 	nested := filepath.Join(dir, "build", "nested")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	git(t, nested, "init", "-q")
+	testgit.InitRepo(t, nested)
 	tests := []struct {
 		dir  string
 		want bool
@@ -404,19 +440,27 @@ func TestOwns(t *testing.T) {
 			t.Errorf("Owns(%q) = %v, %v, want %v, nil", tt.dir, got, err, tt.want)
 		}
 	}
-	t.Setenv("PATH", t.TempDir())
+}
+
+// TestOwnsWithoutGit checks that Owns fails without git. No git runs for
+// a path outside the root.
+func TestOwnsWithoutGit(t *testing.T) {
+	t.Parallel()
+	env, link := gitLink(t)
+	r, dir := newRepoEnv(t, env)
+	removeGit(t, link)
 	if _, err := r.Owns(t.Context(), dir); err == nil {
 		t.Error("Owns without git gives no error")
 	}
-	// No git runs for a path outside the root.
 	if got, err := r.Owns(t.Context(), filepath.Dir(dir)); got || err != nil {
 		t.Errorf("Owns(outside) without git = %v, %v, want false, nil", got, err)
 	}
 }
 
-// TestRefs checks Branches, DefaultBase, and Resolve.
+// TestRefs checks Branch, Branches, DefaultBase, and Resolve.
 func TestRefs(t *testing.T) {
-	r, _ := newRepo(t)
+	t.Parallel()
+	r, dir := newRepo(t)
 	ctx := t.Context()
 	if bs, err := r.Branches(ctx); err != nil || strings.Join(bs, " ") != "feat main" {
 		t.Errorf("Branches = %v, %v, want [feat main], nil", bs, err)
@@ -424,20 +468,47 @@ func TestRefs(t *testing.T) {
 	if b := r.DefaultBase(ctx); b != "main" {
 		t.Errorf("DefaultBase = %q, want main", b)
 	}
+	// As in herdr-reviewr, the list has only the branches of origin, and
+	// origin/main hides main. The HEAD of origin is not a branch. The
+	// branch old has the oldest commit, so it is last.
+	for _, remote := range []string{"origin", "up"} {
+		testgit.Git(t, dir, "update-ref", "refs/remotes/"+remote+"/main", "main")
+		testgit.Git(t, dir, "symbolic-ref", "refs/remotes/"+remote+"/HEAD",
+			"refs/remotes/"+remote+"/main")
+	}
+	obj := t.TempDir()
+	const who = "A <a@example.com> 946684800 +0000\n"
+	testgit.WriteFile(t, obj, "old", "tree "+testgit.Git(t, dir, "rev-parse", "main^{tree}")+
+		"author "+who+"committer "+who+"\nold\n")
+	old := testgit.Git(t, dir, "hash-object", "-t", "commit", "-w", filepath.Join(obj, "old"))
+	testgit.Git(t, dir, "update-ref", "refs/heads/old", strings.TrimSpace(old))
+	want := "feat origin/main old"
+	if bs, err := r.Branches(ctx); err != nil || strings.Join(bs, " ") != want {
+		t.Errorf("Branches with remotes = %v, %v, want %s", bs, err, want)
+	}
 	if _, err := r.Resolve(ctx, "nosuchref"); err == nil {
 		t.Error("Resolve(nosuchref): no error, want an error")
+	}
+	testgit.Git(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone")
+	if b := r.DefaultBase(ctx); b != "main" {
+		t.Errorf("DefaultBase with a dangling origin/HEAD = %q, want main", b)
+	}
+
+	empty := t.TempDir()
+	testgit.InitRepo(t, empty)
+	if b, err := open(t, empty).Branch(ctx); err != nil || b != "main" {
+		t.Errorf("Branch with no commit = %q, %v, want main, nil", b, err)
 	}
 }
 
 // TestEditor checks that Editor returns core.editor, or "" if it is not set.
 func TestEditor(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Parallel()
 	r, dir := newRepo(t)
 	if got := r.Editor(t.Context()); got != "" {
 		t.Errorf("Editor with no core.editor = %q, want \"\"", got)
 	}
-	git(t, dir, "config", "core.editor", "vim -f")
+	testgit.Git(t, dir, "config", "core.editor", "vim -f")
 	if got := r.Editor(t.Context()); got != "vim -f" {
 		t.Errorf("Editor = %q, want \"vim -f\"", got)
 	}
@@ -446,25 +517,23 @@ func TestEditor(t *testing.T) {
 // TestDiffRenameAndSubmodule checks the old path of a rename and the
 // content that Diff gives for a submodule.
 func TestDiffRenameAndSubmodule(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	git(t, dir, "init", "-q")
-	write(t, dir, "old.txt", "one\ntwo\nthree\n")
+	testgit.InitRepo(t, dir)
+	testgit.WriteFile(t, dir, "old.txt", "one\ntwo\nthree\n")
 	const (
 		a = "1111111111111111111111111111111111111111"
 		b = "2222222222222222222222222222222222222222"
 	)
-	git(t, dir, "add", ".")
-	git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+a+",sub")
-	git(t, dir, "commit", "-qm", "one")
-	git(t, dir, "mv", "old.txt", "new.txt")
-	git(t, dir, "update-index", "--cacheinfo", "160000,"+b+",sub")
-	git(t, dir, "commit", "-qm", "two")
+	testgit.Git(t, dir, "add", ".")
+	testgit.Git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+a+",sub")
+	testgit.Git(t, dir, "commit", "-qm", "one")
+	testgit.Git(t, dir, "mv", "old.txt", "new.txt")
+	testgit.Git(t, dir, "update-index", "--cacheinfo", "160000,"+b+",sub")
+	testgit.Git(t, dir, "commit", "-qm", "two")
 
 	ctx := t.Context()
-	r, err := vcs.Open(ctx, dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := open(t, dir)
 	from, to := parent(t, r, "HEAD"), head(t, r)
 	got, err := r.Diff(ctx, from, to)
 	if err != nil {
@@ -485,43 +554,75 @@ func TestDiffRenameAndSubmodule(t *testing.T) {
 			New:    "Subproject commit " + b + "\n",
 		},
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Diff got:\n%+v\nwant:\n%+v", got, want)
+	if !slices.Equal(got, want) {
+		t.Errorf("Diff = \n%+v\nwant:\n%+v", got, want)
 	}
 }
 
 // TestOpenOutsideARepo checks that Open fails outside a repository.
 func TestOpenOutsideARepo(t *testing.T) {
-	if _, err := vcs.Open(t.Context(), t.TempDir()); err == nil {
+	t.Parallel()
+	if _, err := vcs.Open(t.Context(), testgit.ToolEnv(t), t.TempDir()); err == nil {
 		t.Error("Open outside a repository: no error, want an error")
 	}
 }
 
-// TestNewRepo checks Head and Snapshot in a repository with no commit and
-// no index.
+// TestNewRepo checks Open, Root, HeadTree, and Snapshot in a repository
+// with no commit and no index. The path of a root can have a newline.
 func TestNewRepo(t *testing.T) {
-	dir := t.TempDir()
-	git(t, dir, "init", "-q")
-	write(t, dir, "a.txt", "one\n")
-	r, err := vcs.Open(t.Context(), dir)
-	if err != nil {
+	t.Parallel()
+	tests := []struct{ name, root string }{
+		{"plain root", "repo"},
+		{"newline in root", "a\nb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join(t.TempDir(), tt.root)
+			testgit.InitRepo(t, dir)
+			testgit.WriteFile(t, dir, "a.txt", "one\n")
+			r, err := vcs.Open(t.Context(), testgit.ToolEnv(t), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want, _ := filepath.EvalSymlinks(dir); r.Root() != want {
+				t.Errorf("Root = %q, want %q", r.Root(), want)
+			}
+			if got := uncommitted(t, r); got != "Aa.txt" {
+				t.Errorf("Diff(HEAD, Snapshot) = %s, want Aa.txt", got)
+			}
+		})
+	}
+}
+
+// TestSnapshotBadIndex checks that Snapshot fails if it cannot read the
+// real index. Only a missing index means no index.
+func TestSnapshotBadIndex(t *testing.T) {
+	t.Parallel()
+	r, dir := newRepo(t)
+	idx := filepath.Join(dir, ".git", "index")
+	if err := os.Remove(idx); err != nil {
 		t.Fatal(err)
 	}
-	if got := names(changes(t, r, head(t, r), snapshot(t, r))); got != "Aa.txt" {
-		t.Errorf("Diff(Head, Snapshot) = %s, want Aa.txt", got)
+	if err := os.Symlink("index", idx); err != nil { // a loop
+		t.Fatal(err)
+	}
+	if tree, err := r.Snapshot(t.Context()); err == nil {
+		t.Errorf("Snapshot with a bad index = %s, want an error", tree)
 	}
 }
 
 // TestSnapshotRacyEdit checks that Snapshot sees a same-size edit in the
 // same second as the last write of the index.
 func TestSnapshotRacyEdit(t *testing.T) {
+	t.Parallel()
 	// git checks such "racily clean" files by their content. It finds them by
 	// the modification time of the index. The copy of the index must keep
 	// that time.
 	r, dir := newRepo(t)
-	git(t, dir, "config", "core.trustctime", "false")
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-qm", "all")
+	testgit.Git(t, dir, "config", "core.trustctime", "false")
+	testgit.Git(t, dir, "add", "-A")
+	testgit.Git(t, dir, "commit", "-qm", "all")
 	then := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	touch := func(name string) {
 		t.Helper()
@@ -529,25 +630,29 @@ func TestSnapshotRacyEdit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(t, dir, "b.txt", "bee\n")
+	testgit.WriteFile(t, dir, "b.txt", "bee\n")
 	touch("b.txt")
 	// The index entry gets the time of b.txt.
-	git(t, dir, "update-index", "--really-refresh")
+	testgit.Git(t, dir, "update-index", "--really-refresh")
 	touch(".git/index")
-	write(t, dir, "b.txt", "BEE\n") // the same size and time
+	testgit.WriteFile(t, dir, "b.txt", "BEE\n") // the same size and time
 	touch("b.txt")
 
-	if got := names(changes(t, r, head(t, r), snapshot(t, r))); got != "Mb.txt" {
+	if got := uncommitted(t, r); got != "Mb.txt" {
 		t.Errorf("Diff(HEAD, Snapshot) = %s, want Mb.txt", got)
 	}
 }
 
-// TestCommitsLikeHerdr checks the commits of the commit picker. They are
-// the first-parent commits after since, else the last 50.
-func TestCommitsLikeHerdr(t *testing.T) {
+// TestCommitsLikeHerdrReviewr checks the commits of the commit picker.
+// They are the first-parent commits after since, else the last 50.
+func TestCommitsLikeHerdrReviewr(t *testing.T) {
+	t.Parallel()
 	r, dir := newRepo(t)
 	ctx := t.Context()
-	run := func(args ...string) { git(t, dir, args...) }
+	run := func(args ...string) {
+		t.Helper()
+		testgit.Git(t, dir, args...)
+	}
 	run("checkout", "-qb", "side", "main")
 	run("commit", "-q", "--allow-empty", "-m", "side")
 	run("checkout", "-q", "feat")
@@ -563,7 +668,7 @@ func TestCommitsLikeHerdr(t *testing.T) {
 		return s
 	}
 
-	since, err := r.ForkPoint(ctx, "main")
+	since, err := r.MergeBaseCommit(ctx, "main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,31 +678,29 @@ func TestCommitsLikeHerdr(t *testing.T) {
 	}
 	got := subjects(cs)
 	if len(got) != 62 || got[0] != "c59" || got[60] != "merge side" || got[61] != "b" {
-		t.Errorf("Commits(fork point) = %d commits %q…, want c59 to b, no side", len(got), got[:3])
+		t.Errorf("Commits(fork point) = %d commits %q…, want c59 to b, no side", len(got), got[:min(3, len(got))])
 	}
 
 	cs, err = r.Commits(ctx, "")
 	if err != nil || len(cs) != vcs.LastCommits || cs[0].Subject != "c59" {
-		t.Errorf("Commits(\"\") = %d commits, %v; want the last %d", len(cs), err, vcs.LastCommits)
+		t.Errorf("Commits(\"\") = %d commits, %v, want the last %d", len(cs), err, vcs.LastCommits)
 	}
 
 	empty := t.TempDir()
-	git(t, empty, "init", "-q")
-	er, err := vcs.Open(ctx, empty)
-	if err != nil {
-		t.Fatal(err)
-	}
+	testgit.InitRepo(t, empty)
+	er := open(t, empty)
 	if cs, err := er.Commits(ctx, ""); err != nil || len(cs) != 0 {
-		t.Errorf("Commits with no commit = %v, %v; want none, no error", cs, err)
+		t.Errorf("Commits with no commit = %v, %v, want none, no error", cs, err)
 	}
 }
 
 // TestGrepLimit checks that Grep stops at the limit and tells that there
 // are more matches.
 func TestGrepLimit(t *testing.T) {
+	t.Parallel()
 	r, dir := newRepo(t)
 	ctx := t.Context()
-	write(t, dir, "many.txt", strings.Repeat("hit\n", 5000))
+	testgit.WriteFile(t, dir, "many.txt", strings.Repeat("hit\n", 5000))
 	tests := []struct {
 		limit    int
 		wantN    int
@@ -609,24 +712,47 @@ func TestGrepLimit(t *testing.T) {
 		{6000, 5000, false},
 	}
 	for _, tt := range tests {
-		ms, more, err := r.Grep(ctx, "hit", tt.limit)
+		ms, more, err := r.Grep(ctx, "hit", tt.limit, time.Minute)
 		if err != nil || len(ms) != tt.wantN || more != tt.wantMore {
-			t.Errorf("Grep(hit, %d) = %d matches, more %t, %v; want %d, %t, nil",
+			t.Errorf("Grep(hit, %d) = %d matches, more %t, %v, want %d, %t, nil",
 				tt.limit, len(ms), more, err, tt.wantN, tt.wantMore)
 		}
 	}
-	if ms, _, _ := r.Grep(ctx, "hit", 2); ms[1] != (vcs.Match{Path: "many.txt", Line: 2, Text: "hit"}) {
-		t.Errorf("Grep(hit, 2)[1] = %+v, want many.txt:2", ms[1])
+	want := vcs.Match{Path: "many.txt", Line: 2, Text: "hit"}
+	if ms, _, _ := r.Grep(ctx, "hit", 2, time.Minute); len(ms) != 2 || ms[1] != want {
+		t.Errorf("Grep(hit, 2) = %+v, want many.txt:2 second", ms)
 	}
 }
 
-// TestGrepCanceled checks that Grep returns the error of a canceled
+// TestGrepCancelled checks that Grep returns the cause of a cancelled
 // context.
-func TestGrepCanceled(t *testing.T) {
+func TestGrepCancelled(t *testing.T) {
+	t.Parallel()
 	r, _ := newRepo(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, _, err := r.Grep(ctx, "one", 10); !errors.Is(err, context.Canceled) {
-		t.Errorf("Grep with a canceled context = %v, want %v", err, context.Canceled)
+	ctx, cancel := context.WithCancelCause(t.Context())
+	errStop := errors.New("the test stops the search")
+	cancel(errStop)
+	if _, _, err := r.Grep(ctx, "one", 10, time.Minute); !errors.Is(err, errStop) {
+		t.Errorf("Grep with a cancelled context = %v, want the cause %v", err, errStop)
+	}
+}
+
+// TestSnapshotFollowsIndex checks that a Snapshot after an earlier one
+// drops a file that git now ignores, and keeps a file that the user adds
+// with "git add -f".
+func TestSnapshotFollowsIndex(t *testing.T) {
+	t.Parallel()
+	r, dir := newRepo(t)
+	testgit.WriteFile(t, dir, "build.log", "x\n")
+	testgit.WriteFile(t, dir, "keep.env", "k\n")
+	if got := uncommitted(t, r); got != "A.gitignore Ma.txt Abuild.log Akeep.env Anew.txt" {
+		t.Fatalf("Diff(HEAD, Snapshot) = %s, want A.gitignore Ma.txt Abuild.log Akeep.env Anew.txt", got)
+	}
+	testgit.WriteFile(t, dir, ".gitignore", "ignored.txt\nbuild/\n*.log\n*.env\n")
+	testgit.Git(t, dir, "add", ".gitignore")
+	testgit.Git(t, dir, "add", "-f", "keep.env")
+	testgit.Git(t, dir, "commit", "-qm", "ignore")
+	if got := uncommitted(t, r); got != "Ma.txt Anew.txt" {
+		t.Errorf("Diff(HEAD, Snapshot) after the ignore = %s, want Ma.txt Anew.txt", got)
 	}
 }

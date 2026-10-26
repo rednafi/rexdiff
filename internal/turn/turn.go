@@ -1,66 +1,66 @@
-// Package turn finds the turns of the agents in a repository. A turn
-// starts when the repository goes from rest to work. It ends when the
-// repository rests again. The rules come from herdr-reviewr.
+// Package turn finds the start and the end of each turn of the agents in
+// a repository, from the states of the agents. A turn starts when the
+// agents go from rest to work. It ends when they rest again. The rules
+// come from herdr-reviewr.
 package turn
 
-import "github.com/rednafi/rexdiff/rex"
+import "slices"
 
-// State is the work state of a repository. Fold makes it from the states
+// state is the work state of a repository. fold makes it from the states
 // of all the agents in the repository.
-type State int
+type state int
 
 const (
-	// Resting tells that each agent rests, or that there is no agent.
-	Resting State = iota
-	// Working tells that at least one agent works.
-	Working
-	// Held tells that no agent works, but one does not rest. For example,
-	// it waits at a prompt. A turn that is open stays open.
-	Held
+	// stateResting tells that each agent rests, or that there is no agent.
+	stateResting state = iota
+	// stateWorking tells that at least one agent works.
+	stateWorking
+	// stateHeld tells that no agent works, but one does not rest. For
+	// example, it waits at a prompt. A turn that is open stays open.
+	stateHeld
 )
 
-// resting tells if s is a state between turns. A blocked agent and an
+// rests reports whether s is a state between turns. A blocked agent and an
 // unknown state are in the middle of a turn.
-func resting(s rex.State) bool { return s == rex.StateIdle || s == rex.StateDone }
+func rests(s string) bool { return s == "idle" || s == "done" }
 
-// Fold returns the state of a repository whose agents are in the states
+// fold returns the state of a repository whose agents are in the states
 // states. One working agent makes the repository work.
-func Fold(states ...rex.State) State {
-	held := false
-	for _, s := range states {
-		if s == rex.StateWorking {
-			return Working
-		}
-		held = held || !resting(s)
+func fold(states ...string) state {
+	if slices.Contains(states, "working") {
+		return stateWorking
 	}
-	if held {
-		return Held
+	if slices.ContainsFunc(states, func(s string) bool { return !rests(s) }) {
+		return stateHeld
 	}
-	return Resting
+	return stateResting
 }
 
 // Tracker finds the start and the end of each turn in a series of states.
 // The zero Tracker is ready to use.
 type Tracker struct {
-	// prevResting tells if the last state is Resting. It is false at
+	// prevResting is true if the last state is resting. It is false at
 	// first, so the first state starts no turn.
 	prevResting bool
-	// worked tells if the repository works after its last rest. An end
-	// can come through Held, but a start cannot. Thus the two edges keep
+	// worked is true if the repository works after its last rest. An end
+	// can come through held, but a start cannot. Thus the two edges keep
 	// different memories.
 	worked bool
 }
 
-// Observe takes the next state. A turn starts when s is Working after
-// Resting. A turn ends when s is Resting after work, also through Held.
-func (t *Tracker) Observe(s State) (started, ended bool) {
-	started = s == Working && t.prevResting
-	ended = t.worked && s == Resting
-	t.prevResting = s == Resting
+// Observe takes the states of all the agents in the repository at one
+// time. The states are those of the OSC 7501 protocol, for example
+// "idle". A turn starts when one agent works after all rest. A turn ends
+// when all rest after work, also through a prompt.
+func (t *Tracker) Observe(states ...string) (started, ended bool) {
+	s := fold(states...)
+	started = s == stateWorking && t.prevResting
+	ended = t.worked && s == stateResting
+	t.prevResting = s == stateResting
 	switch s {
-	case Working:
+	case stateWorking:
 		t.worked = true
-	case Resting:
+	case stateResting:
 		t.worked = false
 	}
 	return started, ended

@@ -4,14 +4,23 @@ on:
   push:
     branches: [master]
   pull_request:
+  # Each week, check the code against the new vulnerability reports.
+  schedule:
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
+
+# On a pull request, a new run cancels the run before it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Rex runs only on macOS, so rexdiff is tested there.
   test:
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -19,21 +28,41 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test -race -count=1 ./...
+      # A second run in a random order finds a test that depends on another.
+      - run: go test -count=2 -shuffle=on ./diff/ ./vcs/ ./rex/ ./update/ ./internal/...
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # Each check fails if the files differ from what the tool makes.
+      - name: go mod tidy
+        run: go mod tidy -diff
+      - name: go fix
+        run: test -z "$(go fix -diff ./... | tee /dev/stderr)"
+      # golangci-lint also runs the formatters gofmt and gofumpt.
       - uses: golangci/golangci-lint-action@v8
         with:
           # Older releases cannot read the export data of a newer Go.
           version: v2.15.0
 
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
   goreleaser:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:

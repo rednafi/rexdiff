@@ -20,7 +20,10 @@ import (
 
 // The colours are ANSI palette indices, so they follow the terminal theme.
 var (
-	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	// dimColor is the colour of the dim text and of the borders.
+	dimColor    = lipgloss.Color("8")
+	dimStyle    = lipgloss.NewStyle().Foreground(dimColor)
+	boldStyle   = lipgloss.NewStyle().Bold(true)
 	addStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	delStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
@@ -33,6 +36,12 @@ var (
 // truncate cuts s to w columns, with an ellipsis.
 func truncate(s string, w int) string { return ansi.Truncate(s, max(w, 0), "…") }
 
+// dark reports whether the terminal background is dark. A background that
+// is not known counts as dark.
+func (m *model) dark() bool {
+	return m.bg == nil || tea.BackgroundColorMsg{Color: m.bg}.IsDark()
+}
+
 // selStyle returns the style of a selected row. The style is a tint of the
 // terminal background.
 func (m *model) selStyle() lipgloss.Style {
@@ -40,7 +49,7 @@ func (m *model) selStyle() lipgloss.Style {
 		return lipgloss.NewStyle().Reverse(true)
 	}
 	tint := lipgloss.Lighten(m.bg, 0.15)
-	if !m.dark {
+	if !m.dark() {
 		tint = lipgloss.Darken(m.bg, 0.15)
 	}
 	return lipgloss.NewStyle().Bold(true).Background(tint)
@@ -177,7 +186,7 @@ func (m *model) agentLabel() string {
 	}
 	n := 0
 	for block, a := range m.agents {
-		if a.state != "" && block != m.rex.Block {
+		if a.state != "" && a.app != appName && block != m.rex.Block() {
 			n++
 		}
 	}
@@ -188,7 +197,7 @@ func (m *model) agentLabel() string {
 }
 
 // statusMark returns the mark of a changed file in the file list.
-func statusMark(s vcs.Status) string {
+func statusMark(s vcs.FileStatus) string {
 	switch s {
 	case vcs.StatusAdded:
 		return addStyle.Render("A")
@@ -210,7 +219,7 @@ func (m *model) listLines(h int) []string {
 		return nil
 	}
 	w := m.listWidth()
-	title := fmt.Sprintf("Changes (%d)", len(m.files))
+	title := fmt.Sprintf("Changes (%d)", len(m.changeFiles))
 	if m.tab == tabFiles {
 		n := 0
 		for _, e := range m.allFiles {
@@ -238,7 +247,7 @@ func (m *model) treeRow(r tree.Row, w int) string {
 	case r.File < 0:
 		return m.dirRow(r, indent, w)
 	case m.tab == tabChanges:
-		return m.changedRow(m.files[r.File], indent, r.Name, w)
+		return m.changedRow(m.changeFiles[r.File], indent, r.Name, w)
 	}
 	return m.entryRow(m.allFiles[r.File], indent, r.Name, w)
 }
@@ -255,7 +264,7 @@ func (m *model) dirRow(r tree.Row, indent string, w int) string {
 		mark = noteStyle.Render("•")
 	}
 	room := w - ansi.StringWidth(indent) - lipgloss.Width(mark) - 4
-	name := lipgloss.NewStyle().Bold(true).Render(fitName(r.Name+"/", room))
+	name := boldStyle.Render(fitName(r.Name+"/", room))
 	if r.Ignored {
 		name = dimStyle.Render(fitName(r.Name+"/", room))
 	}
@@ -264,7 +273,7 @@ func (m *model) dirRow(r tree.Row, indent string, w int) string {
 
 // changedRow renders changed file f in the file list, w columns wide. The
 // row shows the name in the tree, after indent.
-func (m *model) changedRow(f changed, indent, name string, w int) string {
+func (m *model) changedRow(f changedFile, indent, name string, w int) string {
 	adds := addStyle.Render(fmt.Sprintf("+%d", f.adds))
 	stat := adds + " " + delStyle.Render(fmt.Sprintf("-%d", f.dels))
 	if c := m.comments.Count(m.anchorOf(tabChanges), f.Path); c > 0 {
@@ -276,14 +285,14 @@ func (m *model) changedRow(f changed, indent, name string, w int) string {
 	return fileRow(indent, statusMark(f.Status), name, stat, w)
 }
 
-// entryRow renders file f of the Files tab in the file list, w columns
+// entryRow renders entry e of the Files tab in the file list, w columns
 // wide. The row shows the name in the tree, after indent.
-func (m *model) entryRow(f vcs.Entry, indent, name string, w int) string {
-	if f.Ignored {
+func (m *model) entryRow(e vcs.Entry, indent, name string, w int) string {
+	if e.Ignored {
 		return dimStyle.Render(fileRow(indent, " ", name, "", w))
 	}
 	stat := ""
-	if c := m.comments.Count(m.anchorOf(tabFiles), f.Path); c > 0 {
+	if c := m.comments.Count(m.anchorOf(tabFiles), e.Path); c > 0 {
 		stat = cursorStyle.Render(fmt.Sprintf("●%d", c))
 	}
 	return fileRow(indent, " ", name, stat, w)
@@ -300,10 +309,14 @@ func (m *model) selectedRow(r string, w int) string {
 }
 
 // listStart returns the first row that the file list shows in h lines.
+// The first line is the title.
 func (m *model) listStart(h int) int {
 	t := m.list()
-	if t == nil {
+	switch {
+	case t == nil:
 		return 0
+	case t.free:
+		return min(max(t.top, 0), max(len(t.rows)-(h-1), 0))
 	}
 	return max(0, t.cur-(h-2))
 }
@@ -331,8 +344,9 @@ func fitName(p string, room int) string {
 }
 
 // mainLines renders the visible part of the main pane. rowAt[y] is the row
-// on screen line y, or -1 for a note, a comment, or the comment box.
-func (m *model) mainLines(h int) (lines []string, rowAt []int) {
+// on screen line y, or -1 for a note, a comment, or the comment box. hits
+// are the find hits that get a mark. The marks do not change rowAt.
+func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int) {
 	p := m.cur()
 	if note := m.emptyNote(); note != "" {
 		return []string{"", "  " + dimStyle.Render(note)}, []int{-1, -1}
@@ -350,14 +364,19 @@ func (m *model) mainLines(h int) (lines []string, rowAt []int) {
 			add(l, -1)
 		}
 	}
-	hits := m.findRows()
+	marked := map[int]bool{}
+	for _, hit := range hits {
+		if hit.line == 0 { // a hit in a fold has no row of its own
+			marked[hit.row] = true
+		}
+	}
 	for i := p.top; i < len(p.lines) && len(lines) < h; i++ {
 		// A wrapped line shows its marks on its first row, and its
 		// comments below its last row.
 		t := m.target(i, diff.SideNew)
-		add(m.rowMark(i, t, lo, hi, hits[i])+p.lines[i], i)
+		add(m.rowMark(i, t, lo, hi, marked[i])+p.lines[i], i)
 		if t != nil && p.end(i) == i {
-			addBelow(m.commentsBelow(t))
+			addBelow(m.commentsBelow(i, t))
 		}
 		if m.mode == modeComment && i == p.end(p.cur) {
 			addBelow(m.commentBox())
@@ -373,8 +392,8 @@ func (m *model) emptyNote() string {
 	case len(p.lines) > 0:
 		return ""
 	case p.note != "":
-		return p.note
-	case m.tab == tabPR && m.pr.loading:
+		return termtext.Quote(p.note) // the note can come from git or a forge
+	case m.tab == tabPR && m.prf.inFlight:
 		return "loading the pull request…"
 	case m.tab == tabFiles && len(m.allFiles) == 0:
 		return "no files"
@@ -412,18 +431,43 @@ func (m *model) rowMark(i int, t *targetLine, lo, hi int, hit bool) string {
 	case t == nil || p.cont(i):
 		return commentMark(nil)
 	}
-	return commentMark(m.comments.At(m.anchor(), p.path, t.side, t.line))
+	return commentMark(m.commentOn(i, t))
+}
+
+// commentOn returns a comment on row i, which shows line t, or nil. In
+// rendered markdown, it is a comment on a line of the block of row i.
+func (m *model) commentOn(i int, t *targetLine) *diff.Comment {
+	p := m.cur()
+	first, last := t.line, t.line
+	if p.src != nil {
+		first, last = p.rows[p.head(i)].New, p.rows[p.end(i)].New
+	}
+	for line := first; line <= last; line++ {
+		if c := m.comments.At(m.anchor(), p.path, t.side, line); c != nil {
+			return c
+		}
+	}
+	return nil
 }
 
 // commentsBelow returns the lines of the comments whose range ends on
-// line t. The comment that the box edits does not show.
-func (m *model) commentsBelow(t *targetLine) []string {
+// row i, which shows line t. In rendered markdown, they are the comments
+// that end in the block of row i. The comment that the box edits does not
+// show.
+func (m *model) commentsBelow(i int, t *targetLine) []string {
+	p := m.cur()
+	first := t.line
+	if p.src != nil {
+		first = p.rows[p.head(i)].New
+	}
 	var out []string
-	for _, c := range m.comments.EndingAt(m.anchor(), m.cur().path, t.side, t.line) {
-		if m.mode == modeComment && c.ID == m.draft.editID {
-			continue
+	for line := first; line <= t.line; line++ {
+		for _, c := range m.comments.EndingAt(m.anchor(), p.path, t.side, line) {
+			if m.mode == modeComment && c.ID == m.draft.editID {
+				continue
+			}
+			out = append(out, m.commentLines(c)...)
 		}
-		out = append(out, m.commentLines(c)...)
 	}
 	return out
 }
@@ -480,7 +524,7 @@ func (m *model) ensureVisible() {
 	p.top = max(p.top, last-h+1)
 	p.top = min(last, p.top, max(len(p.lines)-1, 0))
 	for p.top < last {
-		_, rowAt := m.mainLines(h)
+		_, rowAt := m.mainLines(h, nil)
 		idx := slices.Index(rowAt, p.end(p.cur))
 		if idx >= 0 && idx+1+box <= h {
 			return
@@ -490,12 +534,14 @@ func (m *model) ensureVisible() {
 }
 
 // footer renders the notice, the status, and the help of the keys. The
-// notice wraps, so that the user can read all of it.
-func (m *model) footer() string {
+// notice wraps, so that the user can read all of it. hits are the hits of
+// the find band.
+func (m *model) footer(hits []findHit) string {
 	if m.notice != "" {
-		return delStyle.Render(wrapWords(m.notice, m.w)) + "\n" + m.footerLine()
+		notice := termtext.Quote(m.notice) // the notice can have a path
+		return delStyle.Render(wrapWords(notice, m.w)) + "\n" + m.footerLine(hits)
 	}
-	return m.footerLine()
+	return m.footerLine(hits)
 }
 
 // wrapWords breaks s into lines of width w or less, at spaces only.
@@ -531,9 +577,9 @@ func wrapWords(s string, w int) string {
 
 // footerLine renders the status and the help of the keys, or the find
 // band.
-func (m *model) footerLine() string {
+func (m *model) footerLine(hits []findHit) string {
 	if m.mode == modeFind {
-		return m.findBand()
+		return m.findBand(hits)
 	}
 	m.help.SetWidth(m.w)
 	var badge string
@@ -553,7 +599,7 @@ func (m *model) footerLine() string {
 		tab:    m.tab,
 		split:  m.splitShown(),
 		visual: m.cur().anchor >= 0,
-		onFold: m.onFold(),
+		atFold: m.atFold(),
 		armed:  m.armed,
 	}
 	if m.help.ShowAll {
@@ -571,7 +617,7 @@ func (m *model) footerLine() string {
 }
 
 // bodyHeight returns the number of lines between the header and the footer.
-func (m *model) bodyHeight() int { return m.heightAbove(m.footer()) }
+func (m *model) bodyHeight() int { return m.heightAbove(m.footer(m.shownHits())) }
 
 // heightAbove returns the height of the body above footer.
 func (m *model) heightAbove(footer string) int {
@@ -580,12 +626,19 @@ func (m *model) heightAbove(footer string) int {
 
 // View renders the screen.
 func (m *model) View() tea.View {
-	footer := m.footer()
+	if !m.sized {
+		// A frame of the guessed size shows wrong for a moment.
+		v := tea.NewView("")
+		v.AltScreen = true
+		return v
+	}
+	hits := m.shownHits()
+	footer := m.footer(hits)
 	h := m.heightAbove(footer)
 	hdr, _ := m.header()
 
 	mh := m.mainHeightOf(h)
-	ml, _ := m.mainLines(mh)
+	ml, _ := m.mainLines(mh, hits)
 	main := box(ml, m.mainWidth(), mh)
 	body := main
 	rule := dimStyle.Render(strings.Repeat("─", m.w))
@@ -636,7 +689,7 @@ func box(lines []string, w, h int) string {
 // programStatus returns the status that rexdiff reports to Rex with OSC 7501.
 // Rex shows it in its tabs and its sidebar.
 func (m *model) programStatus() *tea.ProgramStatus {
-	msg := "reviewing " + plural(len(m.files), "file")
+	msg := "reviewing " + plural(len(m.changeFiles), "file")
 	if n := m.comments.Len(); n > 0 {
 		msg = plural(n, "unsent comment")
 	}
@@ -684,8 +737,8 @@ func (m *model) listY() int {
 // listRows returns the number of lines of the file list, with its title.
 func (m *model) listRows() int {
 	h := m.bodyHeight()
-	if lh := m.listHeight(h); lh > 0 {
-		return lh - 1
+	if m.listPos.stacked() {
+		return max(m.listHeight(h)-1, 0)
 	}
 	return h
 }

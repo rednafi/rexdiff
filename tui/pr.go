@@ -1,11 +1,11 @@
 package tui
 
-// The PR tab shows the pull request of the branch. The tab cannot change
-// the pull request.
-
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,23 +16,24 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
+// The PR tab shows the pull request of the branch. The tab cannot change
+// the pull request.
+
 // The times of the reads of the pull request, as in herdr-reviewr.
 const (
 	// prPoll is the time between two reads while the PR tab shows. A
 	// change on the forge has no local sign.
 	prPoll = time.Minute
-	// prHang is the time after which a new request drops a read that
-	// does not end.
-	prHang = time.Minute
+	// prTimeout is the longest time of a read.
+	prTimeout = time.Minute
 )
 
 // prFetch follows the reads of the pull request.
 type prFetch struct {
-	gen      int       // the read whose result shows; others are stale
+	gen      int       // the read whose result shows. Other reads are stale.
 	inFlight bool      // the read gen runs
-	started  time.Time // the start of the read gen
 	polled   time.Time // the last request, for prPoll
-	cancel   context.CancelFunc
+	cancel   context.CancelCauseFunc
 	// trailing is true if an ambient request comes while a read runs.
 	// Then one more read follows that read.
 	trailing bool
@@ -42,12 +43,11 @@ type prFetch struct {
 
 // requestPR asks for a read of the pull request. A forced request starts
 // a read at once. An ambient request during a read starts one more read
-// after it, unless the read hangs.
+// after it. A read that hangs ends after prTimeout.
 func (m *model) requestPR(forced bool) tea.Cmd {
 	f := &m.prf
 	f.polled = time.Now()
-	hung := f.inFlight && time.Since(f.started) >= prHang
-	if !forced && f.inFlight && !hung {
+	if !forced && f.inFlight {
 		f.trailing = true
 		return nil
 	}
@@ -59,11 +59,13 @@ func (m *model) requestPR(forced bool) tea.Cmd {
 func (m *model) loadPR() tea.Cmd {
 	f := &m.prf
 	if f.cancel != nil {
-		f.cancel()
+		f.cancel(fmt.Errorf("pull request read: a newer read replaces it: %w", context.Canceled))
 	}
-	ctx, cancel := context.WithCancel(m.ctx)
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, prTimeout,
+		fmt.Errorf("pull request read: %v timeout: %w", prTimeout, context.DeadlineExceeded))
 	f.gen++
-	f.inFlight, f.trailing, f.started, f.cancel = true, false, time.Now(), cancel
+	f.inFlight, f.trailing, f.cancel = true, false, cancel
 	repo, gen := m.repo, f.gen
 	hosts := vcs.Hosts{
 		GitHub: m.cfg.GitHubHost,
@@ -71,9 +73,10 @@ func (m *model) loadPR() tea.Cmd {
 		Azure:  m.cfg.AzureHost,
 	}
 	return func() tea.Msg {
-		defer cancel()
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("pull request read: done: %w", context.Canceled))
 		pr, err := repo.PullRequest(ctx, hosts)
-		return prMsg{gen, pr, err}
+		return prMsg{gen: gen, pr: pr, err: err}
 	}
 }
 
@@ -93,21 +96,22 @@ func (m *model) refsChanged() tea.Cmd {
 		return nil
 	}
 	if old != "" && b != old {
-		m.pr = prState{loading: true}
+		m.pr = prState{}
+		cmd := m.requestPR(true)
 		m.renderPR()
-		return m.requestPR(true)
+		return cmd
 	}
 	return m.requestPR(false)
 }
 
 // prStateStyle returns the style that shows the state of a pull request.
-func prStateStyle(s vcs.State) lipgloss.Style {
+func prStateStyle(s vcs.PRState) lipgloss.Style {
 	switch s {
-	case vcs.StateOpen:
+	case vcs.PROpen:
 		return addStyle
-	case vcs.StateMerged:
+	case vcs.PRMerged:
 		return headerStyle
-	case vcs.StateClosed:
+	case vcs.PRClosed:
 		return delStyle
 	}
 	return dimStyle
@@ -142,8 +146,8 @@ func (m *model) renderPR() {
 		p.set(nil, nil)
 		return
 	case pr == nil:
-		if !m.pr.loading {
-			p.note = vcs.ErrNotFound.Error()
+		if !m.prf.inFlight {
+			p.note = vcs.ErrNoPullRequest.Error()
 		}
 		p.set(nil, nil)
 		return
@@ -153,19 +157,71 @@ func (m *model) renderPR() {
 	lines = append(lines, checkLines(pr.Checks)...)
 	lines = append(lines, "")
 	if strings.TrimSpace(pr.Body) != "" {
-		lines = append(lines, renderMarkdown(md, pr.Body)...)
+		lines = append(lines, renderMarkdown(md, m.details(pr.Body))...)
 	}
+	now := time.Now()
 	for _, c := range pr.Comments {
-		author := headerStyle.Render(c.Author) + "  " + dimStyle.Render(c.When)
+		author := headerStyle.Render(c.Author) + "  " + dimStyle.Render(age(c.When, now))
 		lines = append(lines, "", "  "+author)
-		lines = append(lines, renderMarkdown(md, c.Body)...)
+		lines = append(lines, renderMarkdown(md, m.details(c.Body))...)
 	}
 	p.set(lines, make([]diff.Row, len(lines)))
 }
 
+// detailsRE matches a <details> block with its summary and its body.
+// detailsOpenRE matches the start of a block.
+var (
+	detailsRE = regexp.MustCompile(
+		`(?is)\A<details[^>]*>\s*<summary[^>]*>(.*?)</summary>(.*?)</details>`)
+	detailsOpenRE = regexp.MustCompile(`(?i)<details[^>]*>`)
+)
+
+// details returns src with each <details> block as its summary line, as
+// herdr-reviewr shows it. The line starts with ▸ for a closed block, and
+// with ▾ for an open block. The body of an open block follows the line.
+// The last block is done first, so an inner block is done before the
+// block that holds it.
+func (m *model) details(src string) string {
+	for _, o := range slices.Backward(detailsOpenRE.FindAllStringIndex(src, -1)) {
+		b := src[o[0]:]
+		sub := detailsRE.FindStringSubmatchIndex(b)
+		if sub == nil {
+			continue
+		}
+		summary := strings.Join(strings.Fields(b[sub[2]:sub[3]]), " ")
+		block := "\n\n▸ " + summary + "\n\n"
+		if m.prDetails {
+			block = "\n\n▾ " + summary + "\n\n" + b[sub[4]:sub[5]] + "\n\n"
+		}
+		src = src[:o[0]] + block + b[sub[1]:]
+	}
+	return src
+}
+
+// age returns the time from when to now, as herdr-reviewr shows it, for
+// example "5m" or "3d". when is an RFC 3339 time. A bad time gives "". A
+// time after now gives "0s".
+func age(when string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339, when)
+	if err != nil {
+		return ""
+	}
+	const day = 24 * time.Hour
+	d := max(now.Sub(t), 0)
+	for _, u := range []struct {
+		size time.Duration
+		name string
+	}{{365 * day, "y"}, {7 * day, "w"}, {day, "d"}, {time.Hour, "h"}, {time.Minute, "m"}} {
+		if d >= u.size {
+			return fmt.Sprintf("%d%s", int64(d/u.size), u.name)
+		}
+	}
+	return fmt.Sprintf("%ds", int64(d/time.Second))
+}
+
 // prHeader returns the title line and the state line of pr.
 func prHeader(pr *vcs.PullRequest) []string {
-	title := lipgloss.NewStyle().Bold(true).Render(pr.Title)
+	title := boldStyle.Render(pr.Title)
 	number := dimStyle.Render(fmt.Sprintf("#%d", pr.Number))
 	state := prStateStyle(pr.State).Render("● " + string(pr.State))
 	return []string{
@@ -198,4 +254,37 @@ func checkLines(checks []vcs.Check) []string {
 		lines = append(lines, "    "+delStyle.Render("✗ ")+f)
 	}
 	return lines
+}
+
+// onPR shows the pull request that loadPR reads, unless a later read
+// replaces it. After a read with a trailing request, onPR starts the next
+// read.
+func (m *model) onPR(msg prMsg) tea.Cmd {
+	f := &m.prf
+	if msg.gen != f.gen {
+		return nil
+	}
+	f.inFlight, f.cancel = false, nil
+	var next tea.Cmd
+	if f.trailing {
+		next = m.loadPR()
+	}
+	// As in herdr-reviewr, a failed read keeps the last good pull request.
+	// The end of the pull request is not a failure.
+	if msg.err != nil && m.pr.pr != nil && !errors.Is(msg.err, vcs.ErrNoPullRequest) {
+		m.flash("refresh failed: " + msg.err.Error())
+		m.renderPR()
+		return next
+	}
+	m.pr = prState{pr: msg.pr}
+	if msg.err != nil {
+		m.pr.err = msg.err.Error()
+	}
+	m.renderPR()
+	// prPlace is from before a restart.
+	if p := m.prPlace; p != nil && msg.err == nil && msg.pr != nil {
+		m.prPlace = nil
+		m.prPane.restore(*p)
+	}
+	return next
 }

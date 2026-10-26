@@ -8,6 +8,7 @@ import (
 
 // TestCommands checks the command and the kind of each editor.
 func TestCommands(t *testing.T) {
+	t.Parallel()
 	const abs = "/r/a b.go"
 	tests := []struct {
 		template, editor string
@@ -39,15 +40,10 @@ func TestCommands(t *testing.T) {
 		{"", "myeditor --wait", `myeditor --wait +12 '/r/a b.go'`, true},
 	}
 	for _, tt := range tests {
-		var got editor.Command
-		if tt.template != "" {
-			got = editor.Template(tt.template, abs, 12)
-		} else {
-			got = editor.Program(tt.editor, abs, 12)
-		}
-		if got.Script != tt.script || got.Window != tt.window {
-			t.Errorf("editor %q%q = %+v, want script %q, window %v",
-				tt.template, tt.editor, got, tt.script, tt.window)
+		got, err := editor.Resolve(editor.Sources{Template: tt.template, Editor: tt.editor}, abs, 12)
+		if err != nil || got.Script != tt.script || got.Window != tt.window {
+			t.Errorf("editor %q%q = %+v, %v, want script %q, window %v",
+				tt.template, tt.editor, got, err, tt.script, tt.window)
 		}
 	}
 }
@@ -55,6 +51,7 @@ func TestCommands(t *testing.T) {
 // TestCommandProgram checks the program of a command. An empty word in
 // quotes names no program.
 func TestCommandProgram(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ command, want string }{
 		{"nvim", "nvim"},
 		{"  /usr/bin/vim -u NONE", "/usr/bin/vim"},
@@ -63,12 +60,42 @@ func TestCommandProgram(t *testing.T) {
 		{`""`, ""},
 		{"'' vim", ""},
 	}
+	const noProgram = "the editor command names no program"
 	for _, tt := range tests {
-		if got := editor.Program(tt.command, "/a", 1).Program; got != tt.want {
-			t.Errorf("Program(%q).Program = %q, want %q", tt.command, got, tt.want)
+		for _, c := range []struct{ template, env string }{{tt.command, ""}, {"", tt.command}} {
+			got, err := editor.Resolve(editor.Sources{Template: c.template, Editor: c.env}, "/a", 1)
+			switch {
+			case tt.want == "" && (err == nil || err.Error() != noProgram):
+				t.Errorf("Resolve(%q, %q) error = %v, want %q", c.template, c.env, err, noProgram)
+			case tt.want != "" && got.Program != tt.want:
+				t.Errorf("Resolve(%q, %q).Program = %q, want %q", c.template, c.env, got.Program, tt.want)
+			}
 		}
-		if got := editor.Template(tt.command, "/a", 1).Program; got != tt.want {
-			t.Errorf("Template(%q).Program = %q, want %q", tt.command, got, tt.want)
+	}
+}
+
+// TestResolveOrder checks that the settings come first, then $VISUAL,
+// $EDITOR, and core.editor. A blank value does not count.
+func TestResolveOrder(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		template, visual, env, git string
+		want                       string
+	}{
+		{"zed {file}", "vim", "nano", "hx", "zed"},
+		{"", "vim", "nano", "hx", "vim"},
+		{"", " ", "nano", "hx", "nano"},
+		{"", "", "\t", "hx", "hx"},
+	}
+	for _, tt := range tests {
+		got, err := editor.Resolve(editor.Sources{Template: tt.template, Visual: tt.visual, Editor: tt.env, Git: tt.git}, "/a", 1)
+		if err != nil || got.Program != tt.want {
+			t.Errorf("Resolve(%q, %q, %q, %q) = %q, %v, want %q",
+				tt.template, tt.visual, tt.env, tt.git, got.Program, err, tt.want)
 		}
+	}
+	const noEditor = `no editor: set "editor" in rexdiff.lua, $EDITOR, or git's core.editor`
+	if _, err := editor.Resolve(editor.Sources{Visual: " ", Git: "\n"}, "/a", 1); err == nil || err.Error() != noEditor {
+		t.Errorf("Resolve with no editor: error = %v, want %q", err, noEditor)
 	}
 }

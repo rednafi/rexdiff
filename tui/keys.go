@@ -1,39 +1,40 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// keyMap uses the action names and the default keys of herdr-reviewr. The
-// keybindings setting uses the same names. The settings do not change the
-// keys of the comment box and of the find.
+// keyMap uses the action names and the default keys of herdr-reviewr.
+// The fields have the names of the actions in the keybindings setting.
+// Focus and Update are actions of rexdiff only. The settings do not change
+// the keys of the comment box and of the find.
 type keyMap struct {
 	// Move.
-	Down, Up, PageDown, PageUp, HalfDown, HalfUp, Left, Right key.Binding
-	NextHunk, PrevHunk, NextFile, PrevFile, Focus             key.Binding
+	Down, Up, PageDown, PageUp, HalfDown, HalfUp, Collapse, Expand key.Binding
+	NextHunk, PrevHunk, NextFile, PrevFile, Focus                  key.Binding
 
 	// Scopes and tabs.
-	ScopeUncommitted, ScopeBranch, ScopeTurn, ScopeCommits key.Binding
-	BasePick, CommitPick, TabChanges, TabFiles, TabPR      key.Binding
+	ScopeUncommitted, ScopeBranch, ScopeLastTurn, ScopeCommits key.Binding
+	BasePick, CommitPick, TabChanges, TabAllFiles, TabPR       key.Binding
 
 	// Comments.
 	Select, Comment, Edit, Delete, NextComment, PrevComment key.Binding
 	Comments, Send, Copy                                    key.Binding
 
 	// View and other actions.
-	Search, Find, GotoLine, Rendered, Split, Wrap key.Binding
-	NavPosition, NavHide, NavGrow, NavShrink      key.Binding
-	OpenPR, Refresh, Keys, Quit, QuitDiscard      key.Binding
-	// Upgrade installs a newer release. It works only while the footer
+	Search, Find, GotoLine, Rendered, Split, Wrap                    key.Binding
+	NavigatorPosition, NavigatorHide, NavigatorGrow, NavigatorShrink key.Binding
+	OpenPR, Refresh, Keys, Quit, QuitDiscard                         key.Binding
+	// Update installs a newer release. It works only while the footer
 	// tells about a newer release.
-	Upgrade key.Binding
+	Update key.Binding
 
 	// The comment box. Cancel also clears the selection.
 	Save, Newline, Cancel key.Binding
@@ -51,6 +52,9 @@ func hint(b key.Binding, helpKey, desc string) key.Binding {
 	return b
 }
 
+// defaultKeys returns the keys of herdr-reviewr, with the help text of
+// each action. Some actions share one help label, for example "j/k move".
+// Then the label is on the first action of the pair.
 func defaultKeys() keyMap {
 	return keyMap{
 		Down:     bind([]string{"j", "down"}, "j/k", "move"),
@@ -64,22 +68,22 @@ func defaultKeys() keyMap {
 		NextFile: bind([]string{"f"}, "f/F", "next/prev file"),
 		PrevFile: bind([]string{"F"}, "F", "prev file"),
 		Focus:    bind([]string{"tab"}, "tab", "switch pane"),
-		Left:     bind([]string{"left"}, "←/→", "scroll sideways"),
-		Right:    bind([]string{"right"}, "→", "scroll right"),
+		Collapse: bind([]string{"left"}, "←/→", "scroll sideways"),
+		Expand:   bind([]string{"right"}, "→", "scroll right"),
 
 		ScopeUncommitted: bind([]string{"u"}, "u", "uncommitted"),
 		ScopeBranch:      bind([]string{"b"}, "b", "branch"),
-		ScopeTurn:        bind([]string{"t"}, "t", "last turn"),
+		ScopeLastTurn:    bind([]string{"t"}, "t", "last turn"),
 		ScopeCommits:     bind([]string{"g"}, "g", "commits"),
 		BasePick:         bind([]string{"B"}, "B", "pick base branch"),
 		CommitPick:       bind([]string{"G"}, "G", "pick commits"),
 		TabChanges:       bind([]string{"1"}, "1/2/3", "changes/files/PR"),
-		TabFiles:         bind([]string{"2"}, "2", "all files"),
+		TabAllFiles:      bind([]string{"2"}, "2", "all files"),
 		TabPR:            bind([]string{"3"}, "3", "PR"),
 
 		Select:      bind([]string{"v"}, "v", "select lines"),
 		Comment:     bind([]string{"c"}, "c", "comment"),
-		Edit:        bind([]string{"e"}, "e", "edit comment / open editor"),
+		Edit:        bind([]string{"e"}, "e", "edit comment/open editor"),
 		Delete:      bind([]string{"d"}, "d", "delete comment"),
 		NextComment: bind([]string{"n"}, "n/N", "next/prev comment"),
 		PrevComment: bind([]string{"N"}, "N", "prev comment"),
@@ -87,22 +91,22 @@ func defaultKeys() keyMap {
 		Send:        bind([]string{"s", "S"}, "s", "send to agent"),
 		Copy:        bind([]string{"y", "Y"}, "y", "copy comments"),
 
-		Search:      bind([]string{"/"}, "/", "search files & code"),
-		Find:        bind([]string{"ctrl+f"}, "ctrl+f", "find in file"),
-		GotoLine:    bind([]string{":"}, ":", "go to line"),
-		Rendered:    bind([]string{"m"}, "m", "rendered markdown"),
-		Split:       bind([]string{"|"}, "|", "side by side"),
-		Wrap:        bind([]string{"w"}, "w", "wrap lines"),
-		NavPosition: bind([]string{"p"}, "p", "move file list"),
-		NavHide:     bind([]string{"z"}, "z", "hide file list"),
-		NavGrow:     bind([]string{"<"}, "</>", "widen/narrow list"),
-		NavShrink:   bind([]string{">"}, ">", "narrow list"),
-		OpenPR:      bind([]string{"o"}, "o", "open PR in browser"),
-		Refresh:     bind([]string{"r"}, "r", "refresh"),
-		Upgrade:     bind([]string{"U"}, "U", "update rexdiff"),
-		Keys:        bind([]string{"?"}, "?", "all keys"),
-		Quit:        bind([]string{"q"}, "q", "quit"),
-		QuitDiscard: bind([]string{"Q"}, "Q", "quit, drop comments"),
+		Search:            bind([]string{"/"}, "/", "search files and code"),
+		Find:              bind([]string{"ctrl+f"}, "ctrl+f", "find in file"),
+		GotoLine:          bind([]string{":"}, ":", "go to line"),
+		Rendered:          bind([]string{"m"}, "m", "rendered markdown"),
+		Split:             bind([]string{"|"}, "|", "side by side"),
+		Wrap:              bind([]string{"w"}, "w", "wrap lines"),
+		NavigatorPosition: bind([]string{"p"}, "p", "move list"),
+		NavigatorHide:     bind([]string{"z"}, "z", "hide list"),
+		NavigatorGrow:     bind([]string{"<"}, "</>", "resize list"),
+		NavigatorShrink:   bind([]string{">"}, ">", "narrow list"),
+		OpenPR:            bind([]string{"o"}, "o", "open PR in browser"),
+		Refresh:           bind([]string{"r"}, "r", "refresh"),
+		Update:            bind([]string{"U"}, "U", "update rexdiff"),
+		Keys:              bind([]string{"?"}, "?", "all keys"),
+		Quit:              bind([]string{"q"}, "q", "quit"),
+		QuitDiscard:       bind([]string{"Q"}, "Q", "quit, drop comments"),
 
 		Save: bind([]string{"enter"}, "enter", "save"),
 		Newline: bind(
@@ -114,6 +118,8 @@ func defaultKeys() keyMap {
 	}
 }
 
+// overlayKeyMap has the keys of the overlays. The settings do not change
+// them.
 type overlayKeyMap struct {
 	Choose, Close, Up, Down key.Binding
 
@@ -150,7 +156,8 @@ type binding struct {
 // bindings returns each action of c with its key binding in k, in the
 // order of the table of herdr-reviewr. The check of the keybindings
 // setting uses this order to name the actions of a key that two actions
-// use. herdr-reviewr has no focus action.
+// use. herdr-reviewr has no focus action. The update is last. Its key is
+// fixed, and the check keeps it free.
 func (k *keyMap) bindings(c keybindings) []binding {
 	return []binding{
 		{"down", c.Down, &k.Down},
@@ -159,8 +166,8 @@ func (k *keyMap) bindings(c keybindings) []binding {
 		{"prev-hunk", c.PrevHunk, &k.PrevHunk},
 		{"next-file", c.NextFile, &k.NextFile},
 		{"prev-file", c.PrevFile, &k.PrevFile},
-		{"collapse", c.Collapse, &k.Left},
-		{"expand", c.Expand, &k.Right},
+		{"collapse", c.Collapse, &k.Collapse},
+		{"expand", c.Expand, &k.Expand},
 		{"page-up", c.PageUp, &k.PageUp},
 		{"page-down", c.PageDown, &k.PageDown},
 		{"half-up", c.HalfUp, &k.HalfUp},
@@ -168,20 +175,20 @@ func (k *keyMap) bindings(c keybindings) []binding {
 		{"focus", c.Focus, &k.Focus},
 		{"scope-uncommitted", c.ScopeUncommitted, &k.ScopeUncommitted},
 		{"scope-branch", c.ScopeBranch, &k.ScopeBranch},
-		{"scope-last-turn", c.ScopeLastTurn, &k.ScopeTurn},
+		{"scope-last-turn", c.ScopeLastTurn, &k.ScopeLastTurn},
 		{"scope-commits", c.ScopeCommits, &k.ScopeCommits},
 		{"base-pick", c.BasePick, &k.BasePick},
 		{"commit-pick", c.CommitPick, &k.CommitPick},
 		{"tab-changes", c.TabChanges, &k.TabChanges},
-		{"tab-all-files", c.TabAllFiles, &k.TabFiles},
+		{"tab-all-files", c.TabAllFiles, &k.TabAllFiles},
 		{"tab-pr", c.TabPR, &k.TabPR},
 		{"wrap", c.Wrap, &k.Wrap},
 		{"rendered", c.Rendered, &k.Rendered},
 		{"split", c.Split, &k.Split},
-		{"navigator-position", c.NavigatorPosition, &k.NavPosition},
-		{"navigator-hide", c.NavigatorHide, &k.NavHide},
-		{"navigator-grow", c.NavigatorGrow, &k.NavGrow},
-		{"navigator-shrink", c.NavigatorShrink, &k.NavShrink},
+		{"navigator-position", c.NavigatorPosition, &k.NavigatorPosition},
+		{"navigator-hide", c.NavigatorHide, &k.NavigatorHide},
+		{"navigator-grow", c.NavigatorGrow, &k.NavigatorGrow},
+		{"navigator-shrink", c.NavigatorShrink, &k.NavigatorShrink},
 		{"select", c.Select, &k.Select},
 		{"comment", c.Comment, &k.Comment},
 		{"edit", c.Edit, &k.Edit},
@@ -199,14 +206,18 @@ func (k *keyMap) bindings(c keybindings) []binding {
 		{"refresh", c.Refresh, &k.Refresh},
 		{"quit", c.Quit, &k.Quit},
 		{"quit-discard", c.QuitDiscard, &k.QuitDiscard},
+		{"update", nil, &k.Update},
 	}
 }
 
 // applyConfig sets the keys of each action that c sets. The check of the
-// setting accepts each key, so keyName does not fail.
+// setting accepts each key, so keyName does not fail. The help shows the
+// first key of a changed action, as herdr-reviewr spells it. A label of a
+// pair, for example "j/k move", shows the first key of each action.
 func (k *keyMap) applyConfig(c keybindings) {
+	changed := map[*key.Binding]bool{}
 	for _, b := range k.bindings(c) {
-		if b.keys == nil {
+		if len(b.keys) == 0 {
 			continue
 		}
 		keys := make([]string, len(b.keys))
@@ -214,33 +225,72 @@ func (k *keyMap) applyConfig(c keybindings) {
 			keys[i], _ = keyName(s)
 		}
 		b.key.SetKeys(keys...)
-		if len(b.keys) > 0 {
-			b.key.SetHelp(b.keys[0], b.key.Help().Desc)
+		b.key.SetHelp(firstKey(*b.key), b.key.Help().Desc)
+		changed[b.key] = true
+	}
+	for _, group := range k.pairs() {
+		if !slices.ContainsFunc(group, func(b *key.Binding) bool { return changed[b] }) {
+			continue
 		}
+		names := make([]string, len(group))
+		for i, b := range group {
+			names[i] = firstKey(*b)
+		}
+		group[0].SetHelp(strings.Join(names, "/"), group[0].Help().Desc)
 	}
 }
 
-// namedKeys are the names of the keys that are not one character, as
-// herdr-reviewr spells them, with the names that bubbletea uses.
-var namedKeys = []struct{ name, tea string }{
-	{"left", "left"},
-	{"right", "right"},
-	{"up", "up"},
-	{"down", "down"},
-	{"pageup", "pgup"},
-	{"pagedown", "pgdown"},
+// pairs returns the groups of actions that share one help label, for
+// example "j/k move". The label is on the first action of each group.
+func (k *keyMap) pairs() [][]*key.Binding {
+	return [][]*key.Binding{
+		{&k.Down, &k.Up},
+		{&k.HalfDown, &k.HalfUp},
+		{&k.NextHunk, &k.PrevHunk},
+		{&k.NextFile, &k.PrevFile},
+		{&k.Collapse, &k.Expand},
+		{&k.TabChanges, &k.TabAllFiles, &k.TabPR},
+		{&k.NextComment, &k.PrevComment},
+		{&k.NavigatorGrow, &k.NavigatorShrink},
+	}
+}
+
+// namedKeys are the keys that are not one character. Each has its name as
+// herdr-reviewr spells it, its bubbletea name, and its label on the
+// screen.
+var namedKeys = []namedKey{
+	{"left", "left", "←"},
+	{"right", "right", "→"},
+	{"up", "up", "↑"},
+	{"down", "down", "↓"},
+	{"pageup", "pgup", "PageUp"},
+	{"pagedown", "pgdown", "PageDown"},
+}
+
+// namedKey is a key that is not one character.
+type namedKey struct{ name, tea, label string }
+
+// teaKey returns the named key whose bubbletea name is name without its
+// modifier, and the modifier. ok is false if no named key has this name.
+func teaKey(name string) (mod string, k namedKey, ok bool) {
+	mod, rest := cutModifier(name)
+	i := slices.IndexFunc(namedKeys, func(k namedKey) bool { return k.tea == rest })
+	if i < 0 {
+		return mod, namedKey{}, false
+	}
+	return mod, namedKeys[i], true
 }
 
 // keyName returns the bubbletea name of the key s of the keybindings
-// setting. s is one character or a named key, alone or after "ctrl+" or
-// "alt+", as in herdr-reviewr. The bubbletea names "pgup" and "pgdown" are
-// also valid. ok is false if s is not a valid key.
+// setting. It is the inverse of [herdrReviewrKeyName]. s is one character
+// or a named key, alone or after "ctrl+" or "alt+", as in herdr-reviewr.
+// The bubbletea names "pgup" and "pgdown" are also valid. ok is false if s
+// is not a valid key.
 func keyName(s string) (name string, ok bool) {
 	mod, rest := cutModifier(s)
-	for _, k := range namedKeys {
-		if rest == k.name || rest == k.tea {
-			return mod + k.tea, true
-		}
+	named := func(k namedKey) bool { return rest == k.name || rest == k.tea }
+	if i := slices.IndexFunc(namedKeys, named); i >= 0 {
+		return mod + namedKeys[i].tea, true
 	}
 	r, size := utf8.DecodeRuneInString(rest)
 	if size == 0 || size != len(rest) || r == utf8.RuneError || unicode.IsSpace(r) ||
@@ -250,14 +300,12 @@ func keyName(s string) (name string, ok bool) {
 	return s, true
 }
 
-// herdrKeyName returns the bubbletea key name as herdr-reviewr spells it,
-// for example "pageup" for "pgup".
-func herdrKeyName(name string) string {
-	mod, rest := cutModifier(name)
-	for _, k := range namedKeys {
-		if rest == k.tea {
-			return mod + k.name
-		}
+// herdrReviewrKeyName returns the bubbletea key name as herdr-reviewr
+// spells it, for example "pageup" for "pgup". It is the inverse of
+// [keyName].
+func herdrReviewrKeyName(name string) string {
+	if mod, k, ok := teaKey(name); ok {
+		return mod + k.name
 	}
 	return name
 }
@@ -289,7 +337,7 @@ type helpKeys struct {
 	tab    tab
 	split  bool
 	visual bool
-	onFold bool // the cursor is on a fold
+	atFold bool // the cursor is on a fold
 	armed  int  // the direction of an armed crossing, or 0
 }
 
@@ -303,22 +351,27 @@ func (h helpKeys) ShortHelp() []key.Binding {
 	case h.mode == modeComment:
 		return []key.Binding{k.Save, k.Newline, k.Cancel}
 	case h.armed > 0:
-		return []key.Binding{hint(k.NextHunk, firstKey(k.NextHunk), "next file"),
-			k.Comment, k.Send, k.Keys, k.Quit}
+		return []key.Binding{
+			hint(k.NextHunk, firstKey(k.NextHunk), "next file"),
+			k.Comment, k.Send, k.Keys, k.Quit,
+		}
 	case h.armed < 0:
-		return []key.Binding{hint(k.PrevHunk, firstKey(k.PrevHunk), "prev file"),
-			k.Comment, k.Send, k.Keys, k.Quit}
+		return []key.Binding{
+			hint(k.PrevHunk, firstKey(k.PrevHunk), "prev file"),
+			k.Comment, k.Send, k.Keys, k.Quit,
+		}
 	case h.visual:
 		return []key.Binding{
 			k.Comment,
-			hint(k.Down, "j/k", "extend"),
-			hint(k.Cancel, "esc", "clear"),
+			hint(k.Down, k.Down.Help().Key, "extend"),
+			hint(k.Cancel, firstKey(k.Cancel), "clear"),
 		}
 	case h.tab == tabPR:
 		return []key.Binding{k.Down, k.OpenPR, k.Refresh, k.TabChanges, k.Keys, k.Quit}
-	case h.onFold:
+	case h.atFold:
 		return []key.Binding{
-			hint(k.Right, k.Right.Help().Key, "show the lines"), k.Comment, k.Send, k.NextHunk, k.Keys, k.Quit,
+			hint(k.Expand, firstKey(k.Expand), "expand fold"),
+			k.Comment, k.Send, k.NextHunk, k.Keys, k.Quit,
 		}
 	}
 	return []key.Binding{k.Comment, k.Send, k.NextHunk, k.NextFile, k.Split, k.Keys, k.Quit}
@@ -328,31 +381,42 @@ func (h helpKeys) ShortHelp() []key.Binding {
 func (h helpKeys) FullHelp() [][]key.Binding {
 	k := h.k
 	move := []key.Binding{
-		k.Down, k.HalfDown, k.NextHunk, k.NextFile, k.Focus, k.Left, k.GotoLine,
+		k.Down, k.HalfDown, k.NextHunk, k.NextFile, k.Focus, k.Collapse, k.GotoLine,
 	}
 	scopes := []key.Binding{
-		k.TabChanges, k.ScopeUncommitted, k.ScopeBranch, k.ScopeTurn, k.ScopeCommits,
+		k.TabChanges, k.ScopeUncommitted, k.ScopeBranch, k.ScopeLastTurn, k.ScopeCommits,
 		k.BasePick, k.CommitPick,
 	}
 	comments := []key.Binding{
 		k.Select, k.Comment, k.Edit, k.Delete, k.NextComment, k.Comments, k.Send, k.Copy,
 	}
 	view := []key.Binding{
-		k.Search, k.Find, k.Rendered, k.Split, k.Wrap, k.NavPosition, k.NavHide, k.NavGrow,
+		k.Search, k.Find, k.Rendered, k.Split, k.Wrap, k.NavigatorPosition, k.NavigatorHide, k.NavigatorGrow,
 	}
-	other := []key.Binding{k.OpenPR, k.Refresh, k.Keys, k.Quit, k.QuitDiscard}
+	other := []key.Binding{k.OpenPR, k.Refresh, k.Keys, k.Quit}
 	return [][]key.Binding{move, scopes, comments, view, other}
 }
 
 // newHelp styles the footer with the terminal palette.
 func newHelp() help.Model {
 	h := help.New()
-	keyS := lipgloss.NewStyle().Bold(true)
-	descS := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	h.Styles.ShortKey, h.Styles.FullKey = keyS, keyS
-	h.Styles.ShortDesc, h.Styles.FullDesc = descS, descS
-	h.Styles.ShortSeparator, h.Styles.FullSeparator = descS, descS
-	h.Styles.Ellipsis = descS
+	h.Styles.ShortKey, h.Styles.FullKey = boldStyle, boldStyle
+	h.Styles.ShortDesc, h.Styles.FullDesc = dimStyle, dimStyle
+	h.Styles.ShortSeparator, h.Styles.FullSeparator = dimStyle, dimStyle
+	h.Styles.Ellipsis = dimStyle
 	h.ShortSeparator, h.FullSeparator = "    ", "    "
 	return h
+}
+
+// firstKey returns the label of the first key of b, as herdr-reviewr
+// shows it, or "".
+func firstKey(b key.Binding) string {
+	ks := b.Keys()
+	if len(ks) == 0 {
+		return ""
+	}
+	if mod, k, ok := teaKey(ks[0]); ok {
+		return mod + k.label
+	}
+	return ks[0]
 }

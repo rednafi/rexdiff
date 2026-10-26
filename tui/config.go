@@ -1,8 +1,9 @@
 package tui
 
 import (
+	"cmp"
 	"encoding/json/jsontext"
-	json "encoding/json/v2"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"reflect"
@@ -74,9 +75,9 @@ var (
 	positions     = []position{positionRight, positionBottom, positionLeft, positionTop}
 )
 
-// config holds the settings of rexdiff. The settings are at the top of
-// rexdiff.lua, beside the configuration file (init.lua) of Rex. The toggle
-// action gives them to rexdiff as JSON in --config.
+// config holds the settings of rexdiff. The settings are in rexdiff.lua,
+// beside the configuration file (init.lua) of Rex. The toggle action gives
+// them to rexdiff as JSON in --config.
 type config struct {
 	Layout       Layout `json:"layout"`
 	DefaultScope Scope  `json:"default_scope"`
@@ -92,12 +93,12 @@ type config struct {
 	// top.
 	FileList position `json:"file_list"`
 	// FileListWidth is the width of the file list at a side, in columns.
-	// It is minListWidth or more.
+	// It is minListWidth or more, or 0 if the text does not set it.
 	FileListWidth int `json:"file_list_width"`
 	// DiffSigns marks a changed line with + or -, in place of a bar.
 	DiffSigns bool `json:"diff_signs"`
-	// FocusAgent tells if the focus moves to the agent after a send. Nil
-	// means true.
+	// FocusAgent is true if the focus moves to the agent after a send.
+	// Nil means true.
 	FocusAgent *bool `json:"focus_agent_after_send"`
 	// GitHubHost, GitLabHost, and AzureHost are bare hostnames of
 	// self-hosted forges.
@@ -163,6 +164,36 @@ type keybindings struct {
 	Keys              []string `json:"keys"`
 	Quit              []string `json:"quit"`
 	QuitDiscard       []string `json:"quit-discard"`
+
+	// The old names of navigator-grow, navigator-shrink, and rendered.
+	// herdr-reviewr also takes them.
+	ListWider    []string `json:"list-wider"`
+	ListNarrower []string `json:"list-narrower"`
+	Preview      []string `json:"preview"`
+}
+
+// useOldNames gives the keys of each old name to its action. An action
+// and its old name cannot both have keys.
+func (kb *keybindings) useOldNames() error {
+	names := []struct {
+		name, old     string
+		keys, oldKeys *[]string
+	}{
+		{"navigator-grow", "list-wider", &kb.NavigatorGrow, &kb.ListWider},
+		{"navigator-shrink", "list-narrower", &kb.NavigatorShrink, &kb.ListNarrower},
+		{"rendered", "preview", &kb.Rendered, &kb.Preview},
+	}
+	for _, n := range names {
+		switch {
+		case *n.oldKeys == nil:
+		case *n.keys != nil:
+			return fmt.Errorf("invalid value for keybindings: %q and %q name the same action",
+				n.name, n.old)
+		default:
+			*n.keys, *n.oldKeys = *n.oldKeys, nil
+		}
+	}
+	return nil
 }
 
 // minListWidth is the smallest width of the file list, in columns.
@@ -172,11 +203,10 @@ const minListWidth = 16
 // set.
 func defaultConfig() config {
 	return config{
-		Layout:        LayoutUnified,
-		DefaultScope:  ScopeUncommitted,
-		MarkdownView:  markdownViewSource,
-		FileList:      positionRight,
-		FileListWidth: 32,
+		Layout:       LayoutUnified,
+		DefaultScope: ScopeUncommitted,
+		MarkdownView: markdownViewSource,
+		FileList:     positionRight,
 	}
 }
 
@@ -197,6 +227,9 @@ func parseConfig(text string) (config, error) {
 	if err := json.Unmarshal([]byte(text), &c, json.RejectUnknownMembers(true)); err != nil {
 		return config{}, configError(err)
 	}
+	if err := c.Keybindings.useOldNames(); err != nil {
+		return config{}, fmt.Errorf("config: %w", err)
+	}
 	if err := c.check(set); err != nil {
 		return config{}, fmt.Errorf("config: %w", err)
 	}
@@ -210,7 +243,7 @@ func configError(err error) error {
 	if !ok {
 		return fmt.Errorf("config: %w", err)
 	}
-	key := strings.ReplaceAll(strings.TrimPrefix(string(se.JSONPointer), "/"), "/", ".")
+	key := strings.Join(slices.Collect(se.JSONPointer.Tokens()), ".")
 	if errors.Is(err, json.ErrUnknownName) {
 		return fmt.Errorf("config: unknown key %q", key)
 	}
@@ -246,7 +279,7 @@ var jsonKinds = map[jsontext.Kind]string{
 // check returns an error for the first value that rexdiff does not accept.
 // set has the keys that the text sets.
 func (c config) check(set map[string]jsontext.Value) error {
-	if err := c.checkChoices(); err != nil {
+	if err := c.checkChoices(set); err != nil {
 		return err
 	}
 	if err := c.checkTexts(set); err != nil {
@@ -259,23 +292,18 @@ func (c config) check(set map[string]jsontext.Value) error {
 }
 
 // checkChoices checks the values that have fixed choices or a range. They
-// are the layout, the scope, the markdown view, and the file list.
-func (c config) checkChoices() error {
-	choices := []struct {
-		key, value string
-		allowed    []string
-	}{
-		{"layout", string(c.Layout), names(layouts...)},
-		{"default_scope", string(c.DefaultScope), names(configScopes...)},
-		{"markdown_view", string(c.MarkdownView), names(markdownViews...)},
-		{"file_list", string(c.FileList), names(positions...)},
+// are the layout, the scope, the markdown view, and the file list. set
+// has the keys that the text sets.
+func (c config) checkChoices(set map[string]jsontext.Value) error {
+	if err := cmp.Or(
+		choice("layout", c.Layout, layouts),
+		choice("default_scope", c.DefaultScope, configScopes),
+		choice("markdown_view", c.MarkdownView, markdownViews),
+		choice("file_list", c.FileList, positions),
+	); err != nil {
+		return err
 	}
-	for _, k := range choices {
-		if !slices.Contains(k.allowed, k.value) {
-			return invalid(k.key, "one of "+strings.Join(k.allowed, ", "), k.value)
-		}
-	}
-	if c.FileListWidth < minListWidth {
+	if set["file_list_width"] != nil && c.FileListWidth < minListWidth {
 		want := strconv.Itoa(minListWidth) + " or more"
 		return invalid("file_list_width", want, strconv.Itoa(c.FileListWidth))
 	}
@@ -304,9 +332,15 @@ func (c config) checkTexts(set map[string]jsontext.Value) error {
 	}
 	for _, k := range commands {
 		blank := set[k.key] != nil && strings.TrimSpace(k.value) == ""
-		if blank || !placeholders(k.value, k.known...) {
+		if blank || !onlyPlaceholders(k.value, k.known...) {
 			return invalid(k.key, k.want, k.value)
 		}
+	}
+	// As in herdr-reviewr, the first word of the URL opener is a program,
+	// and not the URL.
+	if w := splitWords(c.URLOpener); c.URLOpener != "" &&
+		(len(w) == 0 || w[0] == "" || strings.Contains(w[0], "{url}")) {
+		return invalid("url_opener", "a command that names a program first", c.URLOpener)
 	}
 	if set["review_prefix"] != nil && strings.TrimSpace(c.ReviewPrefix) == "" {
 		return invalid("review_prefix", "text", c.ReviewPrefix)
@@ -322,7 +356,7 @@ func (c config) checkHosts(set map[string]jsontext.Value) error {
 		{"azure_devops_host", c.AzureHost},
 	}
 	for _, k := range hosts {
-		if set[k.key] != nil && !hostname(k.value) {
+		if set[k.key] != nil && !isHostname(k.value) {
 			return invalid(k.key, "a bare hostname", k.value)
 		}
 	}
@@ -357,11 +391,11 @@ func (c config) checkKeybindings() error {
 		for _, key := range b.key.Keys() {
 			switch a, ok := first[key]; {
 			case ok && a == b.name:
-				return fmt.Errorf("invalid value for keybindings: `%s` is bound twice to `%s`",
-					herdrKeyName(key), b.name)
+				return fmt.Errorf("invalid value for keybindings: %q is bound twice to %q",
+					herdrReviewrKeyName(key), b.name)
 			case ok:
-				return fmt.Errorf("invalid value for keybindings: `%s` is bound to both `%s` and `%s`",
-					herdrKeyName(key), a, b.name)
+				return fmt.Errorf("invalid value for keybindings: %q is bound to both %q and %q",
+					herdrReviewrKeyName(key), a, b.name)
 			}
 			first[key] = b.name
 		}
@@ -375,12 +409,12 @@ func invalid(key, want, value string) error {
 	return fmt.Errorf("invalid value for %s: expected %s, not %q", key, want, value)
 }
 
-// placeholders reports whether each { in command opens one of the known
-// placeholders, for example {file}.
-func placeholders(command string, known ...string) bool {
-	for _, s := range strings.Split(command, "{")[1:] {
-		name, _, ok := strings.Cut(s, "}")
-		if !ok || !slices.Contains(known, name) {
+// onlyPlaceholders reports whether each { in command opens one of the
+// known placeholders, for example {file}.
+func onlyPlaceholders(command string, known ...string) bool {
+	for _, rest, ok := strings.Cut(command, "{"); ok; _, rest, ok = strings.Cut(rest, "{") {
+		name, _, closed := strings.Cut(rest, "}")
+		if !closed || !slices.Contains(known, name) {
 			return false
 		}
 	}
@@ -393,22 +427,22 @@ const (
 	maxHostLabel = 63
 )
 
-// hostname reports whether s is a bare DNS name, for example
+// isHostname reports whether s is a bare DNS name, for example
 // "git.example.com", with no scheme, port, or path.
-func hostname(s string) bool {
+func isHostname(s string) bool {
 	if len(s) > maxHostname {
 		return false
 	}
 	for label := range strings.SplitSeq(s, ".") {
-		if !hostLabel(label) {
+		if !isHostLabel(label) {
 			return false
 		}
 	}
 	return true
 }
 
-// hostLabel reports whether s is one valid label of a DNS name.
-func hostLabel(s string) bool {
+// isHostLabel reports whether s is one valid label of a DNS name.
+func isHostLabel(s string) bool {
 	if s == "" || len(s) > maxHostLabel || s[0] == '-' || s[len(s)-1] == '-' {
 		return false
 	}
@@ -418,13 +452,18 @@ func hostLabel(s string) bool {
 	})
 }
 
-// focusAgent tells if the focus moves to the agent after a send.
-func (c config) focusAgent() bool { return c.FocusAgent == nil || *c.FocusAgent }
+// focusesAgent reports whether the focus moves to the agent after a send.
+func (c config) focusesAgent() bool { return c.FocusAgent == nil || *c.FocusAgent }
 
-func names[T ~string](values ...T) []string {
-	s := make([]string, len(values))
-	for i, v := range values {
-		s[i] = string(v)
+// choice returns an error if value is not one of allowed. key is the name
+// of the value in the error.
+func choice[T ~string](key string, value T, allowed []T) error {
+	if slices.Contains(allowed, value) {
+		return nil
 	}
-	return s
+	want := make([]string, len(allowed))
+	for i, a := range allowed {
+		want[i] = string(a)
+	}
+	return invalid(key, "one of "+strings.Join(want, ", "), string(value))
 }

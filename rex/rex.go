@@ -6,6 +6,10 @@
 // for example "pi" and "working". This is the status of the program. A
 // [Client] finds the agents in a session, pastes text into an agent, and
 // gets each status change.
+//
+// The caller gives the environment as a value, as in [exec.Cmd.Env]. The
+// package finds rex with it and runs rex with it. It does not read the
+// environment of the process.
 package rex
 
 import (
@@ -14,52 +18,65 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rednafi/rexdiff/internal/proc"
 )
 
 // Client runs rex commands in one Rex session.
 type Client struct {
-	Block   string // the block of this process, or ""
-	session string // the ID of the session
-	bin     string // the path of the rex command, or "" for "rex" in PATH
+	block   string   // the block of this process, or ""
+	session string   // the ID of the session
+	bin     string   // the path of the rex command, or "" for "rex" in PATH
+	env     []string // the environment of rex
 }
 
-// FromEnv returns a client for the session of this process. Rex sets
-// REX_SESSION and REX_BLOCK in each block. FromEnv returns nil if the
-// process does not run in Rex.
-func FromEnv() *Client {
-	session := os.Getenv("REX_SESSION")
+// New returns a client for the session in the environment env, for
+// example the environment of the process from [os.Environ]. Rex sets
+// REX_SESSION and REX_BLOCK in each block. New returns nil if env is not
+// the environment of a Rex block. The client runs rex with env.
+func New(env []string) *Client {
+	session := proc.Getenv(env, "REX_SESSION")
 	if session == "" {
 		return nil
 	}
 	return &Client{
-		Block:   os.Getenv("REX_BLOCK"),
+		block:   proc.Getenv(env, "REX_BLOCK"),
 		session: session,
-		bin:     binFromEnv(),
+		bin:     binFromEnv(env),
+		env:     env,
 	}
 }
 
-// binFromEnv returns the path of the rex command, or "" for the rex in PATH.
-// Rex sets REX_BIN_DIR in its terminals. Other programs, for example brew,
-// do not have it. If REX_BIN_DIR is empty and PATH has no rex, binFromEnv
-// returns the rex of the Rex server app on macOS, if it is there.
-func binFromEnv() string {
-	if dir := os.Getenv("REX_BIN_DIR"); dir != "" {
+// Block returns the block of this process, or "" if Rex does not tell it.
+func (c *Client) Block() string { return c.block }
+
+// binFromEnv returns the path of the rex command in env, or "" for the rex
+// in PATH. Rex sets REX_BIN_DIR in its terminals. Other programs, for
+// example brew, do not have it. If REX_BIN_DIR is empty and PATH has no
+// rex, binFromEnv looks in HOME on macOS. It returns the rex of the Rex
+// server app, if it is there.
+func binFromEnv(env []string) string {
+	if dir := proc.Getenv(env, "REX_BIN_DIR"); dir != "" {
 		return filepath.Join(dir, "rex")
 	}
-	if _, err := exec.LookPath("rex"); err == nil {
+	if _, err := proc.LookPath(env, "rex"); err == nil {
 		return ""
 	}
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	home := proc.Getenv(env, "HOME")
+	if runtime.GOOS != "darwin" || home == "" {
 		return ""
 	}
+	// The app is in the directory of os.UserConfigDir on macOS.
+	dir := filepath.Join(home, "Library", "Application Support")
 	bin := filepath.Join(dir, "com.superlogical.rex", "RexServer", "Versions", "Current", "Rex Server.app", "Contents", "MacOS", "rex")
 	if _, err := os.Stat(bin); err != nil {
 		return ""
@@ -69,7 +86,7 @@ func binFromEnv() string {
 
 // command returns the command "rex args...".
 func (c *Client) command(ctx context.Context, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, cmp.Or(c.bin, "rex"), args...)
+	return proc.Command(ctx, c.env, cmp.Or(c.bin, "rex"), args...)
 }
 
 // runRex runs "rex args..." and returns the output. If rex fails, the
@@ -79,32 +96,23 @@ func (c *Client) runRex(ctx context.Context, args ...string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	if err == nil {
-		return out, nil
+	if err != nil {
+		return nil, proc.Error(ctx, "rex", err, stderr.Bytes())
 	}
-	msg := strings.TrimSpace(stderr.String())
-	msg = strings.TrimPrefix(msg, "Error: ")
-	msg, _, _ = strings.Cut(msg, "\n")
-	return nil, &runError{msg: cmp.Or(msg, err.Error()), err: err}
+	return out, nil
 }
 
-// runError is a failed run of rex. Its text is the first line that rex
-// writes to stderr. It wraps the error of the process, for errors.As.
-type runError struct {
-	msg string
-	err error
-}
-
-func (e *runError) Error() string { return e.msg }
-func (e *runError) Unwrap() error { return e.err }
-
-// runRexJSON runs "rex args..." and decodes the JSON output into v.
+// runRexJSON runs "rex args..." and decodes the JSON output into v. An
+// error of the decoder names the rex command.
 func (c *Client) runRexJSON(ctx context.Context, v any, args ...string) error {
 	out, err := c.runRex(ctx, args...)
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(out, v)
+	if err := json.Unmarshal(out, v); err != nil {
+		return fmt.Errorf("rex %s: %w", strings.Join(args[:min(len(args), 2)], " "), err)
+	}
+	return nil
 }
 
 // request sends a request to the API of the session. It runs
@@ -119,21 +127,25 @@ func (c *Client) request(ctx context.Context, method string, args, reply any) er
 	if err != nil || reply == nil {
 		return err
 	}
-	return json.Unmarshal(out, reply)
+	if err := json.Unmarshal(out, reply); err != nil {
+		return fmt.Errorf("rex api call %s: %w", method, err)
+	}
+	return nil
 }
 
 // Status is the status that a program sends to Rex with OSC 7501.
 type Status struct {
 	App   string // the name of the program, for example "pi" or "claude-code"
 	State State
+	At    time.Time // when Rex got the status, or zero if Rex does not tell
 }
 
 // State tells what a program does. The zero State means that the program
 // sends no status.
 type State string
 
-// The states of the OSC 7501 protocol that rexdiff uses. A State can have
-// other values, for example "error".
+// The known states of the OSC 7501 protocol. A State can have other
+// values, for example "error".
 const (
 	StateIdle    State = "idle"    // waits for the next instruction of the user
 	StateWorking State = "working" // does a task
@@ -150,39 +162,40 @@ type statusEntry struct {
 	App   string `json:"app"`
 	// EffectiveApp is the name that Rex shows. It can differ from App.
 	EffectiveApp string `json:"effective_app"`
+	UpdatedAt    string `json:"updated_at"` // RFC 3339
 }
 
 // status returns the entry as a Status, with the name that Rex shows.
 func (e statusEntry) status() Status {
+	at, _ := time.Parse(time.RFC3339Nano, e.UpdatedAt) // zero if bad
 	return Status{
 		App:   cmp.Or(e.EffectiveApp, e.App),
 		State: e.State,
+		At:    at,
 	}
 }
 
 // Status returns the status of the program in block. If the program sends
-// no status, Status returns the zero Status.
+// no status, Status returns the zero Status. The statuses of the
+// sub-agents of the program do not count, as in [Client.Watch].
 func (c *Client) Status(ctx context.Context, block string) (Status, error) {
 	var reply struct {
 		Entries []statusEntry `json:"records"`
 	}
 	args := []string{"block", "call", "-s", c.session, "-b", block, "program_status"}
-	err := c.runRexJSON(ctx, &reply, args...)
-	if err != nil || len(reply.Entries) == 0 {
+	if err := c.runRexJSON(ctx, &reply, args...); err != nil {
 		return Status{}, err
 	}
-	for _, e := range reply.Entries {
-		if e.ID == "" {
-			return e.status(), nil
-		}
+	if i := slices.IndexFunc(reply.Entries, func(e statusEntry) bool { return e.ID == "" }); i >= 0 {
+		return reply.Entries[i].status(), nil
 	}
-	return reply.Entries[0].status(), nil
+	return Status{}, nil
 }
 
 // Cwd returns the working directory of the program in block.
 func (c *Client) Cwd(ctx context.Context, block string) (string, error) {
 	type process struct {
-		Cwd string `json:"cwd"` // a file:// URL
+		Cwd string `json:"cwd"` // a path, or a file:// URL
 	}
 	// The foreground process is the program that holds the terminal, for
 	// example an agent that runs in a shell. The child is the shell.
@@ -204,7 +217,7 @@ type Agent struct {
 	Name   string // the label of the block, or else the app name
 	Window string // the label of the window of the block, or ""
 	Cwd    string // the working directory of the program
-	Status
+	Status Status
 }
 
 // terminalCreator is the creator that Rex gives to a terminal block.
@@ -212,7 +225,8 @@ type Agent struct {
 const terminalCreator = "com.superlogical.terminal"
 
 // Agents returns the agents in the session, in the order of the layout.
-// It does not return the block of the client.
+// It does not return the block of the client. If ctx ends, Agents returns
+// the cause of ctx.
 func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 	// Get the windows at the same time as the blocks.
 	var windows []window
@@ -236,7 +250,7 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 	// an agent if its program sends an app name.
 	agents := make([]Agent, len(reply.Blocks))
 	for i, b := range reply.Blocks {
-		if b.ID == c.Block || b.Creator != terminalCreator {
+		if b.ID == c.block || b.Creator != terminalCreator {
 			continue
 		}
 		wg.Go(func() {
@@ -244,6 +258,8 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 			if err != nil || status.App == "" {
 				return
 			}
+			// If Rex cannot tell the directory, Cwd is "". The agent stays
+			// in the list.
 			cwd, _ := c.Cwd(ctx, b.ID)
 			agents[i] = Agent{
 				Block:  b.ID,
@@ -254,6 +270,11 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 		})
 	}
 	wg.Wait()
+	if ctx.Err() != nil {
+		// A status call that fails at the deadline does not tell that the
+		// block is not an agent.
+		return nil, context.Cause(ctx)
+	}
 
 	for i, b := range reply.Blocks {
 		agents[i].Window = windowLabel(windows, b.WindowID)
@@ -283,10 +304,8 @@ func (c *Client) windows(ctx context.Context) []window {
 // windowLabel returns the label of the window with the ID id. If no window
 // has this ID, it returns "".
 func windowLabel(windows []window, id string) string {
-	for _, w := range windows {
-		if w.ID == id {
-			return w.Label
-		}
+	if i := slices.IndexFunc(windows, func(w window) bool { return w.ID == id }); i >= 0 {
+		return windows[i].Label
 	}
 	return ""
 }
@@ -349,41 +368,47 @@ func (c *Client) SetLabel(ctx context.Context, block, label string) error {
 // Split opens a new terminal block next to the block of the client. The
 // new block runs the command argv in the directory cwd.
 func (c *Client) Split(ctx context.Context, cwd string, argv ...string) error {
-	args := []string{"split", "-s", c.session, "-b", c.Block, "--cwd", cwd, "--"}
+	args := []string{"split", "-s", c.session, "-b", c.block, "--cwd", cwd, "--"}
 	_, err := c.runRex(ctx, append(args, argv...)...)
 	return err
 }
 
-// ConfigPath returns the path of the configuration file of Rex. This is
-// $REX_CONFIG if it is set. If not, it is init.lua in the rex directory of
-// $XDG_CONFIG_HOME, or of ~/.config.
-func ConfigPath() string {
-	if path := os.Getenv("REX_CONFIG"); path != "" {
+// ConfigPath returns the path of the configuration file of Rex in the
+// environment env. This is $REX_CONFIG if it is set. If not, it is
+// init.lua in the rex directory of $XDG_CONFIG_HOME, or of $HOME/.config.
+func ConfigPath(env []string) string {
+	if path := proc.Getenv(env, "REX_CONFIG"); path != "" {
 		return path
 	}
-	dir := os.Getenv("XDG_CONFIG_HOME")
+	dir := proc.Getenv(env, "XDG_CONFIG_HOME")
 	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".config")
+		dir = filepath.Join(proc.Getenv(env, "HOME"), ".config")
 	}
 	return filepath.Join(dir, "rex", "init.lua")
 }
 
-// ReloadConfig tells Rex to read its configuration file again. It returns
-// the report of Rex. It also works outside a Rex session.
-func ReloadConfig(ctx context.Context) (string, error) {
-	c := &Client{bin: binFromEnv()}
-	out, err := c.runRex(ctx, "config", "reload")
-	return string(out), err
+// ReloadConfig tells Rex to read its configuration file again. It runs
+// rex with the environment env. It also works outside a Rex session.
+func ReloadConfig(ctx context.Context, env []string) error {
+	c := &Client{bin: binFromEnv(env), env: env}
+	_, err := c.runRex(ctx, "config", "reload")
+	return err
 }
 
-// Event is a change to a block in the session.
+// Event is a change to a block in the session, or a reconnect.
 type Event struct {
 	Block  string // the ID of the block
 	Closed bool   // true if the block closed
 	// Status is the new status of the program in the block. If the program
 	// removes its status, Status is the zero Status.
 	Status Status
+	// Reconnect is true if Watch starts rex again. The events between the
+	// two runs of rex are lost. A Reconnect event has no block.
+	Reconnect bool
+	// Err is the error of a run of rex that fails, with the first line
+	// of its stderr. An event with Err has no block. Watch starts rex
+	// again after the event.
+	Err error
 }
 
 const (
@@ -394,39 +419,58 @@ const (
 )
 
 // Watch calls fn for each event in the session, from one goroutine. It
-// runs "rex events" to get the events. If rex stops, Watch starts it again
-// after 2 seconds. Watch returns the error of ctx when ctx is done.
+// runs "rex events" to get the events. If rex fails, Watch calls fn with
+// an event that has the error. If rex stops, Watch starts it again after
+// 2 seconds. Then it calls fn with a Reconnect event before the next
+// events. Watch returns the cause of ctx when ctx is done.
 func (c *Client) Watch(ctx context.Context, fn func(Event)) error {
-	for {
-		c.watchOnce(ctx, fn)
+	for again := false; ; again = true {
+		if err := c.watchOnce(ctx, again, fn); err != nil && ctx.Err() == nil {
+			fn(Event{Err: err})
+		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		case <-time.After(reconnectDelay):
 		}
 	}
 }
 
 // watchOnce runs "rex events" and calls fn for each event until rex stops.
-func (c *Client) watchOnce(ctx context.Context, fn func(Event)) {
+// If again is true, the first event is a Reconnect event. It returns the
+// error of rex, with the first line of its stderr.
+func (c *Client) watchOnce(ctx context.Context, again bool, fn func(Event)) error {
 	cmd := c.command(ctx, "events", "-s", c.session, "--json")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.StdoutPipe()
-	if err != nil || cmd.Start() != nil {
-		return
+	if err != nil {
+		return fmt.Errorf("rex events: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("rex events: %w", proc.Error(ctx, "rex", err, nil))
+	}
+	if again {
+		fn(Event{Reconnect: true})
 	}
 	lines := bufio.NewScanner(out)
-	lines.Buffer(make([]byte, maxEventLine), maxEventLine)
+	lines.Buffer(nil, maxEventLine)
 	for lines.Scan() {
 		if ev, ok := parseEvent(lines.Bytes()); ok {
 			fn(ev)
 		}
 	}
-	if lines.Err() != nil {
+	if err := lines.Err(); err != nil {
 		// A line is too long. Stop rex, because rex can wait until Watch
 		// reads the rest of its output.
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return fmt.Errorf("rex events: %w", err)
 	}
-	cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("rex events: %w", proc.Error(ctx, "rex", err, stderr.Bytes()))
+	}
+	return nil
 }
 
 // blockEvent is an event of one block in "rex events --json".

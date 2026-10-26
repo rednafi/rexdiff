@@ -4,6 +4,10 @@
 // A [Repo] compares trees. A tree is the ID of a git tree object.
 // [Repo.Snapshot] gets a tree of the working tree. [Repo.Diff] gets the files
 // that differ between two trees.
+//
+// [Open] takes the environment of git and of the forge tools as a value,
+// as in [exec.Cmd.Env]. The package does not read the environment of the
+// process.
 package vcs
 
 import (
@@ -14,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rednafi/rexdiff/internal/proc"
 )
 
 // emptyTree is the ID of the tree that has no files.
@@ -39,18 +46,40 @@ var (
 	ErrBinary = errors.New("binary file")
 	// ErrTooBig means that a file is larger than 2,000,000 bytes or has
 	// more than 50,000 lines.
-	ErrTooBig = errors.New("file too big")
+	ErrTooBig = errors.New("file too large")
 )
 
 // Repo is a git repository.
 type Repo struct {
 	root  string
-	index string // the path of the real index
+	index string   // the path of the real index
+	env   []string // the environment of git and of the forge tools
+
+	// snapLock is the lock of the private index of Snapshot. A send takes
+	// the lock, and a receive gives it back. A channel lets Snapshot stop
+	// its wait when ctx ends. The lock guards snapDir, snapSeed and
+	// closed. snapDir is the directory of the private index, or "" before
+	// the first Snapshot. snapSeed is the file status of the real index at
+	// the last copy.
+	snapLock chan struct{}
+	snapDir  string
+	snapSeed string
+	closed   bool
 }
 
-// Open returns the repository that contains dir.
-func Open(ctx context.Context, dir string) (*Repo, error) {
-	r := &Repo{root: dir}
+// errClosed is the error of a Snapshot after Close.
+var errClosed = errors.New("the repository is closed")
+
+// Open returns the repository that contains dir. The repository runs git
+// and the forge tools with the environment env, and finds them in the
+// PATH of env. Open does not change env.
+func Open(ctx context.Context, env []string, dir string) (*Repo, error) {
+	// git gets the root in PWD. PWD must be an absolute path.
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	r := &Repo{root: abs, env: env, snapLock: make(chan struct{}, 1)}
 	// Get each path with its own git process, because a path can have a
 	// newline. A path can also end with a space, so remove only the last
 	// newline.
@@ -58,7 +87,8 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.root = strings.TrimSuffix(root, "\n")
+	// Resolve the links once, so Contains and Owns compare real paths.
+	r.root = evalSymlinks(strings.TrimSuffix(root, "\n"))
 	index, err := r.run(ctx, nil,
 		"rev-parse", "--path-format=absolute", "--git-path", "index")
 	if err != nil {
@@ -68,81 +98,79 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 	return r, nil
 }
 
+// Close removes the files that the repository keeps for [Repo.Snapshot].
+// Close waits for the Snapshot that runs.
+func (r *Repo) Close() error {
+	r.snapLock <- struct{}{}
+	defer func() { <-r.snapLock }()
+	dir := r.snapDir
+	r.snapDir, r.closed = "", true
+	if dir == "" {
+		return nil
+	}
+	return os.RemoveAll(dir)
+}
+
 // Root returns the top directory of the working tree.
 func (r *Repo) Root() string { return r.root }
 
 // run runs git in the root directory and returns its standard output. env
-// adds to the environment of the process.
+// adds to the environment of the repository.
 func (r *Repo) run(ctx context.Context, env []string, args ...string) (string, error) {
 	return r.runInput(ctx, env, nil, args...)
 }
 
 // runInput is like run. git reads its standard input from in.
-func (r *Repo) runInput(
-	ctx context.Context,
-	env []string,
-	in io.Reader,
-	args ...string,
-) (string, error) {
-	out, err := command(ctx, r.root, env, in, "git", args...)
+func (r *Repo) runInput(ctx context.Context, env []string, in io.Reader, args ...string) (string, error) {
+	cmd, stderr := r.command(ctx, env, "git", args...)
+	cmd.Stdin = in
+	out, err := output(ctx, cmd, stderr)
 	if err != nil {
 		return out, fmt.Errorf("git %s: %w", args[0], err)
 	}
 	return out, nil
 }
 
-// command runs the program name in dir and returns its standard output.
-// env adds to the environment of the process, and stdin is its standard
-// input, or nil for none. The error has the first line
-// of the standard error. It wraps the error of the process, so callers can
-// check its exit code.
-func command(
-	ctx context.Context,
-	dir string,
-	env []string,
-	stdin io.Reader,
-	name string,
-	args ...string,
-) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir, cmd.Stdin = dir, stdin
-	if env != nil {
-		cmd.Env = append(os.Environ(), env...)
-	}
+// command returns the command "name args..." in the root directory. env
+// adds to the environment of the repository. The buffer gets the standard
+// error.
+func (r *Repo) command(ctx context.Context, env []string, name string, args ...string) (*exec.Cmd, *bytes.Buffer) {
+	// PWD is the directory of the command, as exec sets it for a nil Env.
+	// A copy keeps r.env as it is.
+	env = slices.Concat(r.env, []string{"PWD=" + r.root}, env)
+	cmd := proc.Command(ctx, env, name, args...)
+	cmd.Dir = r.root
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	return cmd, &stderr
+}
+
+// output runs cmd and returns its standard output. ctx is the context of
+// cmd. The error has the first line of the standard error, or the cause of
+// ctx. It wraps the error of the process, so callers can examine its exit
+// code.
+func output(ctx context.Context, cmd *exec.Cmd, stderr *bytes.Buffer) (string, error) {
 	out, err := cmd.Output()
-	if errors.Is(err, exec.ErrNotFound) {
-		return "", fmt.Errorf("%s isn't installed", name)
-	}
 	if err != nil {
-		msg, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
-		return string(out), &runError{cmp.Or(msg, err.Error()), err}
+		return string(out), proc.Error(ctx, cmd.Args[0], err, stderr.Bytes())
 	}
 	return string(out), nil
 }
 
-// runError shows the message of the program, but keeps the error of the
-// process.
-type runError struct {
-	msg string
-	err error
-}
-
-func (e *runError) Error() string { return e.msg }
-func (e *runError) Unwrap() error { return e.err }
-
-// exitedWith reports whether err is from a process that exited with code.
-func exitedWith(err error, code int) bool {
+// exitedOne reports whether err is from a process that exited with code 1.
+func exitedOne(err error) bool {
 	ee, ok := errors.AsType[*exec.ExitError](err)
-	return ok && ee.ExitCode() == code
+	return ok && ee.ExitCode() == 1
 }
 
 // Resolve returns the object ID of rev, for example "HEAD" or "main^{tree}".
 func (r *Repo) Resolve(ctx context.Context, rev string) (string, error) {
 	out, err := r.run(ctx, nil, "rev-parse", "--verify", "--quiet", rev)
+	if exitedOne(err) {
+		return "", fmt.Errorf("git: unknown revision %q", rev)
+	}
 	if err != nil {
-		return "", fmt.Errorf("git: unknown revision %s", rev)
+		return "", err
 	}
 	return strings.TrimSpace(out), nil
 }
@@ -152,9 +180,9 @@ func (r *Repo) Tree(ctx context.Context, rev string) (string, error) {
 	return r.Resolve(ctx, rev+"^{tree}")
 }
 
-// Head returns the tree of HEAD. If HEAD is a branch with no commits yet,
+// HeadTree returns the tree of HEAD. If HEAD is a branch with no commits yet,
 // as in a new repository, it returns the empty tree.
-func (r *Repo) Head(ctx context.Context) (string, error) {
+func (r *Repo) HeadTree(ctx context.Context) (string, error) {
 	t, err := r.Tree(ctx, "HEAD")
 	if err == nil {
 		return t, nil
@@ -162,15 +190,15 @@ func (r *Repo) Head(ctx context.Context) (string, error) {
 	// rev-parse exits with 1 if HEAD names no commit yet. A broken HEAD,
 	// for example one whose commit is missing, is an error.
 	_, rerr := r.run(ctx, nil, "rev-parse", "-q", "--verify", "HEAD")
-	if exitedWith(rerr, 1) {
+	if exitedOne(rerr) {
 		return emptyTree, nil
 	}
 	return "", err
 }
 
-// Parent returns the tree of the first parent of the commit rev. If rev has
+// ParentTree returns the tree of the first parent of the commit rev. If rev has
 // no parent, it returns the empty tree.
-func (r *Repo) Parent(ctx context.Context, rev string) (string, error) {
+func (r *Repo) ParentTree(ctx context.Context, rev string) (string, error) {
 	c, err := r.Resolve(ctx, rev+"^{commit}")
 	if err != nil {
 		return "", err
@@ -187,44 +215,55 @@ func (r *Repo) Parent(ctx context.Context, rev string) (string, error) {
 	return r.Tree(ctx, first)
 }
 
-// MergeBase returns the tree of the best common ancestor of base and HEAD.
-func (r *Repo) MergeBase(ctx context.Context, base string) (string, error) {
-	c, err := r.ForkPoint(ctx, base)
+// MergeBaseTree returns the tree of the commit that [Repo.MergeBaseCommit]
+// returns.
+func (r *Repo) MergeBaseTree(ctx context.Context, base string) (string, error) {
+	c, err := r.MergeBaseCommit(ctx, base)
 	if err != nil {
 		return "", err
 	}
 	return r.Tree(ctx, c)
 }
 
-// ForkPoint returns the best common ancestor commit of base and HEAD.
-func (r *Repo) ForkPoint(ctx context.Context, base string) (string, error) {
+// MergeBaseCommit returns the best common ancestor commit of base and
+// HEAD, as git merge-base finds it. If git exits with an error, the error
+// wraps the [*exec.ExitError] of git.
+func (r *Repo) MergeBaseCommit(ctx context.Context, base string) (string, error) {
 	out, err := r.run(ctx, nil, "merge-base", "--end-of-options", base, "HEAD")
 	if err != nil {
-		return "", fmt.Errorf("no merge base with %s", base)
+		return "", fmt.Errorf("no merge base with %s: %w", base, err)
 	}
 	return strings.TrimSpace(out), nil
 }
 
 // Snapshot writes the working tree as a tree object and returns its ID.
-// The tree has the tracked and the untracked files. It does not have
-// ignored files, or files that git cannot add, for example a git repository
-// with no commit. Snapshot uses a temporary index, so the real
-// index does not change.
+// The tree has the tracked and the untracked files. It does not have the
+// ignored files. It also does not have the files that git cannot add, for
+// example a nested repository with no commit. Snapshot uses a private
+// index, so the real index does not change. The private index keeps the
+// file status of the last Snapshot, also of the untracked files, so git
+// reads only the files that change. [Repo.Close] removes it. One Snapshot
+// runs at a time. If ctx ends while Snapshot waits for another,
+// Snapshot returns the cause of ctx.
 func (r *Repo) Snapshot(ctx context.Context) (string, error) {
-	// git does not read an empty index file, but it reads a missing one
-	// as empty. A new repository has no index.
-	dir, err := os.MkdirTemp("", "rexdiff-index-*")
+	select {
+	case r.snapLock <- struct{}{}:
+	case <-ctx.Done():
+		return "", context.Cause(ctx)
+	}
+	defer func() { <-r.snapLock }()
+	if r.closed {
+		return "", errClosed
+	}
+	env, err := r.privateIndex()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("snapshot: %w", err)
 	}
-	defer os.RemoveAll(dir)
-	idx := filepath.Join(dir, "index")
-	if err := r.copyIndex(idx); err != nil {
-		return "", err
+	if err := r.dropIgnored(ctx, env); err != nil {
+		return "", fmt.Errorf("snapshot: %w", err)
 	}
-	env := []string{"GIT_INDEX_FILE=" + idx}
 	_, err = r.run(ctx, env, "add", "-A", "--ignore-errors")
-	if exitedWith(err, 1) {
+	if exitedOne(err) {
 		err = nil // git cannot add some files, but it adds the others
 	}
 	if err != nil {
@@ -237,14 +276,76 @@ func (r *Repo) Snapshot(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// privateIndex returns the environment that points git at the private
+// index of Snapshot. It copies the real index when the real index changes,
+// for example after a commit or a "git add -f". A clean of the temporary
+// directory makes a new directory. The caller must hold snapLock.
+func (r *Repo) privateIndex() ([]string, error) {
+	seed := ""
+	if st, err := os.Stat(r.index); err == nil {
+		seed = fmt.Sprint(st.Size(), st.ModTime().UnixNano())
+	}
+	_, err := os.Stat(r.snapDir)
+	if r.snapDir == "" || err != nil || seed != r.snapSeed {
+		if r.snapDir != "" {
+			_ = os.RemoveAll(r.snapDir)
+		}
+		dir, err := os.MkdirTemp(proc.Getenv(r.env, "TMPDIR"), "rexdiff-index-*")
+		if err != nil {
+			return nil, err
+		}
+		if err := r.copyIndex(filepath.Join(dir, "index")); err != nil {
+			_ = os.RemoveAll(dir)
+			return nil, err
+		}
+		r.snapDir, r.snapSeed = dir, seed
+	}
+	return []string{"GIT_INDEX_FILE=" + filepath.Join(r.snapDir, "index")}, nil
+}
+
+// dropIgnored removes from the private index of env the files that git
+// ignores now and that the real index does not have. "add -A" keeps such
+// files, for example after an edit of a .gitignore file.
+func (r *Repo) dropIgnored(ctx context.Context, env []string) error {
+	ignored := []string{"ls-files", "-z", "-c", "-i", "--exclude-standard"}
+	out, err := r.run(ctx, env, ignored...)
+	if err != nil || out == "" {
+		return err
+	}
+	tracked, err := r.run(ctx, nil, ignored...) // force-added files stay
+	if err != nil {
+		return err
+	}
+	keep := map[string]bool{}
+	for p := range strings.SplitSeq(tracked, "\x00") {
+		keep[p] = true
+	}
+	var drop strings.Builder
+	for p := range strings.SplitSeq(strings.TrimSuffix(out, "\x00"), "\x00") {
+		if !keep[p] {
+			drop.WriteString(p)
+			drop.WriteString("\x00")
+		}
+	}
+	if drop.Len() == 0 {
+		return nil
+	}
+	_, err = r.runInput(ctx, env, strings.NewReader(drop.String()),
+		"rm", "--cached", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul")
+	return err
+}
+
 // copyIndex copies the real index to dst. If there is no real index, it
-// does nothing. With the copy, "add -A" hashes only the changed files.
-// The copy keeps the modification time of the index. git uses this time
-// to find files that changed in the same second as the index.
+// does nothing. The copy keeps the modification time of the index. git
+// uses this time to find files that changed in the same second as the
+// index.
 func (r *Repo) copyIndex(dst string) error {
 	st, err := os.Stat(r.index)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil // a new repository has no index
+	}
+	if err != nil {
+		return err
 	}
 	b, err := os.ReadFile(r.index)
 	if err != nil {
@@ -256,20 +357,20 @@ func (r *Repo) copyIndex(dst string) error {
 	return os.Chtimes(dst, time.Time{}, st.ModTime())
 }
 
-// Status is the type of change to a file. Its value is the letter that git
+// FileStatus is the type of change to a file. Its value is the letter that git
 // uses, for example 'A'.
-type Status byte
+type FileStatus byte
 
-// The values of Status that [Repo.Diff] returns.
+// The values of FileStatus that [Repo.Diff] returns.
 const (
-	StatusAdded    Status = 'A'
-	StatusModified Status = 'M'
-	StatusDeleted  Status = 'D'
-	StatusRenamed  Status = 'R'
+	StatusAdded    FileStatus = 'A'
+	StatusModified FileStatus = 'M'
+	StatusDeleted  FileStatus = 'D'
+	StatusRenamed  FileStatus = 'R'
 
 	// statusTypeChange is a change of type, for example from a file to a
 	// symbolic link. [Repo.Diff] shows it as [StatusModified].
-	statusTypeChange Status = 'T'
+	statusTypeChange FileStatus = 'T'
 )
 
 // File is a file that is different between two trees. Old and New are the
@@ -279,13 +380,13 @@ const (
 type File struct {
 	Path     string
 	From     string // for a rename, the old path
-	Status   Status
+	Status   FileStatus
 	Old, New string
-	// Binary is true if a version of the file has a NUL byte.
-	Binary bool
-	// TooBig is true if the two versions together are larger than
-	// 2,000,000 bytes or have more than 50,000 lines.
-	TooBig bool
+	// Skip is ErrBinary if a version of the file has a NUL byte. It is
+	// ErrTooBig if the two versions together are too big. Diff does not
+	// read a version larger than 2,000,000 bytes. Thus that version gives
+	// ErrTooBig, also if it is binary. Else Skip is nil.
+	Skip error
 }
 
 // gitlink is the mode of a submodule in a tree.
@@ -311,7 +412,7 @@ func (r *Repo) Diff(ctx context.Context, from, to string) ([]File, error) {
 		if len(meta) != 5 {
 			return nil, fmt.Errorf("git diff: bad output %q", fields[0])
 		}
-		f := File{Status: Status(meta[4][0]), Path: fields[1]}
+		f := File{Status: FileStatus(meta[4][0]), Path: fields[1]}
 		if f.Status == statusTypeChange {
 			f.Status = StatusModified
 		}
@@ -332,8 +433,10 @@ func (r *Repo) Diff(ctx context.Context, from, to string) ([]File, error) {
 	for i := range files {
 		f := &files[i]
 		f.Old, f.New = f.use(blobs[2*i]), f.use(blobs[2*i+1])
-		f.TooBig = f.TooBig || tooBig(f.Old, f.New)
-		if f.Binary || f.TooBig {
+		if f.Skip == nil && isTooBig(f.Old, f.New) {
+			f.Skip = ErrTooBig
+		}
+		if f.Skip != nil {
 			f.Old, f.New = "", ""
 		}
 	}
@@ -354,10 +457,12 @@ func diffSide(mode, id string) (string, blob) {
 	return id, blob{}
 }
 
-// use returns the content of b, and marks f if b is binary or too big.
+// use returns the content of b. If b is binary or too big, use sets
+// f.Skip. A binary side wins over a side that is too big.
 func (f *File) use(b blob) string {
-	f.Binary = f.Binary || errors.Is(b.err, ErrBinary)
-	f.TooBig = f.TooBig || errors.Is(b.err, ErrTooBig)
+	if f.Skip == nil || errors.Is(b.err, ErrBinary) {
+		f.Skip = cmp.Or(b.err, f.Skip)
+	}
 	return b.data
 }
 
@@ -377,28 +482,28 @@ func (r *Repo) readBlobs(ctx context.Context, ids []string, blobs []blob) error 
 	for i, id := range ids {
 		if id != "" {
 			batch = append(batch, i)
-			in.WriteString(id + "\n")
+			in.WriteString(id)
+			in.WriteString("\n")
 		}
 	}
 	if len(batch) == 0 {
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
-	cmd.Dir = r.root
+	cmd, stderr := r.command(ctx, nil, "git", "cat-file", "--batch")
 	cmd.Stdin = strings.NewReader(in.String())
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("git cat-file: %w", err)
+		return fmt.Errorf("git cat-file: %w", proc.Error(ctx, "git", err, nil))
 	}
 	err = readBatch(bufio.NewReader(out), batch, blobs)
 	if err != nil {
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 	}
-	if werr := cmd.Wait(); err == nil {
-		err = werr
+	if werr := cmd.Wait(); err == nil && werr != nil {
+		err = proc.Error(ctx, "git", werr, stderr.Bytes())
 	}
 	if err != nil {
 		return fmt.Errorf("git cat-file: %w", err)
@@ -406,12 +511,14 @@ func (r *Repo) readBlobs(ctx context.Context, ids []string, blobs []blob) error 
 	return nil
 }
 
+// errShort is the error of output that ends too soon.
+var errShort = errors.New("short output")
+
 // readBatch reads the output of "git cat-file --batch" into blobs[i] for
 // each i in batch. For each object, the output has
 // "<oid> <type> <size>\n<content>\n", or one line that ends with "missing"
 // or "ambiguous".
 func readBatch(r *bufio.Reader, batch []int, blobs []blob) error {
-	errShort := errors.New("short output")
 	for _, i := range batch {
 		hdr, err := r.ReadString('\n')
 		if err != nil {
@@ -450,10 +557,10 @@ func readBatch(r *bufio.Reader, batch []int, blobs []blob) error {
 // isBinary reports whether s has a NUL byte.
 func isBinary(s string) bool { return strings.Contains(s, "\x00") }
 
-// tooBig reports whether the versions together are larger than
+// isTooBig reports whether the versions together are larger than
 // maxFileSize bytes or have more than maxLines lines. A last line without
 // a newline counts as a line, as in diff.Lines.
-func tooBig(versions ...string) bool {
+func isTooBig(versions ...string) bool {
 	size, lines := 0, 0
 	for _, s := range versions {
 		size += len(s)
@@ -467,21 +574,22 @@ func tooBig(versions ...string) bool {
 
 // ReadFile reads the file at path in the working tree. The path is relative
 // to the root. ReadFile reads only a regular file in the root, also through
-// a symbolic link. If the file is binary or too big, ReadFile returns
-// ErrBinary or ErrTooBig.
+// a symbolic link. For another file, for example a directory or a named
+// pipe, it returns an error. If the file is binary or too big, ReadFile
+// returns ErrBinary or ErrTooBig.
 func (r *Repo) ReadFile(path string) (string, error) {
 	root, err := os.OpenRoot(r.root)
 	if err != nil {
 		return "", err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	st, err := root.Stat(path)
 	if err != nil {
 		return "", err
 	}
 	// Do not read a device or a named pipe. The read can block or not end.
 	if !st.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file", path)
+		return "", fmt.Errorf("%q is not a regular file", path)
 	}
 	if st.Size() > maxFileSize {
 		return "", ErrTooBig
@@ -493,7 +601,7 @@ func (r *Repo) ReadFile(path string) (string, error) {
 	switch s := string(b); {
 	case isBinary(s):
 		return "", ErrBinary
-	case tooBig(s):
+	case isTooBig(s):
 		return "", ErrTooBig
 	default:
 		return s, nil
@@ -502,29 +610,32 @@ func (r *Repo) ReadFile(path string) (string, error) {
 
 // Contains reports whether dir is the root or a directory below it. It
 // follows symbolic links, so /tmp and /private/tmp on macOS are the same.
+// Contains does not run git, thus it does not see a nested repository.
 func (r *Repo) Contains(dir string) bool {
-	root := evalSymlinks(r.root)
 	dir = evalSymlinks(dir)
-	return dir == root || strings.HasPrefix(dir, root+string(filepath.Separator))
+	return dir == r.root || strings.HasPrefix(dir, r.root+string(filepath.Separator))
 }
 
 // Owns reports whether dir is in the working tree of r, and not in another
-// repository or worktree below the root. As in herdr-reviewr, only an
-// absolute dir can be in it. Owns runs git only for a dir below the root.
-// An error tells that git cannot run, so the answer is not known.
+// repository or worktree below the root. As in herdr-reviewr, a relative
+// dir is not in it. Owns runs git only if [Repo.Contains] reports true.
+// An error means that git cannot run, and the answer is not known.
 func (r *Repo) Owns(ctx context.Context, dir string) (bool, error) {
 	if !filepath.IsAbs(dir) || !r.Contains(dir) {
 		return false, nil
 	}
-	out, err := command(ctx, r.root, nil, nil, "git", "-C", dir, "rev-parse", "--show-toplevel")
-	if _, ok := errors.AsType[*exec.ExitError](err); ok {
+	cmd, stderr := r.command(ctx, nil, "git", "-C", dir, "rev-parse", "--show-toplevel")
+	out, err := output(ctx, cmd, stderr)
+	// A git that a signal stops, for example at the end of ctx, does not
+	// answer.
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok && ee.Exited() {
 		return false, nil // dir is in no working tree
 	}
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("git rev-parse: %w", err)
 	}
 	top := strings.TrimSuffix(out, "\n")
-	return top != "" && evalSymlinks(top) == evalSymlinks(r.root), nil
+	return top != "" && evalSymlinks(top) == r.root, nil
 }
 
 // evalSymlinks returns p with its symbolic links resolved, or p if that

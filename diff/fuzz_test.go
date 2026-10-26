@@ -66,7 +66,7 @@ func fuzzOptions(layout, width, offset uint8, colored bool) diff.Options {
 func checkLines(t *testing.T, d *diff.Diff, o diff.Options) {
 	t.Helper()
 	if len(d.Lines) != len(d.Rows) {
-		t.Fatalf("got %d lines for %d rows, want one line for each row",
+		t.Fatalf("%d lines for %d rows, want one line for each row",
 			len(d.Lines), len(d.Rows))
 	}
 	for i, l := range d.Lines {
@@ -82,9 +82,9 @@ func checkLines(t *testing.T, d *diff.Diff, o diff.Options) {
 }
 
 // checkRows checks that each row points at real lines, in order.
-func checkRows(t *testing.T, rows []diff.Row, old, new string) {
+func checkRows(t *testing.T, rows []diff.Row, before, after string) {
 	t.Helper()
-	nOld, nNew := len(diff.Lines(old)), len(diff.Lines(new))
+	nOld, nNew := len(diff.Lines(before)), len(diff.Lines(after))
 	lastOld, lastNew := 0, 0
 	for i, r := range rows {
 		if r.Old < 0 || r.Old > nOld || r.New < 0 || r.New > nNew {
@@ -120,15 +120,15 @@ func FuzzRender(f *testing.F) {
 	f.Fuzz(func(
 		t *testing.T,
 		p uint8,
-		old, new string,
+		before, after string,
 		layout, width, offset uint8,
 		colored bool,
 	) {
 		o := fuzzOptions(layout, width, offset, colored)
-		d := diff.Render(paths[int(p)%len(paths)], old, new, o)
+		d := diff.Render(paths[int(p)%len(paths)], before, after, o)
 		checkLines(t, d, o)
-		checkRows(t, d.Rows, old, new)
-		if o.Width == 0 && o.Offset == 0 && !strings.Contains(old+new, "…") {
+		checkRows(t, d.Rows, before, after)
+		if o.Width == 0 && o.Offset == 0 && !strings.Contains(before+after, "…") {
 			// With no width limit, no line is cut.
 			for i, l := range d.Lines {
 				cut := strings.Contains(ansi.Strip(l), "…")
@@ -138,14 +138,14 @@ func FuzzRender(f *testing.F) {
 			}
 		}
 
-		added, deleted := diff.Count(old, new)
+		added, deleted := diff.Count(before, after)
 		if (added == 0 && deleted == 0) != (len(d.Lines) == 0) {
 			t.Fatalf("Count = %d, %d and Render has %d lines, "+
 				"want zero counts only for zero lines",
 				added, deleted, len(d.Lines))
 		}
 		var plus, minus int
-		for _, l := range snippet(d.Rows, old, new) {
+		for _, l := range snippet(d.Rows, before, after) {
 			switch l[0] {
 			case '+':
 				plus++
@@ -166,11 +166,11 @@ func FuzzSnippetSameInLayouts(f *testing.F) {
 	f.Add(oldSrc, newSrc)
 	f.Add("a\nb\nc\nd\n", "x\nb\ny\nz\nd\n")
 	f.Add("\tx\r\n", "\ty\n")
-	f.Fuzz(func(t *testing.T, old, new string) {
-		u := diff.Render("x.txt", old, new, diff.Options{})
+	f.Fuzz(func(t *testing.T, before, after string) {
+		u := diff.Render("x.txt", before, after, diff.Options{})
 		o := diff.Options{Split: true, Width: 30, Wrap: true}
-		s := diff.Render("x.txt", old, new, o)
-		got, want := snippet(s.Rows, old, new), snippet(u.Rows, old, new)
+		s := diff.Render("x.txt", before, after, o)
+		got, want := snippet(s.Rows, before, after), snippet(u.Rows, before, after)
 		if !slices.Equal(got, want) {
 			t.Fatalf("split snippet = %q, want the unified snippet %q",
 				got, want)
@@ -256,11 +256,13 @@ func FuzzComments(f *testing.F) {
 		s := int(start) % len(lines)
 		e := min(s+int(size), len(lines)-1)
 		var cs diff.Comments
-		c := cs.Add(commentOn(path, diff.SideNew, before, s+1, e+1))
+		c := commentOn(path, diff.SideNew, before, s+1, e+1)
 		c.Text = text
 		if c.Start != s+1 || c.End != e+1 {
-			t.Errorf("commentOn lines %d-%d: %+v", s+1, e+1, c)
+			t.Errorf("commentOn lines %d-%d = %+v, want lines %d-%d",
+				s+1, e+1, c, s+1, e+1)
 		}
+		cs.Add(c)
 		cs.Add(comment(path, diff.SideOld, before, after, text))
 		r := cs.Review(text)
 		if strings.ContainsFunc(r, isUnsafeControl) {

@@ -12,16 +12,20 @@ import (
 )
 
 var (
-	// ErrNotFound means that the branch has no pull request.
-	ErrNotFound = errors.New("no pull request for this branch")
+	// ErrNoPullRequest means that the branch has no pull request.
+	ErrNoPullRequest = errors.New("no pull request for this branch")
 
 	errNoRemote    = errors.New("no git remote")
 	errUnsupported = errors.New("the remote is not on GitHub, GitLab, or Azure DevOps")
 )
 
 // maxComments is the number of the most recent comments that
-// [Repo.PullRequest] gets.
-const maxComments = 100
+// [Repo.PullRequest] gets. maxChecks is the number of the checks that it
+// gets. The two limits are the same as in herdr-reviewr.
+const (
+	maxComments = 100
+	maxChecks   = 100
+)
 
 // Hosts are the hosts of self-hosted forges. An empty value means only the
 // public host.
@@ -34,7 +38,7 @@ type PullRequest struct {
 	Forge  Forge
 	Number int
 	Title  string
-	State  State
+	State  PRState
 	URL    string
 	Author string
 	Head   string // the source branch
@@ -42,7 +46,7 @@ type PullRequest struct {
 	Body   string // Markdown
 	Checks []Check
 	// Comments are the most recent comments, the oldest first.
-	Comments []Comment
+	Comments []PRComment
 }
 
 // Check is a CI check.
@@ -62,15 +66,15 @@ const (
 	ForgeAzure  Forge = "Azure DevOps"
 )
 
-// State is the state of a pull request. It is the same for each forge.
-type State string
+// PRState is the state of a pull request. It is the same for each forge.
+type PRState string
 
-// The values of State.
+// The values of PRState.
 const (
-	StateOpen   State = "open"
-	StateDraft  State = "draft" // open, but not ready for review
-	StateMerged State = "merged"
-	StateClosed State = "closed" // closed without a merge
+	PROpen   PRState = "open"
+	PRDraft  PRState = "draft" // open, but not ready for review
+	PRMerged PRState = "merged"
+	PRClosed PRState = "closed" // closed without a merge
 )
 
 // Result is the result of a CI check. It is the same for each forge.
@@ -84,33 +88,35 @@ const (
 	ResultSkip    Result = "skip"    // skipped, or neutral
 )
 
-// Comment is a comment on a pull request.
-type Comment struct {
+// PRComment is a comment on a pull request.
+type PRComment struct {
 	Author string
 	When   string // the time, as the forge gives it
 	Body   string // Markdown
 }
 
 // PullRequest returns the pull request of the current branch. It selects the
-// forge from the URL of the remote "upstream", or else "origin". Then it runs
+// forge from the host of the remote "upstream", or else "origin". Then it runs
 // the command-line tool of the forge: gh, glab, or az. The tool must be
 // installed and signed in. The text of the pull request has no control
-// characters.
+// characters. If the branch has no pull request, PullRequest returns
+// [ErrNoPullRequest].
 func (r *Repo) PullRequest(ctx context.Context, h Hosts) (*PullRequest, error) {
-	remote := strings.ToLower(r.remoteURL(ctx)) // host names ignore case
-	has := func(host string) bool {
-		return host != "" && strings.Contains(remote, strings.ToLower(host))
+	remote := r.remoteURL(ctx)
+	if remote == "" {
+		return nil, errNoRemote
 	}
+	host := remoteHost(remote)
+	is := func(name string) bool { return name != "" && strings.EqualFold(host, name) }
 	var pr *PullRequest
 	var err error
 	switch {
-	case remote == "":
-		return nil, errNoRemote
-	case has("github.com") || has(h.GitHub):
+	case is("github.com") || is(h.GitHub):
 		pr, err = r.gitHub(ctx, h.GitHub)
-	case has("gitlab") || has(h.GitLab):
+	case is("gitlab.com") || is(h.GitLab):
 		pr, err = r.gitLab(ctx)
-	case has("dev.azure.com") || has("visualstudio.com") || has(h.Azure):
+	case is("dev.azure.com") || is("ssh.dev.azure.com") ||
+		strings.HasSuffix(host, ".visualstudio.com") || is(h.Azure):
 		pr, err = r.azure(ctx)
 	default:
 		return nil, errUnsupported
@@ -119,10 +125,27 @@ func (r *Repo) PullRequest(ctx context.Context, h Hosts) (*PullRequest, error) {
 		return nil, err
 	}
 	if pr.Title == "" {
-		return nil, ErrNotFound
+		return nil, ErrNoPullRequest
 	}
 	cleanPR(pr)
 	return pr, nil
+}
+
+// remoteHost returns the host of the remote URL u, in lower case. u is a
+// URL such as "ssh://git@host:22/path", or has the scp form
+// "git@host:path", as herdr-reviewr reads it. A local path has no host.
+func remoteHost(u string) string {
+	var auth string // [user@]host[:port]
+	if _, rest, ok := strings.Cut(u, "://"); ok {
+		auth, _, _ = strings.Cut(rest, "/")
+	} else if a, _, ok := strings.Cut(u, ":"); ok {
+		auth = a
+	}
+	if _, h, ok := strings.CutLast(auth, "@"); ok {
+		auth = h
+	}
+	host, _, _ := strings.Cut(auth, ":")
+	return strings.ToLower(host)
 }
 
 // cleanPR removes the control characters from the text of pr, because the
@@ -141,20 +164,25 @@ func cleanPR(pr *PullRequest) {
 	}
 }
 
-// decode runs a forge tool in the root directory and decodes its JSON
-// output into v. env adds to the environment.
-func (r *Repo) decode(
-	ctx context.Context,
-	env []string,
-	v any,
-	name string,
-	args ...string,
-) error {
-	out, err := command(ctx, r.root, env, nil, name, args...)
-	if err != nil {
-		return err
+// runJSON runs a forge tool in the root directory and decodes its JSON
+// output into v. env adds to the environment. The error names the tool
+// and its subcommand, for example "gh pr".
+func (r *Repo) runJSON(ctx context.Context, env []string, v any, name string, args ...string) error {
+	cmd, stderr := r.command(ctx, env, name, args...)
+	out, err := output(ctx, cmd, stderr)
+	if err == nil {
+		err = json.Unmarshal([]byte(out), v)
 	}
-	return json.Unmarshal([]byte(out), v)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", name, args[0], err)
+	}
+	return nil
+}
+
+// noPR reports whether err is the error of a tool that finds no pull
+// request. Such a tool exits with 1 and says so with the text msg.
+func noPR(err error, msg string) bool {
+	return exitedOne(err) && strings.Contains(strings.ToLower(err.Error()), msg)
 }
 
 // lastN returns the last n elements of xs, or all of them if there are
@@ -202,7 +230,10 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PullRequest, error) {
 	const fields = "number,title,state,isDraft,url,body,author," +
 		"headRefName,baseRefName,comments,statusCheckRollup"
 	var v gitHubPR
-	err := r.decode(ctx, env, &v, "gh", "pr", "view", "--json", fields)
+	err := r.runJSON(ctx, env, &v, "gh", "pr", "view", "--json", fields)
+	if noPR(err, "no pull requests found") {
+		return nil, ErrNoPullRequest
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -218,14 +249,15 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PullRequest, error) {
 		Body:   v.Body,
 	}
 	// A check run has a conclusion when it is done. A status has a state.
-	for _, c := range v.StatusCheckRollup {
+	// As in herdr-reviewr, the checks are the first that gh gives.
+	for _, c := range v.StatusCheckRollup[:min(len(v.StatusCheckRollup), maxChecks)] {
 		pr.Checks = append(pr.Checks, Check{
 			Name:   cmp.Or(c.Name, c.Context),
 			Result: gitHubResult(cmp.Or(c.Conclusion, c.State)),
 		})
 	}
 	for _, c := range lastN(v.Comments, maxComments) {
-		pr.Comments = append(pr.Comments, Comment{
+		pr.Comments = append(pr.Comments, PRComment{
 			Author: c.Author.Login,
 			When:   c.CreatedAt,
 			Body:   c.Body,
@@ -236,40 +268,40 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PullRequest, error) {
 
 // gitHubState returns the state of a GitHub pull request from its state
 // and its draft flag.
-func gitHubState(s string, draft bool) State {
+func gitHubState(s string, draft bool) PRState {
 	switch {
 	case s == "MERGED":
-		return StateMerged
+		return PRMerged
 	case s == "CLOSED":
-		return StateClosed
+		return PRClosed
 	case draft:
-		return StateDraft
+		return PRDraft
 	}
-	return StateOpen
+	return PROpen
 }
 
 // gitLabState returns the state of a GitLab merge request. A locked merge
 // request is closed.
-func gitLabState(s string) State {
+func gitLabState(s string) PRState {
 	switch s {
 	case "opened":
-		return StateOpen
+		return PROpen
 	case "merged":
-		return StateMerged
+		return PRMerged
 	}
-	return StateClosed
+	return PRClosed
 }
 
 // azureState returns the state of an Azure DevOps pull request from its
 // status. An abandoned pull request is closed.
-func azureState(s string) State {
+func azureState(s string) PRState {
 	switch s {
 	case "active":
-		return StateOpen
+		return PROpen
 	case "completed":
-		return StateMerged
+		return PRMerged
 	}
-	return StateClosed
+	return PRClosed
 }
 
 // gitHubResult returns the result of a GitHub check from its conclusion or
@@ -318,7 +350,10 @@ type gitLabDiscussion struct {
 // gitLab gets the merge request with glab.
 func (r *Repo) gitLab(ctx context.Context) (*PullRequest, error) {
 	var v gitLabMR
-	err := r.decode(ctx, nil, &v, "glab", "mr", "view", "--output", "json")
+	err := r.runJSON(ctx, nil, &v, "glab", "mr", "view", "--output", "json")
+	if noPR(err, "no open merge request") {
+		return nil, ErrNoPullRequest
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -337,24 +372,23 @@ func (r *Repo) gitLab(ctx context.Context) (*PullRequest, error) {
 	// request without them.
 	var ds []gitLabDiscussion
 	args := []string{"mr", "note", "list", "--output", "json"}
-	if err := r.decode(ctx, nil, &ds, "glab", args...); err != nil {
-		return pr, nil
+	if err := r.runJSON(ctx, nil, &ds, "glab", args...); err == nil {
+		pr.Comments = gitLabComments(ds)
 	}
-	pr.Comments = gitLabComments(ds)
 	return pr, nil
 }
 
 // gitLabComments returns the most recent notes of the discussions, the
 // oldest first. It skips the notes that GitLab writes, for example "added
 // 1 commit".
-func gitLabComments(ds []gitLabDiscussion) []Comment {
-	var cs []Comment
+func gitLabComments(ds []gitLabDiscussion) []PRComment {
+	var cs []PRComment
 	for _, d := range ds {
 		for _, n := range d.Notes {
 			if n.System {
 				continue
 			}
-			cs = append(cs, Comment{
+			cs = append(cs, PRComment{
 				Author: n.Author.Username,
 				When:   n.CreatedAt,
 				Body:   n.Body,
@@ -387,13 +421,13 @@ func (r *Repo) azure(ctx context.Context) (*PullRequest, error) {
 		return nil, err
 	}
 	var v []azurePR
-	err = r.decode(ctx, nil, &v, "az", "repos", "pr", "list", "--source-branch", branch,
+	err = r.runJSON(ctx, nil, &v, "az", "repos", "pr", "list", "--source-branch", branch,
 		"--status", "all", "--top", "1", "--output", "json")
 	if err != nil {
 		return nil, err
 	}
 	if len(v) == 0 {
-		return nil, ErrNotFound
+		return nil, ErrNoPullRequest
 	}
 	p := v[0]
 	return &PullRequest{

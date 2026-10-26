@@ -5,7 +5,7 @@
 set -e
 BIN=/tmp/rexdiff-dev/rexdiff
 cd "$(dirname "$0")" && go build -o $BIN ./cmd/rexdiff
-export PATH="$REX_BIN_DIR:$PATH"
+export PATH="${REX_BIN_DIR:+$REX_BIN_DIR:}$PATH"
 S=rexreview-test; R=${REXDIFF_DEMO:-/tmp/rexreview-demo}
 has() { rex block inspect "$1" -s $S --json >/dev/null 2>&1; }
 rex ls | grep -q "^$S " || rex new $S --cwd $R -- fish >/dev/null

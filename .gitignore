@@ -3,3 +3,5 @@
 /dist/
 *.test
 *.out
+*.prof
+.DS_Store

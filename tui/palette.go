@@ -38,3 +38,20 @@ func paletteReply(s string) (i int, c color.Color, ok bool) {
 	}
 	return i, c, true
 }
+
+// onPalette takes the red or the green from an OSC 4 reply.
+func (m *model) onPalette(reply string) {
+	i, c, ok := paletteReply(reply)
+	if !ok {
+		return
+	}
+	switch {
+	case i == 1 && !sameColor(m.red, c):
+		m.red = c
+	case i == 2 && !sameColor(m.green, c):
+		m.green = c
+	default:
+		return
+	}
+	m.rerender()
+}

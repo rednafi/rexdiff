@@ -28,8 +28,8 @@ func numbered(n int, upper ...int) string {
 // foldText writes a hunk header with fold f, for example "@14/14+13".
 func foldText(f diff.Fold) string { return fmt.Sprintf("@%d/%d+%d", f.Old, f.New, f.Lines) }
 
-// layout writes the rows of d as one entry each: "@" and its fold for a
-// hunk header, else the old and the new line number.
+// layout writes each row of d as one entry. A hunk header is "@" and its
+// fold. Another row is its old and its new line number.
 func layout(d *diff.Diff) []string {
 	var out []string
 	for _, r := range d.Rows {
@@ -56,7 +56,8 @@ func headers(d *diff.Diff) string {
 // TestFolds checks that a long run of equal lines folds into the hunk
 // header below it.
 func TestFolds(t *testing.T) {
-	old, new := numbered(40), numbered(40, 10, 30)
+	t.Parallel()
+	before, after := numbered(40), numbered(40, 10, 30)
 	header := func(o, n, lines int) []string { return []string{foldText(diff.Fold{Old: o, New: n, Lines: lines})} }
 	lines := func(lo, hi int) []string {
 		var out []string
@@ -92,10 +93,14 @@ func TestFolds(t *testing.T) {
 		)},
 	}
 	for _, tt := range tests {
-		d := diff.Render("f.txt", old, new, diff.Options{Width: 60, Expanded: tt.expanded})
-		if got := layout(d); !slices.Equal(got, tt.want) {
-			t.Errorf("%s:\n got %v\nwant %v", tt.name, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			o := diff.Options{Width: 60, Expanded: tt.expanded}
+			d := diff.Render("f.txt", before, after, o)
+			if got := layout(d); !slices.Equal(got, tt.want) {
+				t.Errorf("layout = \n%v\nwant:\n%v", got, tt.want)
+			}
+		})
 	}
 
 	// The header gives the number of hidden lines. A fold at the end has no
@@ -112,9 +117,9 @@ func TestFolds(t *testing.T) {
 			"…   ⋯ 13 unmodified lines  @@ -27,7 +27,7 @@\n" +
 			"…   ⋯ 7 unmodified lines"},
 	} {
-		d := diff.Render("f.txt", old, new, tt.o)
+		d := diff.Render("f.txt", before, after, tt.o)
 		if got := headers(d); got != tt.want {
-			t.Errorf("split %v: headers got:\n%s\nwant:\n%s",
+			t.Errorf("split %v: headers = \n%s\nwant:\n%s",
 				tt.o.Split, got, tt.want)
 		}
 		for i, l := range d.Lines {
@@ -128,6 +133,7 @@ func TestFolds(t *testing.T) {
 
 // TestFoldEdges checks the folds that show no line.
 func TestFoldEdges(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		old, new string
@@ -135,24 +141,32 @@ func TestFoldEdges(t *testing.T) {
 	}{
 		// Changes at 10 and 18 leave line 14 alone between the margins. The
 		// line shows, because a fold of one line saves no row.
-		{"one line", numbered(21), numbered(21, 10, 18),
-			"@1/1+6 7:7 8:8 9:9 10:0 0:10 11:11 12:12 13:13 14:14 15:15 16:16 17:17 18:0 0:18 19:19 20:20 21:21"},
+		{
+			"one line", numbered(21), numbered(21, 10, 18),
+			"@1/1+6 7:7 8:8 9:9 10:0 0:10 11:11 12:12 13:13 14:14 15:15 16:16 17:17 18:0 0:18 19:19 20:20 21:21",
+		},
 		// After an insert, the old and the new numbers of a fold differ.
-		{"insert at the top", numbered(12), "new\n" + numbered(12),
-			"@0/0+0 0:1 1:2 2:3 3:4 @4/5+9"},
+		{
+			"insert at the top", numbered(12), "new\n" + numbered(12),
+			"@0/0+0 0:1 1:2 2:3 3:4 @4/5+9",
+		},
 		// A file without equal lines has no fold.
 		{"all new", "", "a\nb\n", "@0/0+0 0:1 0:2"},
 	}
 	for _, tt := range tests {
-		d := diff.Render("f.txt", tt.old, tt.new, diff.Options{Width: 80})
-		if got := strings.Join(layout(d), " "); got != tt.want {
-			t.Errorf("%s:\n got %s\nwant %s", tt.name, got, tt.want)
-		}
-		// The split layout has the same folds.
-		split := diff.Render("f.txt", tt.old, tt.new, diff.Options{Width: 80, Split: true})
-		if got, want := folds(split), folds(d); !slices.Equal(got, want) {
-			t.Errorf("%s: the split layout has folds %v, want %v", tt.name, got, want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d := diff.Render("f.txt", tt.old, tt.new, diff.Options{Width: 80})
+			if got := strings.Join(layout(d), " "); got != tt.want {
+				t.Errorf("layout = \n%s\nwant:\n%s", got, tt.want)
+			}
+			// The split layout has the same folds.
+			o := diff.Options{Width: 80, Split: true}
+			split := diff.Render("f.txt", tt.old, tt.new, o)
+			if got, want := folds(split), folds(d); !slices.Equal(got, want) {
+				t.Errorf("split folds = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

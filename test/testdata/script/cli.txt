@@ -1,0 +1,32 @@
+# rexdiff does not start when its input is wrong, and says what is wrong.
+! exec rexdiff $WORK
+stderr '^rexdiff: open .+: git rev-parse: fatal: not a git repository'
+exec git init -q repo
+! exec rexdiff repo -wrap=false
+stderr '^unknown argument "-wrap=false" \(flags go before the repo\)$'
+stderr '^usage: rexdiff'
+! exec rexdiff -nope
+stderr -count=1 'flag provided but not defined: -nope'
+
+# -check checks the settings without a repository, for the Rex action.
+! exec rexdiff -check -config '{"layuot": "split"}'
+stderr '^rexdiff: config: unknown key "layuot"$'
+! exec rexdiff -check -config '{"layout": "sideways"}'
+stderr '^rexdiff: config: invalid value for layout: expected one of unified, split, not "sideways"$'
+! exec rexdiff -check -config '{"keybindings": {"next-file": ["x"], "prev-file": ["x"]}}'
+stderr '^rexdiff: config: invalid value for keybindings: "x" is bound to both "next-file" and "prev-file"$'
+! exec rexdiff -check -config '{"url_opener": "{url} --new"}'
+stderr '^rexdiff: config: invalid value for url_opener: expected a command that names a program first, not "{url} --new"$'
+
+# As in herdr-reviewr, the settings take the old names of three actions.
+exec rexdiff -check -config '{"keybindings": {"list-wider": ["W"], "preview": ["M"]}}'
+! exec rexdiff -check -config '{"keybindings": {"rendered": ["M"], "preview": ["P"]}}'
+stderr '^rexdiff: config: invalid value for keybindings: "rendered" and "preview" name the same action$'
+
+# A bad value of a flag names the flag, as the settings do.
+! exec rexdiff -layout sideways repo
+stderr '^rexdiff: invalid value for -layout: expected one of unified, split, not "sideways"$'
+! exec rexdiff -scope all repo
+stderr '^rexdiff: invalid value for -scope: expected one of uncommitted, branch, last-turn, not "all"$'
+! exec rexdiff -wrap no repo
+stderr '^rexdiff: invalid value for -wrap: expected one of on, off, not "no"$'

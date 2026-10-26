@@ -22,11 +22,21 @@ func screenRune(plain string, x int) (rune, bool) {
 	return 0, false
 }
 
+// plainLine returns line i of d without the escapes. It stops the test if d
+// has no line i.
+func plainLine(t *testing.T, d *diff.Diff, i int) string {
+	t.Helper()
+	if i < 0 || i >= len(d.Lines) {
+		t.Fatalf("line %d of a diff with %d lines", i, len(d.Lines))
+	}
+	return ansi.Strip(d.Lines[i])
+}
+
 // column returns the column of the first cell of needle in line i of d.
 // With last, it finds the last needle.
 func column(t *testing.T, d *diff.Diff, i int, needle string, last bool) int {
 	t.Helper()
-	plain := ansi.Strip(d.Lines[i])
+	plain := plainLine(t, d, i)
 	k := strings.Index(plain, needle)
 	if last {
 		k = strings.LastIndex(plain, needle)
@@ -40,11 +50,12 @@ func column(t *testing.T, d *diff.Diff, i int, needle string, last bool) int {
 // TestCell checks the source character of a cell, with tabs, an offset,
 // the split layout, and a file.
 func TestCell(t *testing.T) {
-	const old, new = "a\n\told_name := 1\n", "a\n\tnew_name := 1\n"
-	u := diff.Render("x.go", old, new, diff.Options{Width: 80})
-	off := diff.Render("x.go", old, new, diff.Options{Width: 80, Offset: 6})
-	s := diff.Render("x.go", old, new, diff.Options{Width: 80, Split: true})
-	f := diff.RenderFile("x.go", new, diff.Options{Width: 80})
+	t.Parallel()
+	const before, after = "a\n\told_name := 1\n", "a\n\tnew_name := 1\n"
+	u := diff.Render("x.go", before, after, diff.Options{Width: 80})
+	off := diff.Render("x.go", before, after, diff.Options{Width: 80, Offset: 6})
+	s := diff.Render("x.go", before, after, diff.Options{Width: 80, Split: true})
+	f := diff.RenderFile("x.go", after, diff.Options{Width: 80})
 	tests := []struct {
 		name   string
 		d      *diff.Diff
@@ -64,12 +75,16 @@ func TestCell(t *testing.T) {
 		{"file", f, 1, "new_name", false, diff.SideNew, 2, 1},
 	}
 	for _, tt := range tests {
-		x := column(t, tt.d, tt.row, tt.needle, tt.last)
-		side, line, char, ok := tt.d.Cell(tt.row, x)
-		if !ok || side != tt.side || line != tt.line || char != tt.char {
-			t.Errorf("%s: Cell(%d, %d) = %v, %d, %d, %v; want %v, %d, %d, true",
-				tt.name, tt.row, x, side, line, char, ok, tt.side, tt.line, tt.char)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			x := column(t, tt.d, tt.row, tt.needle, tt.last)
+			side, line, char, ok := tt.d.Cell(tt.row, x)
+			if !ok || side != tt.side || line != tt.line || char != tt.char {
+				t.Errorf("Cell(%d, %d) = %v, %d, %d, %v, want %v, %d, %d, true",
+					tt.row, x, side, line, char, ok,
+					tt.side, tt.line, tt.char)
+			}
+		})
 	}
 	// A cell of the tab gives the tab. A cell after the code gives the end.
 	x := column(t, u, 3, "new", false)
@@ -77,7 +92,7 @@ func TestCell(t *testing.T) {
 		t.Errorf("the tab: char %d, want 0", char)
 	}
 	if _, _, char, ok := u.Cell(3, 79); !ok || char != 14 {
-		t.Errorf("after the code: char %d, %v; want 14, true", char, ok)
+		t.Errorf("after the code: char %d, %v, want 14, true", char, ok)
 	}
 	// The numbers, the mark, and the hunk header are not code.
 	for _, c := range []struct{ row, x int }{{3, 0}, {3, 4}, {3, x - 5}, {0, 20}, {9, 20}} {
@@ -95,59 +110,120 @@ func TestCell(t *testing.T) {
 // TestCellMatchesScreen checks that each code cell shows the character
 // that Cell gives, in each layout, with wrap, and with an offset.
 func TestCellMatchesScreen(t *testing.T) {
+	t.Parallel()
 	var words []string
 	for i := range 30 {
 		words = append(words, "w"+string(rune('a'+i%26))+strings.Repeat("x", i%4))
 	}
 	long := "\t" + strings.Join(words, " ") + " 日本 end"
-	old, new := "a\nb\n", "a\n"+long+"\nb\n"
-	renders := map[string]func(o diff.Options) *diff.Diff{
-		"unified": func(o diff.Options) *diff.Diff { return diff.Render("x.go", old, new, o) },
-		"split": func(o diff.Options) *diff.Diff {
-			o.Split = true
-			return diff.Render("x.go", old, new, o)
-		},
-		"file": func(o diff.Options) *diff.Diff { return diff.RenderFile("x.go", new, o) },
-	}
+	before, after := "a\nb\n", "a\n"+long+"\nb\n"
 	opts := map[string]diff.Options{
 		"cut":    {Width: 60},
 		"offset": {Width: 60, Offset: 13},
 		"wrap":   {Width: 60, Wrap: true},
 	}
-	src := map[diff.Side][]string{diff.SideOld: diff.Lines(old), diff.SideNew: diff.Lines(new)}
-	for rn, render := range renders {
-		for on, o := range opts {
-			d := render(o)
-			checked := 0
+	src := map[diff.Side][]string{diff.SideOld: diff.Lines(before), diff.SideNew: diff.Lines(after)}
+	for _, tt := range renderers(before, after) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for on, o := range opts {
+				checkCells(t, on, tt.render(o), src)
+			}
+		})
+	}
+}
+
+// checkCells checks that each code cell of d shows the character that
+// Cell gives. The lines of src are the source of each side.
+func checkCells(t *testing.T, on string, d *diff.Diff, src map[diff.Side][]string) {
+	t.Helper()
+	checked := 0
+	for i, l := range d.Lines {
+		plain := ansi.Strip(l)
+		for x := range ansi.StringWidth(plain) {
+			side, line, char, ok := d.Cell(i, x)
+			if !ok {
+				continue
+			}
+			got, _ := screenRune(plain, x)
+			text := []rune(src[side][line-1])
+			if char >= len(text) {
+				if got != ' ' {
+					t.Errorf("%s: line %d col %d shows %q, want past the end",
+						on, i, x, got)
+				}
+				continue
+			}
+			want := text[char]
+			if want == '\t' {
+				want = ' '
+			}
+			if got != want && got != '…' {
+				t.Errorf("%s: line %d col %d shows %q, want %q from Cell",
+					on, i, x, got, want)
+			}
+			checked++
+		}
+	}
+	if checked < 20 {
+		t.Errorf("%s: %d code cells, want 20 or more", on, checked)
+	}
+}
+
+// TestCellGraphemes checks Cell after grapheme clusters of more than one
+// code point, in a cut line and in a wrapped line.
+func TestCellGraphemes(t *testing.T) {
+	t.Parallel()
+	for _, g := range []string{"❤️", "👨‍👩‍👧", "🇺🇸"} {
+		line := strings.Repeat(g+"x ", 20)
+		src := []rune(line)
+		for _, o := range []diff.Options{{Width: 200}, {Width: 40, Wrap: true}} {
+			d := diff.RenderFile("x.txt", line+"\n", o)
+			found := 0
 			for i, l := range d.Lines {
 				plain := ansi.Strip(l)
-				for x := range ansi.StringWidth(plain) {
-					side, line, char, ok := d.Cell(i, x)
-					if !ok {
+				for k := range len(plain) {
+					if plain[k] != 'x' {
 						continue
 					}
-					got, _ := screenRune(plain, x)
-					text := []rune(src[side][line-1])
-					if char >= len(text) {
-						if got != ' ' {
-							t.Errorf("%s %s: line %d col %d shows %q, want past the end",
-								rn, on, i, x, got)
-						}
-						continue
+					x := ansi.StringWidth(plain[:k])
+					_, _, char, ok := d.Cell(i, x)
+					if !ok || char >= len(src) || src[char] != 'x' {
+						t.Errorf("%q wrap %v: Cell(%d, %d) = %d, %v, want the index of an x",
+							g, o.Wrap, i, x, char, ok)
 					}
-					want := text[char]
-					if want == '\t' {
-						want = ' '
-					}
-					if got != want && got != '…' {
-						t.Errorf("%s %s: line %d col %d shows %q, Cell gives %q",
-							rn, on, i, x, got, want)
-					}
-					checked++
+					found++
 				}
 			}
-			if checked < 20 {
-				t.Errorf("%s %s: %d code cells, want 20 or more", rn, on, checked)
+			if found != 20 {
+				t.Errorf("%q wrap %v: %d x cells, want 20", g, o.Wrap, found)
+			}
+		}
+	}
+}
+
+// TestCellOffsetInWideChar checks Cell when the offset cuts a wide
+// character. The content moves by the offset, so Cell agrees with the
+// screen.
+func TestCellOffsetInWideChar(t *testing.T) {
+	t.Parallel()
+	const line = "日本x"
+	for _, off := range []int{1, 3} {
+		o := diff.Options{Width: 40, Offset: off}
+		for name, d := range map[string]*diff.Diff{
+			"diff": diff.Render("x.txt", "", line+"\n", o),
+			"file": diff.RenderFile("x.txt", line+"\n", o),
+		} {
+			row := len(d.Rows) - 1
+			for char, needle := range []rune(line) {
+				if !strings.ContainsRune(plainLine(t, d, row), needle) {
+					continue
+				}
+				x := column(t, d, row, string(needle), false)
+				if _, _, got, ok := d.Cell(row, x); !ok || got != char {
+					t.Errorf("%s offset %d: Cell on %q = %d, %v, want %d, true",
+						name, off, needle, got, ok, char)
+				}
 			}
 		}
 	}

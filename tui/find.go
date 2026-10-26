@@ -1,11 +1,9 @@
 package tui
 
-// This file has the find band of herdr-reviewr. The band opens at the
-// bottom of the screen and stays open. Enter or down goes to the next hit,
-// up goes to the previous hit, and esc closes the band.
-
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -13,7 +11,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/rednafi/rexdiff/diff"
+	"github.com/rednafi/rexdiff/internal/search"
 )
+
+// This file has the find band of herdr-reviewr. The band opens at the
+// bottom of the screen and stays open. Enter or down goes to the next hit,
+// up goes to the previous hit, and esc closes the band.
 
 // findState is the query of the find band. The band is open in modeFind.
 type findState struct {
@@ -35,17 +38,17 @@ func (m *model) findable() bool {
 	}
 	p := m.cur()
 	for i := range p.rows {
-		if p.content(i) {
+		if p.hasContent(i) {
 			return true
 		}
 	}
 	return false
 }
 
-// content reports whether row i of p shows text that a find can match.
-// A note has no such text. A row of rendered markdown has no line, so
-// its text is the rendered line.
-func (p *pane) content(i int) bool {
+// hasContent reports whether row i of p shows text that a find can match.
+// A note has no such text. The text of a row of rendered markdown is the
+// rendered line.
+func (p *pane) hasContent(i int) bool {
 	r := p.rows[i]
 	return r.Old > 0 || r.New > 0 || r.Fold.Lines > 0 || (p.path == "" && i < len(p.lines))
 }
@@ -93,16 +96,31 @@ func (m *model) updateFind(msg tea.KeyPressMsg) tea.Cmd {
 
 // paneSource returns the lines of the two sides of the file in the
 // current pane.
-func (m *model) paneSource() (old, new []string) {
+func (m *model) paneSource() (before, after []string) {
 	switch m.tab {
 	case tabChanges:
-		if f := m.changedFile(); f != nil {
-			return diff.Lines(f.Old), diff.Lines(f.New)
+		if f := m.selectedChange(); f != nil {
+			return m.findLines.of(f.Old, f.New)
 		}
 	case tabFiles:
-		return nil, diff.Lines(m.viewed)
+		return m.findLines.of("", m.viewed)
 	}
 	return nil, nil
+}
+
+// splitLines keeps the lines of the last two sides, so a find does not
+// split the file again on each frame.
+type splitLines struct {
+	old, new           string
+	oldLines, newLines []string
+}
+
+// of returns the lines of before and after.
+func (s *splitLines) of(before, after string) ([]string, []string) {
+	if before != s.old || after != s.new {
+		*s = splitLines{before, after, diff.Lines(before), diff.Lines(after)}
+	}
+	return s.oldLines, s.newLines
 }
 
 // findHits returns the lines of the pane that match q, in order. It
@@ -113,7 +131,7 @@ func (m *model) findHits(q string) []findHit {
 		return nil
 	}
 	p := m.cur()
-	old, new := m.paneSource()
+	before, after := m.paneSource()
 	line := func(ls []string, n int) string {
 		if n >= 1 && n <= len(ls) {
 			return ls[n-1]
@@ -123,20 +141,27 @@ func (m *model) findHits(q string) []findHit {
 	var hits []findHit
 	for i, r := range p.rows {
 		switch {
+		case p.src != nil:
+			// A hit in rendered markdown is on its block, as the cursor is.
+			if !r.Continued && slices.ContainsFunc(p.lines[i:p.end(i)+1], func(l string) bool {
+				return search.Match(ansi.Strip(l), q)
+			}) {
+				hits = append(hits, findHit{i, 0})
+			}
 		case r.Continued:
 		case r.Fold.Lines > 0:
 			for n := r.Fold.New; n < r.Fold.New+r.Fold.Lines; n++ {
-				if diff.Match(line(new, n), q) {
+				if search.Match(line(after, n), q) {
 					hits = append(hits, findHit{i, n})
 				}
 			}
 		case r.Old > 0 || r.New > 0:
-			if (r.New > 0 && diff.Match(line(new, r.New), q)) ||
-				(r.Old > 0 && diff.Match(line(old, r.Old), q)) {
+			if (r.New > 0 && search.Match(line(after, r.New), q)) ||
+				(r.Old > 0 && search.Match(line(before, r.Old), q)) {
 				hits = append(hits, findHit{i, 0})
 			}
-		case p.content(i):
-			if diff.Match(ansi.Strip(p.lines[i]), q) {
+		case p.hasContent(i):
+			if search.Match(ansi.Strip(p.lines[i]), q) {
 				hits = append(hits, findHit{i, 0})
 			}
 		}
@@ -185,27 +210,21 @@ func (m *model) stepFind(d int) {
 	cursorToLine(p, diff.SideNew, h.line)
 }
 
-// findRows returns the rows of the hits that show, for the marks in the
-// gutter.
-func (m *model) findRows() map[int]bool {
+// shownHits returns the hits of the query in the find band, or nil if
+// the band is closed.
+func (m *model) shownHits() []findHit {
 	if m.mode != modeFind {
 		return nil
 	}
-	rows := map[int]bool{}
-	for _, h := range m.findHits(m.find.input.Value()) {
-		if h.line == 0 {
-			rows[h.row] = true
-		}
-	}
-	return rows
+	return m.findHits(m.find.input.Value())
 }
 
 // findBand renders the find band: the query, and the count at the right.
-// The count is "i/n" on a hit, n off a hit, or "no matches".
-func (m *model) findBand() string {
+// The count is "i/n" on a hit, n off a hit, or "no matches". hits are the
+// hits of the query.
+func (m *model) findBand(hits []findHit) string {
 	count := ""
-	if q := m.find.input.Value(); q != "" {
-		hits := m.findHits(q)
+	if m.find.input.Value() != "" {
 		before, on := m.findPlace(hits)
 		switch {
 		case len(hits) == 0:
@@ -213,7 +232,7 @@ func (m *model) findBand() string {
 		case on:
 			count = fmt.Sprintf("%d/%d", before+1, len(hits))
 		default:
-			count = fmt.Sprint(len(hits))
+			count = strconv.Itoa(len(hits))
 		}
 	}
 	w := max(m.w-ansi.StringWidth(count)-1, 1)

@@ -7,6 +7,31 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    - errcheck
+    - errorlint
+    - nilerr
+    - noctx
+    - bodyclose
+    - forcetypeassert
+    - durationcheck
+    - makezero
+    - reassign
+    - nakedret
+    - gocritic
+    - revive
+    - misspell
+    - usestdlibvars
+    - perfsprint
+    - intrange
+    - copyloopvar
+    - modernize
+    - thelper
+    - dupword
+    - nolintlint
+    - gosec
+    - unparam
+    - paralleltest
+    - tparallel
   settings:
     staticcheck:
       checks:
@@ -18,7 +43,40 @@ linters:
         - -ST1021
         - -ST1022
         - -QF1001 # De Morgan: the current form reads better
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    misspell:
+      # No locale: the comments use British spelling, for example "colour".
+      ignore-rules:
+        - reviewr
+    gosec:
+      # rexdiff runs git and rex, and reads and writes the user's files.
+      excludes:
+        - G204 # subprocess with a variable
+        - G301 # directory permissions
+        - G302 # file permissions on chmod
+        - G304 # file path from a variable
+        - G306 # file permissions on write
+        - G702 # subprocess with a variable, found by taint analysis
+        - G703 # file path from a variable, found by taint analysis
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [forcetypeassert, unparam]
+      - linters: [revive]
+        text: redefines-builtin-id
+      # The tests in test/ run one at a time. The tests of the libraries
+      # run in parallel.
+      - path: ^test/
+        linters: [paralleltest, tparallel]
 
 formatters:
   enable:
     - gofmt
+    - gofumpt
