@@ -69,7 +69,7 @@ const (
 // PRState is the state of a pull request. It is the same for each forge.
 type PRState string
 
-// The values of State.
+// The values of PRState.
 const (
 	PROpen   PRState = "open"
 	PRDraft  PRState = "draft" // open, but not ready for review

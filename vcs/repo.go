@@ -361,7 +361,7 @@ func (r *Repo) copyIndex(dst string) error {
 // uses, for example 'A'.
 type FileStatus byte
 
-// The values of Status that [Repo.Diff] returns.
+// The values of FileStatus that [Repo.Diff] returns.
 const (
 	StatusAdded    FileStatus = 'A'
 	StatusModified FileStatus = 'M'
@@ -382,8 +382,10 @@ type File struct {
 	From     string // for a rename, the old path
 	Status   FileStatus
 	Old, New string
-	// Skip is ErrBinary if a version of the file has a NUL byte. Else it
-	// is ErrTooBig if the two versions together are too big, or nil.
+	// Skip is ErrBinary if a version of the file has a NUL byte. It is
+	// ErrTooBig if the two versions together are too big. Diff does not
+	// read a version larger than 2,000,000 bytes. Thus that version gives
+	// ErrTooBig, also if it is binary. Else Skip is nil.
 	Skip error
 }
 

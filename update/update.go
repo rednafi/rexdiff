@@ -8,7 +8,8 @@
 // in the same process, so the terminal and the process ID stay.
 //
 // The caller gives the environment as a value, as in [exec.Cmd.Env]. The
-// package does not read the environment of the process.
+// package does not read the environment of the process. But net/http reads
+// the proxy variables of the process, for example HTTPS_PROXY.
 package update
 
 import (
