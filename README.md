@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".asset/logo.svg" alt="rexdiff logo" width="140">
+  <img src=".asset/logo.svg" alt="rexdiff logo" width="160">
 </p>
 
 <h1 align="center">rexdiff</h1>
