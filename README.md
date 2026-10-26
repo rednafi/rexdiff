@@ -2,7 +2,7 @@
   <img src=".asset/logo.svg" alt="rexdiff logo" width="160">
   <h1>rexdiff</h1>
   <p>
-    <b>Review what your coding agent changed, without leaving <a href="https://www.superlogical.com/rex">Rex</a>.</b><br>
+    <i>Review what your coding agent changed, without leaving <a href="https://www.superlogical.com/rex">Rex</a>.</i><br>
     Think <a href="https://github.com/persiyanov/herdr-reviewr">herdr-reviewr</a>, but for Rex.
   </p>
   <p>
