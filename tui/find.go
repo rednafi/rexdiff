@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -45,8 +46,8 @@ func (m *model) findable() bool {
 }
 
 // hasContent reports whether row i of p shows text that a find can match.
-// A note has no such text. A row of rendered markdown has no line, so
-// its text is the rendered line.
+// A note has no such text. The text of a row of rendered markdown is the
+// rendered line.
 func (p *pane) hasContent(i int) bool {
 	r := p.rows[i]
 	return r.Old > 0 || r.New > 0 || r.Fold.Lines > 0 || (p.path == "" && i < len(p.lines))
@@ -140,6 +141,13 @@ func (m *model) findHits(q string) []findHit {
 	var hits []findHit
 	for i, r := range p.rows {
 		switch {
+		case p.src != nil:
+			// A hit in rendered markdown is on its block, as the cursor is.
+			if !r.Continued && slices.ContainsFunc(p.lines[i:p.end(i)+1], func(l string) bool {
+				return search.Match(ansi.Strip(l), q)
+			}) {
+				hits = append(hits, findHit{i, 0})
+			}
 		case r.Continued:
 		case r.Fold.Lines > 0:
 			for n := r.Fold.New; n < r.Fold.New+r.Fold.Lines; n++ {

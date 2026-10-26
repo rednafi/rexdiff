@@ -76,6 +76,7 @@ type pane struct {
 	rows   []diff.Row // rows[i] is the source line that lines[i] shows
 	diff   *diff.Diff // the render for mouse hits, or nil for Markdown or PR
 	path   string     // the file of the rows, or "" for a pane with no comments
+	src    []diff.Row // the source rows of rendered markdown, or nil
 	cur    int        // the row of the cursor
 	top    int        // the first row on the screen
 	anchor int        // the start of the visual selection, or -1
@@ -89,7 +90,7 @@ type pane struct {
 // set shows lines, and rows tells which source lines they show. It keeps
 // the cursor, the top, and the selection in the new lines.
 func (p *pane) set(lines []string, rows []diff.Row) {
-	p.lines, p.rows, p.diff = lines, rows, nil
+	p.lines, p.rows, p.diff, p.src = lines, rows, nil, nil
 	p.cur = min(p.cur, max(len(lines)-1, 0))
 	p.top = min(p.top, max(len(lines)-1, 0))
 	if p.anchor >= len(rows) { // the file is shorter than before

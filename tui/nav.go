@@ -660,8 +660,8 @@ func (p *pane) rowOf(s diff.Side, line int) int {
 // text is digits or "$" for the last line. The line is clamped to the
 // file, so "0" is the first line. The line numbers are of the new side,
 // or of the old side if no row has a new line. gotoLine opens the fold
-// that has the line. Without line numbers, for example in rendered
-// markdown, text is the row on the screen.
+// that has the line. In rendered markdown, the cursor goes to the block
+// of the line. Without line numbers, text is the row on the screen.
 func (m *model) gotoLine(text string) {
 	p := m.cur()
 	n, ok := lineNumber(text)
@@ -684,7 +684,7 @@ func (m *model) gotoLine(text string) {
 	if m.tab == tabChanges {
 		m.openFoldAt(side, n)
 	}
-	p.cur = lineRow(p.rows, side, n)
+	p.cur = p.head(lineRow(p.rows, side, n))
 }
 
 // lineRow returns the row of line on side. If no row has the line, it

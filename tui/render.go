@@ -6,6 +6,7 @@ package tui
 import (
 	"cmp"
 	"errors"
+	"iter"
 	"slices"
 	"strings"
 
@@ -230,7 +231,9 @@ func (m *model) renderChanges() {
 		}
 		p.setNote(note)
 	case m.isRendered(f):
-		m.setMarkdown(p, f.New)
+		all := func(diff.Fold) bool { return true }
+		d := diff.Render(f.Path, f.Old, f.New, diff.Options{Expanded: all, Cache: &m.cache})
+		m.setMarkdown(p, f.New, d.Rows)
 	default:
 		if o := m.folds[f.Path]; o != nil && o.Old != f.oldHash {
 			delete(m.folds, f.Path)
@@ -292,7 +295,7 @@ func (m *model) refreshViewer() {
 		p.path = ""
 		p.set([]string{dimStyle.Render("  could not read this file")}, nil)
 	case m.rendered && isMarkdown(path):
-		m.setMarkdown(p, content)
+		m.setMarkdown(p, content, nil)
 	default:
 		p.setDiff(diff.RenderFile(path, content, m.diffOptions(p.xoff)))
 	}
@@ -368,10 +371,115 @@ func (m *model) rendersNothing(src string) bool {
 	return true
 }
 
-// setMarkdown shows src as rendered markdown. The rendered lines take no
-// comments. Press m to see the source.
-func (m *model) setMarkdown(p *pane, src string) {
-	lines := renderMarkdown(m.markdown(m.codeWidth()-2), termtext.Plain(src))
-	p.path = ""
-	p.set(lines, make([]diff.Row, len(lines)))
+// setMarkdown shows src as rendered markdown, block by block, as
+// herdr-reviewr does. rows are the source rows that the view stands for,
+// with src as their new side. If rows is nil, no line of src changes.
+// Each rendered line shows the first source line of its block. The blank
+// line after a block shows its last source line. Thus a comment on a
+// block covers all its lines. A block with a change has the bar.
+func (m *model) setMarkdown(p *pane, src string, rows []diff.Row) {
+	lines := diff.Lines(src)
+	if rows == nil {
+		for n := range lines {
+			rows = append(rows, diff.Row{Kind: diff.KindEqual, New: n + 1})
+		}
+	}
+	r := m.markdown(m.codeWidth() - 2)
+	var out []string
+	var outRows []diff.Row
+	blank := func(l string) bool { return strings.TrimSpace(ansi.Strip(l)) == "" }
+	for first, last := range markdownBlocks(lines) {
+		block := renderMarkdown(r, termtext.Plain(strings.Join(lines[first-1:last], "\n")))
+		for len(block) > 0 && blank(block[0]) {
+			block = block[1:]
+		}
+		for len(block) > 0 && blank(block[len(block)-1]) {
+			block = block[:len(block)-1]
+		}
+		if len(block) == 0 {
+			continue
+		}
+		bar := changeBar(rows, first, last)
+		for i, l := range block {
+			if bar != "" {
+				l = bar + ansi.TruncateLeft(l, 1, "")
+			}
+			out = append(out, l)
+			outRows = append(outRows, diff.Row{Kind: diff.KindEqual, New: first, Continued: i > 0})
+		}
+		out = append(out, "")
+		outRows = append(outRows, diff.Row{Kind: diff.KindEqual, New: last, Continued: true})
+	}
+	p.set(out, outRows)
+	p.src = rows
+}
+
+// markdownBlocks yields the first and the last line of each block of
+// markdown lines, from 1. A blank line outside a code fence ends a block,
+// unless the next line is indented, as in a list item.
+func markdownBlocks(lines []string) iter.Seq2[int, int] {
+	return func(yield func(int, int) bool) {
+		first, last, fence := 0, 0, ""
+		for i, l := range lines {
+			if fence == "" {
+				if strings.TrimSpace(l) == "" {
+					continue
+				}
+				if first > 0 && last < i && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "\t") {
+					if !yield(first, last) {
+						return
+					}
+					first = 0
+				}
+			}
+			switch t := strings.TrimLeft(l, " "); {
+			case fence != "":
+				if strings.HasPrefix(t, fence) {
+					fence = ""
+				}
+			case strings.HasPrefix(t, "```"), strings.HasPrefix(t, "~~~"):
+				fence = t[:3]
+			}
+			if first == 0 {
+				first = i + 1
+			}
+			last = i + 1
+		}
+		if first > 0 {
+			yield(first, last)
+		}
+	}
+}
+
+// changeBar returns the bar for the source lines first to last, or "" if
+// rows do not change them. The bar is green if rows only add lines there.
+// It is yellow if rows also change or delete a line there.
+func changeBar(rows []diff.Row, first, last int) string {
+	added, changed, deleted := false, false, false
+	at := 0 // the last new line before the row
+	for _, r := range rows {
+		if r.Continued {
+			continue
+		}
+		if r.Kind == diff.KindDelete {
+			deleted = true
+			changed = changed || (at >= first && at < last)
+			continue
+		}
+		if r.New >= first && r.New <= last && r.Kind != diff.KindEqual {
+			added = true
+			changed = changed || deleted || r.Kind == diff.KindChange
+		}
+		deleted, at = false, r.New
+		if at >= last {
+			break
+		}
+	}
+	switch {
+	case changed:
+		return noteStyle.Render("▌")
+	case added:
+		return addStyle.Render("▌")
+	}
+	return ""
 }

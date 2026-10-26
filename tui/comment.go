@@ -108,7 +108,7 @@ func (m *model) commentAtCursor() *diff.Comment {
 	if t == nil {
 		return nil
 	}
-	return m.comments.At(m.anchor(), p.path, t.side, t.line)
+	return m.commentOn(p.cur, t)
 }
 
 // selection returns the first and the last row of the visual selection.
@@ -118,6 +118,20 @@ func (p *pane) selection() (lo, hi int) {
 		return p.cur, p.end(p.cur)
 	}
 	return p.span(p.anchor, p.cur)
+}
+
+// selectedRows returns the source rows of the selection. In rendered
+// markdown, they are all the rows of the selected blocks, with the
+// deleted lines between them.
+func (p *pane) selectedRows() []diff.Row {
+	lo, hi := p.selection()
+	if p.src == nil {
+		return p.rows[lo : hi+1]
+	}
+	first, last := p.rows[p.head(lo)].New, p.rows[hi].New
+	i := slices.IndexFunc(p.src, func(r diff.Row) bool { return r.New == first })
+	j := slices.IndexFunc(p.src, func(r diff.Row) bool { return r.New == last })
+	return p.src[i : j+1]
 }
 
 // span returns the first and the last row of the lines between rows a and
@@ -134,11 +148,10 @@ func (m *model) startComment(pref diff.Side) tea.Cmd {
 	if t == nil {
 		return nil
 	}
-	lo, hi := p.selection()
 	c := diff.NewComment(
 		p.path,
 		t.side,
-		p.rows[lo:hi+1],
+		p.selectedRows(),
 		m.contentFor(p.path, diff.SideOld),
 		m.contentFor(p.path, diff.SideNew),
 	)

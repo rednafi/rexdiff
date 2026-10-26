@@ -376,7 +376,7 @@ func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int) {
 		t := m.target(i, diff.SideNew)
 		add(m.rowMark(i, t, lo, hi, marked[i])+p.lines[i], i)
 		if t != nil && p.end(i) == i {
-			addBelow(m.commentsBelow(t))
+			addBelow(m.commentsBelow(i, t))
 		}
 		if m.mode == modeComment && i == p.end(p.cur) {
 			addBelow(m.commentBox())
@@ -431,18 +431,43 @@ func (m *model) rowMark(i int, t *targetLine, lo, hi int, hit bool) string {
 	case t == nil || p.cont(i):
 		return commentMark(nil)
 	}
-	return commentMark(m.comments.At(m.anchor(), p.path, t.side, t.line))
+	return commentMark(m.commentOn(i, t))
+}
+
+// commentOn returns a comment on row i, which shows line t, or nil. In
+// rendered markdown, it is a comment on a line of the block of row i.
+func (m *model) commentOn(i int, t *targetLine) *diff.Comment {
+	p := m.cur()
+	first, last := t.line, t.line
+	if p.src != nil {
+		first, last = p.rows[p.head(i)].New, p.rows[p.end(i)].New
+	}
+	for line := first; line <= last; line++ {
+		if c := m.comments.At(m.anchor(), p.path, t.side, line); c != nil {
+			return c
+		}
+	}
+	return nil
 }
 
 // commentsBelow returns the lines of the comments whose range ends on
-// line t. The comment that the box edits does not show.
-func (m *model) commentsBelow(t *targetLine) []string {
+// row i, which shows line t. In rendered markdown, they are the comments
+// that end in the block of row i. The comment that the box edits does not
+// show.
+func (m *model) commentsBelow(i int, t *targetLine) []string {
+	p := m.cur()
+	first := t.line
+	if p.src != nil {
+		first = p.rows[p.head(i)].New
+	}
 	var out []string
-	for _, c := range m.comments.EndingAt(m.anchor(), m.cur().path, t.side, t.line) {
-		if m.mode == modeComment && c.ID == m.draft.editID {
-			continue
+	for line := first; line <= t.line; line++ {
+		for _, c := range m.comments.EndingAt(m.anchor(), p.path, t.side, line) {
+			if m.mode == modeComment && c.ID == m.draft.editID {
+				continue
+			}
+			out = append(out, m.commentLines(c)...)
 		}
-		out = append(out, m.commentLines(c)...)
 	}
 	return out
 }

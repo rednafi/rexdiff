@@ -30,12 +30,33 @@ func TestFilesTab(t *testing.T) {
 }
 
 // TestMarkdownSetting checks that markdown_view shows rendered markdown
-// at the start.
+// at the start. As in herdr-reviewr, a changed block of rendered markdown
+// has the bar, and a comment on it is on all the lines of the block.
 func TestMarkdownSetting(t *testing.T) {
-	tm := start(t, newRepo(t), opts{args: []string{"-config", `{"markdown_view": "rendered"}`}})
+	repo := newRepo(t)
+	testgit.WriteFile(t, repo, "README.md", "# Title\n\nSome text.\n\nNew text\non two lines.\n")
+	bin := clipboard(t)
+	tm := start(t, repo, opts{path: bin, env: clipEnv, args: []string{
+		"-config", `{"markdown_view": "rendered"}`,
+	}})
 	tm.keys("2", "tab", "j", "j", "j")
 	tm.waitFor("Some text.")
 	tm.waitGone("# Title")
+	tm.keys("1", "tab")
+	tm.waitFor("Some text.")
+	tm.waitUntil(func(s string) bool {
+		return sameLine(s, "▌", "New text on two lines.") && !sameLine(s, "▌", "Some text.")
+	}, "mark the changed block")
+	tm.keys(":", "6", "enter")
+	tm.waitCursor("New text on two lines.")
+	tm.keys("c")
+	tm.typed("hi")
+	tm.keys("enter")
+	tm.waitFor("💬 hi")
+	tm.keys("y")
+	waitFile(t, filepath.Join(bin, "clip"), func(s string) bool {
+		return s == "README.md:5-6\n+New text\n+on two lines.\nhi"
+	})
 }
 
 // TestSearch checks that / finds files by name and lines by code, shows a
