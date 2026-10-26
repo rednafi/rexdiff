@@ -262,12 +262,12 @@ func TestDetachedHead(t *testing.T) {
 }
 
 // TestGrepIsLiteral checks that Grep finds the text, and does not read it
-// as a pattern or as an option.
+// as a pattern or as an option. It also checks the smart case.
 func TestGrepIsLiteral(t *testing.T) {
 	t.Parallel()
 	r, dir := newRepo(t)
 	ctx := t.Context()
-	testgit.WriteFile(t, dir, "g.txt", "abc\na.c\n-v\n--help\n[x\n(y\n\\d\n*\n^a\nx$\n")
+	testgit.WriteFile(t, dir, "g.txt", "abc\na.c\n-v\n--help\n[x\n(y\n\\d\n*\n^a\nx$\nAbc\n")
 	// grep.column adds a field to the output.
 	testgit.Git(t, dir, "config", "grep.column", "true")
 	tests := []struct {
@@ -284,6 +284,8 @@ func TestGrepIsLiteral(t *testing.T) {
 		{"^a", []string{"^a"}},
 		{"x$", []string{"x$"}},
 		{"abc\na.c", nil}, // no line has a newline
+		{"abc", []string{"abc", "Abc"}},
+		{"Abc", []string{"Abc"}},
 	}
 	for _, tt := range tests {
 		ms, _, err := r.Grep(ctx, tt.q, 10, time.Minute)

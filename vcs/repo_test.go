@@ -380,15 +380,15 @@ func TestWorktree(t *testing.T) {
 		t.Errorf("IgnoredDir(no such dir) = %v, want none", es)
 	}
 
-	ms, _, err := r.Grep(ctx, "TWO", 10, time.Minute)
-	match := vcs.Match{Path: "a.txt", Line: 2, Text: "two"}
-	if err != nil || len(ms) != 1 || ms[0] != match {
-		t.Errorf("Grep(TWO) = %+v, %v, want [%+v], nil", ms, err, match)
+	// The search has smart case. An upper case letter matches only the
+	// same case. A query in lower case ignores case.
+	if ms, _, err := r.Grep(ctx, "TWO", 10, time.Minute); err != nil || len(ms) != 0 {
+		t.Errorf("Grep(TWO) = %+v, %v, want none, nil", ms, err)
 	}
 	// git quotes this name unless -z.
-	testgit.WriteFile(t, dir, "a:é\n.txt", "x: two\n")
-	ms, _, err = r.Grep(ctx, "x: two", 10, time.Minute)
-	match = vcs.Match{Path: "a:é\n.txt", Line: 1, Text: "x: two"}
+	testgit.WriteFile(t, dir, "a:é\n.txt", "x: Two\n")
+	ms, _, err := r.Grep(ctx, "x: two", 10, time.Minute)
+	match := vcs.Match{Path: "a:é\n.txt", Line: 1, Text: "x: Two"}
 	if err != nil || len(ms) != 1 || ms[0] != match {
 		t.Errorf("Grep(x: two) = %+v, %v, want [%+v], nil", ms, err, match)
 	}
@@ -468,13 +468,21 @@ func TestRefs(t *testing.T) {
 	if b := r.DefaultBase(ctx); b != "main" {
 		t.Errorf("DefaultBase = %q, want main", b)
 	}
-	// The HEAD of each remote is not a branch.
+	// As in herdr-reviewr, the list has only the branches of origin, and
+	// origin/main hides main. The HEAD of origin is not a branch. The
+	// branch old has the oldest commit, so it is last.
 	for _, remote := range []string{"origin", "up"} {
 		testgit.Git(t, dir, "update-ref", "refs/remotes/"+remote+"/main", "main")
 		testgit.Git(t, dir, "symbolic-ref", "refs/remotes/"+remote+"/HEAD",
 			"refs/remotes/"+remote+"/main")
 	}
-	want := "feat main origin/main up/main"
+	obj := t.TempDir()
+	const who = "A <a@example.com> 946684800 +0000\n"
+	testgit.WriteFile(t, obj, "old", "tree "+testgit.Git(t, dir, "rev-parse", "main^{tree}")+
+		"author "+who+"committer "+who+"\nold\n")
+	old := testgit.Git(t, dir, "hash-object", "-t", "commit", "-w", filepath.Join(obj, "old"))
+	testgit.Git(t, dir, "update-ref", "refs/heads/old", strings.TrimSpace(old))
+	want := "feat origin/main old"
 	if bs, err := r.Branches(ctx); err != nil || strings.Join(bs, " ") != want {
 		t.Errorf("Branches with remotes = %v, %v, want %s", bs, err, want)
 	}

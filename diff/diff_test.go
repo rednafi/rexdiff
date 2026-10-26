@@ -148,6 +148,23 @@ func TestRenderKinds(t *testing.T) {
 	}
 }
 
+// TestRenderLineEnding checks that a change of only the line ending shows,
+// as in herdr-reviewr. The line with the CR has a ^M. A CRLF that does not
+// change shows nothing.
+func TestRenderLineEnding(t *testing.T) {
+	t.Parallel()
+	d := diff.Render("x.txt", "a\nb\r\nc\r\n", "a\r\nb\nc\r\n", diff.Options{Width: 80})
+	var got []string // the kind and the last word of each row
+	for i, r := range d.Rows {
+		words := strings.Fields(plainLine(t, d, i))
+		got = append(got, fmt.Sprintf("%c %s", "@=+-~"[r.Kind], words[len(words)-1]))
+	}
+	want := []string{"@ @@", "- a", "- b^M", "+ a^M", "+ b", "= c"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Render rows = %q, want %q", got, want)
+	}
+}
+
 // TestRenderTabsAndOffset checks that a tab becomes spaces and that Offset
 // scrolls the code.
 func TestRenderTabsAndOffset(t *testing.T) {
@@ -305,7 +322,7 @@ func TestCount(t *testing.T) {
 	}{
 		{oldSrc, newSrc, 2, 1},
 		{"", "a\nb\n", 2, 0},
-		{"a\r\nb\r\n", "a\nb\n", 0, 0},
+		{"a\r\nb\r\n", "a\nb\n", 2, 2},
 		{oldSrc, oldSrc, 0, 0},
 	}
 	for _, tt := range tests {

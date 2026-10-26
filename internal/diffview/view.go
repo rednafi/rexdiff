@@ -114,11 +114,10 @@ func (v *View) Theme(bg, fg, green, red color.Color, dark bool) *View {
 // columns of the line numbers.
 func (v *View) Render() (string, []Row, Geometry) {
 	v.rows = nil
-	v.before = strings.ReplaceAll(v.before, "\r\n", "\n")
-	v.after = strings.ReplaceAll(v.after, "\r\n", "\n")
 	if err := v.computeDiff(); err != nil {
 		return err.Error(), nil, v.geometry()
 	}
+	v.markEndings()
 	v.replaceTabs()
 	v.detectNumDigits()
 	if v.width <= 0 {
@@ -157,6 +156,65 @@ func (v *View) computeDiff() error {
 		v.folds = append(v.folds, fs...)
 	}
 	return nil
+}
+
+// crMark shows a CR at the end of a line, as less and vim show it.
+const crMark = "^M"
+
+// markEndings removes the CR of each line ending, so that it does not
+// show. In a block of changes, the deleted lines and the inserted lines
+// pair up in their order. As in herdr-reviewr, a line of a pair that
+// differs from the other line only in a CR gets crMark. Thus a change of
+// only the line ending shows.
+func (v *View) markEndings() {
+	for _, h := range v.hunks {
+		ls := h.Lines
+		for i := 0; i < len(ls); {
+			dels := i
+			for i < len(ls) && ls[i].Kind == udiff.Delete {
+				i++
+			}
+			ins := i
+			for i < len(ls) && ls[i].Kind == udiff.Insert {
+				i++
+			}
+			for k := 0; dels+k < ins && ins+k < i; k++ {
+				markPair(&ls[dels+k], &ls[ins+k])
+			}
+			if i == dels { // an equal line
+				i++
+			}
+		}
+		for i := range ls {
+			ls[i].Content, _ = cutCR(ls[i].Content, "")
+		}
+	}
+}
+
+// markPair adds crMark to old or to new if the two lines differ only in
+// the CR of the line ending.
+func markPair(old, new *udiff.Line) {
+	o, oCR := cutCR(old.Content, "")
+	n, nCR := cutCR(new.Content, "")
+	if oCR != nCR && o == n {
+		old.Content, _ = cutCR(old.Content, crMark)
+		new.Content, _ = cutCR(new.Content, crMark)
+	}
+}
+
+// cutCR returns line with mark in place of the CR of its line ending, and
+// reports whether line has that CR. The last line of a file can have a CR
+// and no LF.
+func cutCR(line, mark string) (string, bool) {
+	body, lf := strings.CutSuffix(line, "\n")
+	body, cr := strings.CutSuffix(body, "\r")
+	if cr {
+		body += mark
+	}
+	if lf {
+		body += "\n"
+	}
+	return body, cr
 }
 
 // replaceTabs replaces the tabs in the lines of the diff with spaces. It runs

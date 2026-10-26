@@ -198,10 +198,9 @@ func (d *Diff) SideAt(x int) (s Side, onNumber bool) {
 }
 
 // Count returns the number of lines that a change from before to after adds
-// and deletes. It ignores the difference between CRLF and LF line endings.
+// and deletes. As in herdr-reviewr, a change from a CRLF to an LF line
+// ending, or back, is a change of the line.
 func Count(before, after string) (added, deleted int) {
-	before = strings.ReplaceAll(before, "\r\n", "\n")
-	after = strings.ReplaceAll(after, "\r\n", "\n")
 	u, err := udiff.ToUnifiedDiff("", "", before, udiff.Lines(before, after), 0)
 	if err != nil {
 		return 0, 0

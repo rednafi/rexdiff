@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/rednafi/rexdiff/internal/proc"
 )
@@ -68,22 +69,32 @@ func (r *Repo) Commits(ctx context.Context, since string) ([]Commit, error) {
 	return cs, nil
 }
 
-// Branches returns the names of the local and the remote branches.
+// Branches returns the names of the local branches and of the branches
+// of origin, the newest commit first, as herdr-reviewr lists them. A
+// branch of origin, for example "origin/main", hides the local branch
+// with the same name.
 func (r *Repo) Branches(ctx context.Context) ([]string, error) {
-	// A ref name has no space. The short name of refs/remotes/origin/HEAD
-	// is "origin", thus filter by the full name.
-	out, err := r.run(ctx, nil, "for-each-ref",
-		"--format=%(refname) %(refname:short)", "refs/heads", "refs/remotes")
+	out, err := r.run(ctx, nil, "for-each-ref", "--sort=-committerdate",
+		"--format=%(refname)", "refs/remotes/origin", "refs/heads")
 	if err != nil {
 		return nil, err
 	}
+	refs := strings.Fields(out) // a ref name has no space
+	onOrigin := map[string]bool{}
+	for _, ref := range refs {
+		if name, ok := strings.CutPrefix(ref, "refs/remotes/origin/"); ok {
+			onOrigin[name] = true
+		}
+	}
 	var bs []string
-	for l := range strings.Lines(out) {
-		full, short, _ := strings.Cut(strings.TrimSuffix(l, "\n"), " ")
-		remoteHead := strings.HasPrefix(full, "refs/remotes/") &&
-			strings.HasSuffix(full, "/HEAD")
-		if short != "" && !remoteHead {
-			bs = append(bs, short)
+	for _, ref := range refs {
+		local, isLocal := strings.CutPrefix(ref, "refs/heads/")
+		remote := strings.TrimPrefix(ref, "refs/remotes/")
+		switch {
+		case isLocal && !onOrigin[local]:
+			bs = append(bs, local)
+		case !isLocal && remote != "origin/HEAD":
+			bs = append(bs, remote)
 		}
 	}
 	return bs, nil
@@ -200,9 +211,10 @@ type Match struct {
 }
 
 // Grep returns at most limit lines of the tracked and the untracked files
-// that contain the text q. The search ignores case and binary files. When
-// it finds limit lines, it stops git, and more is true if there are
-// others.
+// that contain the text q. The search ignores binary files. As in
+// herdr-reviewr, it has smart case. A q with an upper case letter matches
+// only the same case. Else the search ignores case. When it finds limit
+// lines, it stops git, and more is true if there are others.
 //
 // After the time budget, Grep stops git when it has a line, and returns
 // the lines with more set to true. At the deadline of ctx, Grep stops git
@@ -215,9 +227,11 @@ func (r *Repo) Grep(ctx context.Context, q string, limit int, budget time.Durati
 	}
 	// --no-column overrides the git setting grep.column. That setting adds a
 	// field to each match.
-	cmd, stderr := r.command(ctx, nil, "git",
-		"grep", "-n", "--no-column", "-z", "-I", "-i", "-F", "--untracked", "--no-color",
-		"-e", q)
+	args := []string{"grep", "-n", "--no-column", "-z", "-I", "-F", "--untracked", "--no-color"}
+	if !strings.ContainsFunc(q, unicode.IsUpper) {
+		args = append(args, "-i")
+	}
+	cmd, stderr := r.command(ctx, nil, "git", append(args, "-e", q)...)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, false, err
