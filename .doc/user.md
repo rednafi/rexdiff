@@ -29,6 +29,9 @@ The diff is on the left. The changed files are on the right.
 - `]` and `[` go to the next or previous change.
 - `f` and `F` go to the next or previous file.
 - The right arrow key on a folded row shows the unchanged lines.
+- `:` goes to a line number. Ctrl+F finds text in the file.
+- `m` shows a Markdown file as rendered text. You can comment there too.
+- Drag over the code with the mouse to copy it. Click a link to open it.
 
 rexdiff reloads when a file changes.
 
@@ -38,6 +41,8 @@ rexdiff reloads when a file changes.
 - `b`: all the changes on the branch
 - `t`: the last turn of the agent
 - `g`: the commits that you pick
+
+Press `B` to pick the base branch, and `G` to pick the commits.
 
 ## 5. See both sides
 
@@ -68,6 +73,8 @@ The comment shows under its code.
 ## 8. Send the review
 
 Press `s`. rexdiff pastes the review into the input box of the agent. You press Enter.
+If there are two or more agents, pick one with the arrow keys or a digit, then press
+Enter.
 
 ![The review in the agent](../.asset/sent.png)
 
@@ -89,6 +96,10 @@ Press `/` to find a file. Press Tab to find code.
 
 Press `3` to see the pull request of the branch, with its checks and comments. This needs
 gh, glab, or az.
+
+- `o` opens the pull request in the browser.
+- The right arrow key opens the folded `<details>` blocks. The left arrow key closes
+  them.
 
 ## 12. Change the settings
 
