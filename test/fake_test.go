@@ -2,10 +2,10 @@ package test
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,10 +40,7 @@ var repoFixture = testgit.NewFixture(func(tb testing.TB, dir string) {
 func numbered(word string, first, last int) string {
 	var b strings.Builder
 	for n := first; n <= last; n++ {
-		b.WriteString(word)
-		b.WriteString(" ")
-		b.WriteString(strconv.Itoa(n))
-		b.WriteString("\n")
+		fmt.Fprintf(&b, "%s %d\n", word, n)
 	}
 	return b.String()
 }
