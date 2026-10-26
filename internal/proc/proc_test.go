@@ -1,13 +1,18 @@
 package proc_test
 
 import (
+	"bufio"
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rednafi/rexdiff/internal/proc"
 )
@@ -32,13 +37,60 @@ func TestError(t *testing.T) {
 		{"git", exit, " \n", exit.Error()},
 	}
 	for _, tt := range tests {
-		err := proc.Error(tt.name, tt.err, []byte(tt.stderr))
+		err := proc.Error(t.Context(), tt.name, tt.err, []byte(tt.stderr))
 		if err.Error() != tt.want {
 			t.Errorf("Error(%q, %v, %q) = %q, want %q", tt.name, tt.err, tt.stderr, err, tt.want)
 		}
 		if !errors.Is(err, tt.err) {
 			t.Errorf("Error(%q, %v, %q) does not wrap %v", tt.name, tt.err, tt.stderr, tt.err)
 		}
+	}
+}
+
+// TestErrorCause checks that the error of a run that stops with its
+// context has the text of the cause. The error also keeps the error of
+// the process and the cause.
+func TestErrorCause(t *testing.T) {
+	t.Parallel()
+	cause := fmt.Errorf("test run: 1ms timeout: %w", context.DeadlineExceeded)
+	ctx, cancel := context.WithTimeoutCause(t.Context(), time.Millisecond, cause)
+	defer cancel()
+	<-ctx.Done()
+	exit := proc.Command(t.Context(), shEnv, "sh", "-c", "exit 3").Run()
+	err := proc.Error(ctx, "git", exit, []byte("fatal: bad\n"))
+	if err.Error() != cause.Error() {
+		t.Errorf("Error = %q, want %q", err, cause)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Error = %v, want it to wrap context.DeadlineExceeded", err)
+	}
+	if ee, ok := errors.AsType[*exec.ExitError](err); !ok || ee.ExitCode() != 3 {
+		t.Errorf("Error = %v, want it to wrap the exit error with code 3", err)
+	}
+}
+
+// TestCommandTerm checks that a stop of the context sends SIGTERM, so the
+// program can clean up before it ends.
+func TestCommandTerm(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cmd := proc.Command(ctx, shEnv, "sh", "-c", `trap 'echo term; exit 0' TERM; echo ready; while :; do sleep 0.01; done`)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(out)
+	if line, err := r.ReadString('\n'); err != nil || line != "ready\n" {
+		t.Fatalf("first line = %q, %v, want %q", line, err, "ready\n")
+	}
+	cancel(fmt.Errorf("test stops the program: %w", context.Canceled))
+	rest, _ := io.ReadAll(r)
+	_ = cmd.Wait()
+	if string(rest) != "term\n" {
+		t.Errorf("output after the stop = %q, want %q", rest, "term\n")
 	}
 }
 

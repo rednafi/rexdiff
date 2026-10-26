@@ -120,7 +120,7 @@ func (m *model) runSearch() tea.Cmd {
 	s, q := &ov.search, ov.input.Value()
 	s.files, s.fileTotal = search.Files(s.paths, m.recent, q, search.MaxFiles)
 	s.err = ""
-	m.stopGrep()
+	m.stopGrep(fmt.Errorf("code search: a newer query replaces it: %w", context.Canceled))
 	// A blank grep is noise, as in herdr-reviewr.
 	if strings.TrimSpace(q) == "" {
 		s.hits, s.hitsMore = nil, false
@@ -128,11 +128,14 @@ func (m *model) runSearch() tea.Cmd {
 		return nil
 	}
 	ov.showSearch()
-	ctx, cancel := context.WithTimeout(m.ctx, codeTimeout)
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, codeTimeout,
+		fmt.Errorf("code search: %v timeout: %w", codeTimeout, context.DeadlineExceeded))
 	m.grepCancel = cancel
 	repo, gen := m.repo, m.grepGen
 	return func() tea.Msg {
-		defer cancel()
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("code search: done: %w", context.Canceled))
 		hits, more, err := repo.Grep(ctx, q, search.MaxCodeLines, codeBudget)
 		return grepMsg{gen: gen, hits: hits, more: more, err: err}
 	}
@@ -146,11 +149,11 @@ func (m *model) addRecent(path string) {
 }
 
 // stopGrep stops the code search that runs, if any. Its result then does
-// not show.
-func (m *model) stopGrep() {
+// not show. cause tells why it stops.
+func (m *model) stopGrep(cause error) {
 	m.grepGen++
 	if m.grepCancel != nil {
-		m.grepCancel()
+		m.grepCancel(cause)
 		m.grepCancel = nil
 	}
 }

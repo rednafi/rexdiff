@@ -25,8 +25,11 @@ func (m *model) listAgents(msg agentsMsg) tea.Cmd {
 	c, ctx := m.rex, m.ctx
 	msg.gen = m.agentsGen
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(ctx, rexTimeout)
-		defer cancel()
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("agent list: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("agent list: done: %w", context.Canceled))
 		agents, err := c.Agents(ctx)
 		isRexdiff := func(a rex.Agent) bool { return a.Status.App == appName }
 		agents = slices.DeleteFunc(agents, isRexdiff)
@@ -178,8 +181,11 @@ func (m *model) deliver(a rex.Agent) tea.Cmd {
 	text, ids := m.reviewText(), m.commentIDs()
 	focus := m.cfg.focusesAgent()
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(ctx, rexTimeout)
-		defer cancel()
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("send: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("send: done: %w", context.Canceled))
 		status, err := c.Status(ctx, a.Block)
 		if err != nil {
 			return sentMsg{agent: a, err: fmt.Errorf("check %s: %w", a.Name, err)}
@@ -257,8 +263,11 @@ const copyTimeout = 2 * time.Second
 // before the next frame, so two copies keep their order. A clipboard tool
 // that does not answer fails after copyTimeout.
 func (m *model) copyText(text, done string, ids []int) {
-	ctx, cancel := context.WithTimeout(m.ctx, copyTimeout)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, copyTimeout,
+		fmt.Errorf("copy: %v timeout: %w", copyTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("copy: done: %w", context.Canceled))
 	err := clipboard.Write(ctx, m.env, text)
 	switch {
 	case err != nil:

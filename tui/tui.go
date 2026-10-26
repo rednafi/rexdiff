@@ -103,20 +103,20 @@ func Run(ctx context.Context, o Options) (resume string, err error) {
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(errQuit)
 
 	m := startModel(ctx, o, cfg)
 	program := tea.NewProgram(&m, tea.WithContext(ctx))
 	var wg sync.WaitGroup
 	if o.Rex != nil {
-		// Watch returns only the error of ctx, when ctx is done.
+		// Watch returns only the cause of ctx, when ctx is done.
 		wg.Go(func() {
 			_ = o.Rex.Watch(ctx, func(e rex.Event) { program.Send(eventMsg(e)) })
 		})
 	}
 	final, err := program.Run()
-	cancel()
+	cancel(errQuit)
 	wg.Wait()
 	if fm, ok := final.(*model); ok && err == nil {
 		if fm.resumePath != "" {
@@ -128,6 +128,9 @@ func Run(ctx context.Context, o Options) (resume string, err error) {
 	}
 	return "", err
 }
+
+// errQuit is the cause of the stop of the work of Run when rexdiff quits.
+var errQuit = fmt.Errorf("rexdiff quits: %w", context.Canceled)
 
 // startModel returns the model that Run shows. It starts the watcher,
 // reads the state of o.Resume, loads the changes, and labels the block of

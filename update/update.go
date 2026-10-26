@@ -149,8 +149,11 @@ func detect(bin, version string, goInstall bool, env []string) *Updater {
 // Latest returns the latest release, and whether it is newer than the
 // running rexdiff. Latest stops and returns an error after five seconds.
 func (u *Updater) Latest(ctx context.Context) (Release, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, checkTimeout,
+		fmt.Errorf("release check: %v timeout: %w", checkTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("release check: done: %w", context.Canceled))
 	body, err := get(ctx, u.latestURL, 1<<20)
 	if err != nil {
 		return Release{}, false, err
@@ -172,8 +175,11 @@ func (u *Updater) Latest(ctx context.Context) (Release, bool, error) {
 // early can leave a broken cask or binary. Install stops after five
 // minutes.
 func (u *Updater) Install(ctx context.Context, r Release) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), installTimeout)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, installTimeout,
+		fmt.Errorf("install: %v timeout: %w", installTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("install: done: %w", context.Canceled))
 	var err error
 	switch u.method {
 	case methodBrew:
@@ -230,6 +236,9 @@ func (u *Updater) runProgram(ctx context.Context, env []string, name string, arg
 	}
 	if errors.Is(err, exec.ErrNotFound) {
 		return out, proc.NotInstalled(name)
+	}
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("%s: %w", filepath.Base(name), proc.Error(ctx, name, err, nil))
 	}
 	if last := proc.LastLine(string(out)); last != "" {
 		return out, fmt.Errorf("%s: %s: %w", filepath.Base(name), last, err)

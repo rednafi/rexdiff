@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -157,7 +158,7 @@ func (m *model) open(ov *overlay) {
 // closeOverlay closes the overlay and gives the keys back to the panes.
 func (m *model) closeOverlay() {
 	m.overlay, m.mode = nil, modeNormal
-	m.stopGrep()
+	m.stopGrep(fmt.Errorf("code search: the search closes: %w", context.Canceled))
 }
 
 // openInput opens a prompt of kind with the text value.

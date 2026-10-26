@@ -164,7 +164,7 @@ func cleanPR(pr *PullRequest) {
 // and its subcommand, for example "gh pr".
 func (r *Repo) runJSON(ctx context.Context, env []string, v any, name string, args ...string) error {
 	cmd, stderr := r.command(ctx, env, name, args...)
-	out, err := output(cmd, stderr)
+	out, err := output(ctx, cmd, stderr)
 	if err == nil {
 		err = json.Unmarshal([]byte(out), v)
 	}

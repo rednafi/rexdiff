@@ -55,8 +55,11 @@ func (m *model) openEditor(path string, line int) tea.Cmd {
 	}
 	c, ctx, root := m.rex, m.ctx, m.repo.Root()
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(ctx, rexTimeout)
-		defer cancel()
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("editor split: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("editor split: done: %w", context.Canceled))
 		err := c.Split(ctx, root, "sh", "-c", ed.Script)
 		return splitMsg{path: path, script: ed.Script, err: err}
 	}

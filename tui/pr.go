@@ -31,7 +31,7 @@ type prFetch struct {
 	gen      int       // the read whose result shows. Other reads are stale.
 	inFlight bool      // the read gen runs
 	polled   time.Time // the last request, for prPoll
-	cancel   context.CancelFunc
+	cancel   context.CancelCauseFunc
 	// trailing is true if an ambient request comes while a read runs.
 	// Then one more read follows that read.
 	trailing bool
@@ -57,9 +57,11 @@ func (m *model) requestPR(forced bool) tea.Cmd {
 func (m *model) loadPR() tea.Cmd {
 	f := &m.prf
 	if f.cancel != nil {
-		f.cancel()
+		f.cancel(fmt.Errorf("pull request read: a newer read replaces it: %w", context.Canceled))
 	}
-	ctx, cancel := context.WithTimeout(m.ctx, prTimeout)
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, prTimeout,
+		fmt.Errorf("pull request read: %v timeout: %w", prTimeout, context.DeadlineExceeded))
 	f.gen++
 	f.inFlight, f.trailing, f.cancel = true, false, cancel
 	repo, gen := m.repo, f.gen
@@ -69,7 +71,8 @@ func (m *model) loadPR() tea.Cmd {
 		Azure:  m.cfg.AzureHost,
 	}
 	return func() tea.Msg {
-		defer cancel()
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("pull request read: done: %w", context.Canceled))
 		pr, err := repo.PullRequest(ctx, hosts)
 		return prMsg{gen: gen, pr: pr, err: err}
 	}

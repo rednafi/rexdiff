@@ -38,6 +38,11 @@ func main() {
 	// rexdiff reads the environment once, here. The packages get it as a
 	// value.
 	err := run(ctx, os.Environ(), os.Args[1:], os.Stdout, os.Stderr)
+	if err != nil && ctx.Err() != nil {
+		// The error of a stopped program tells only "context canceled".
+		// The cause names the signal.
+		err = context.Cause(ctx)
+	}
 	stop()
 	switch {
 	case errors.Is(err, flag.ErrHelp):

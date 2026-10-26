@@ -15,18 +15,22 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
-// waitDelay is how long a stopped program can keep its output open. A
-// child of the program can keep the output open after the program ends.
+// waitDelay is how long a stopped program has to end. It is also how long
+// a program that ends can keep its output open. A child of the program
+// can keep the output open after the program ends.
 const waitDelay = time.Second
 
 // Command returns the command "name args..." with the environment env.
 // LookPath finds name in the PATH of env. If LookPath fails, Start returns
 // its error. A nil env is an empty environment, not the environment of the
-// process. The command stops when ctx is done. Its Wait returns at most
-// waitDelay after the program ends.
+// process. When ctx is done, the command sends SIGTERM to the program, so
+// that git can remove its lock files. A SIGKILL leaves index.lock, and then
+// each later git add fails. If the program does not end in waitDelay, the
+// command kills it. Wait returns at most waitDelay after the program ends.
 func Command(ctx context.Context, env []string, name string, args ...string) *exec.Cmd {
 	path, err := LookPath(env, name)
 	if err != nil {
@@ -40,6 +44,7 @@ func Command(ctx context.Context, env []string, name string, args ...string) *ex
 		env = []string{} // exec gives a nil Env the environment of the process
 	}
 	cmd.Env = env
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = waitDelay
 	return cmd
 }
@@ -93,28 +98,36 @@ func NotInstalled(name string) error {
 	return errors.New(filepath.Base(name) + " is not installed")
 }
 
-// Error returns the error err of a run of the program name. If the
-// program is not on PATH, the text is "<name> is not installed".
-// Else the text is the first line of stderr that is not blank, without a
-// leading "Error: ". If stderr has no text, the text is that of err. The
-// error wraps err, so a caller can examine the exit code.
-func Error(name string, err error, stderr []byte) error {
+// Error returns the error err of a run of the program name. If ctx is
+// done, the text is that of [context.Cause], and the error wraps err and
+// the cause. Thus errors.Is finds [context.DeadlineExceeded], and
+// errors.As finds the [*exec.ExitError]. Else, if the program is not on
+// PATH, the text is "<name> is not installed". Else the text is the first
+// line of stderr that is not blank, without a leading "Error: ". If stderr
+// has no text, the text is that of err. The error wraps err, so a caller
+// can examine the exit code.
+func Error(ctx context.Context, name string, err error, stderr []byte) error {
+	if ctx.Err() != nil {
+		cause := context.Cause(ctx)
+		return &runError{msg: cause.Error(), errs: []error{err, cause}}
+	}
 	if errors.Is(err, exec.ErrNotFound) {
-		return &runError{msg: NotInstalled(name).Error(), err: err}
+		return &runError{msg: NotInstalled(name).Error(), errs: []error{err}}
 	}
 	msg := strings.TrimPrefix(firstLine(string(stderr)), "Error: ")
-	return &runError{msg: cmp.Or(msg, err.Error()), err: err}
+	return &runError{msg: cmp.Or(msg, err.Error()), errs: []error{err}}
 }
 
-// runError is a failed run of a program. It has a short text and wraps
-// the error of the process.
+// runError is a failed run of a program. It has a short text. It wraps
+// the error of the process, and the cause of the context if the context
+// is done.
 type runError struct {
-	msg string
-	err error
+	msg  string
+	errs []error
 }
 
-func (e *runError) Error() string { return e.msg }
-func (e *runError) Unwrap() error { return e.err }
+func (e *runError) Error() string   { return e.msg }
+func (e *runError) Unwrap() []error { return e.errs }
 
 // firstLine returns the first line of s that is not blank, without the
 // leading and trailing space.

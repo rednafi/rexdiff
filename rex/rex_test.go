@@ -3,6 +3,7 @@ package rex_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -201,16 +202,17 @@ func TestWatch(t *testing.T) {
 	}
 	want := slices.Concat(once, []rex.Event{{Reconnect: true}}, once)
 	// Stop Watch when it reports all the events.
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
+	errAll := errors.New("the test has all the events")
 	var got []rex.Event
 	err := c.Watch(ctx, func(e rex.Event) {
 		if got = append(got, e); len(got) == len(want) {
-			cancel()
+			cancel(errAll)
 		}
 	})
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Watch = %v, want context.Canceled", err)
+	if !errors.Is(err, errAll) {
+		t.Errorf("Watch = %v, want the cause %v", err, errAll)
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("events = \n%+v\nwant:\n%+v", got, want)

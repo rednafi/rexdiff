@@ -24,7 +24,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rednafi/rexdiff/internal/proc"
@@ -55,10 +54,13 @@ type Repo struct {
 	index string   // the path of the real index
 	env   []string // the environment of git and of the forge tools
 
-	// snapMu guards the private index of Snapshot, in the directory
-	// snapDir, or "" before the first Snapshot. snapSeed is the file status
-	// of the real index at the last copy.
-	snapMu   sync.Mutex
+	// snapLock is the lock of the private index of Snapshot. A send takes
+	// the lock, and a receive gives it back. A channel lets Snapshot stop
+	// its wait when ctx ends. The lock guards snapDir, snapSeed and
+	// closed. snapDir is the directory of the private index, or "" before
+	// the first Snapshot. snapSeed is the file status of the real index at
+	// the last copy.
+	snapLock chan struct{}
 	snapDir  string
 	snapSeed string
 	closed   bool
@@ -76,7 +78,7 @@ func Open(ctx context.Context, dir string, env []string) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Repo{root: abs, env: env}
+	r := &Repo{root: abs, env: env, snapLock: make(chan struct{}, 1)}
 	// Get each path with its own git process, because a path can have a
 	// newline. A path can also end with a space, so remove only the last
 	// newline.
@@ -96,9 +98,10 @@ func Open(ctx context.Context, dir string, env []string) (*Repo, error) {
 }
 
 // Close removes the files that the repository keeps for [Repo.Snapshot].
+// Close waits for the Snapshot that runs.
 func (r *Repo) Close() error {
-	r.snapMu.Lock()
-	defer r.snapMu.Unlock()
+	r.snapLock <- struct{}{}
+	defer func() { <-r.snapLock }()
 	dir := r.snapDir
 	r.snapDir, r.closed = "", true
 	if dir == "" {
@@ -120,7 +123,7 @@ func (r *Repo) run(ctx context.Context, env []string, args ...string) (string, e
 func (r *Repo) runInput(ctx context.Context, env []string, in io.Reader, args ...string) (string, error) {
 	cmd, stderr := r.command(ctx, env, "git", args...)
 	cmd.Stdin = in
-	out, err := output(cmd, stderr)
+	out, err := output(ctx, cmd, stderr)
 	if err != nil {
 		return out, fmt.Errorf("git %s: %w", args[0], err)
 	}
@@ -141,13 +144,14 @@ func (r *Repo) command(ctx context.Context, env []string, name string, args ...s
 	return cmd, &stderr
 }
 
-// output runs cmd and returns its standard output. The error has the first
-// line of the standard error. It wraps the error of the process, so
-// callers can examine its exit code.
-func output(cmd *exec.Cmd, stderr *bytes.Buffer) (string, error) {
+// output runs cmd and returns its standard output. ctx is the context of
+// cmd. The error has the first line of the standard error, or the cause of
+// ctx. It wraps the error of the process, so callers can examine its exit
+// code.
+func output(ctx context.Context, cmd *exec.Cmd, stderr *bytes.Buffer) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
-		return string(out), proc.Error(cmd.Args[0], err, stderr.Bytes())
+		return string(out), proc.Error(ctx, cmd.Args[0], err, stderr.Bytes())
 	}
 	return string(out), nil
 }
@@ -237,10 +241,16 @@ func (r *Repo) MergeBaseCommit(ctx context.Context, base string) (string, error)
 // example a nested repository with no commit. Snapshot uses a private
 // index, so the real index does not change. The private index keeps the
 // file status of the last Snapshot, also of the untracked files, so git
-// reads only the files that change. [Repo.Close] removes it.
+// reads only the files that change. [Repo.Close] removes it. One Snapshot
+// runs at a time. If ctx ends while Snapshot waits for another,
+// Snapshot returns the cause of ctx.
 func (r *Repo) Snapshot(ctx context.Context) (string, error) {
-	r.snapMu.Lock()
-	defer r.snapMu.Unlock()
+	select {
+	case r.snapLock <- struct{}{}:
+	case <-ctx.Done():
+		return "", context.Cause(ctx)
+	}
+	defer func() { <-r.snapLock }()
 	if r.closed {
 		return "", errClosed
 	}
@@ -268,7 +278,7 @@ func (r *Repo) Snapshot(ctx context.Context) (string, error) {
 // privateIndex returns the environment that points git at the private
 // index of Snapshot. It copies the real index when the real index changes,
 // for example after a commit or a "git add -f". A clean of the temporary
-// directory makes a new directory. snapMu must be held.
+// directory makes a new directory. The caller must hold snapLock.
 func (r *Repo) privateIndex() ([]string, error) {
 	seed := ""
 	if st, err := os.Stat(r.index); err == nil {
@@ -479,14 +489,14 @@ func (r *Repo) readBlobs(ctx context.Context, ids []string, blobs []blob) error 
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("git cat-file: %w", proc.Error("git", err, nil))
+		return fmt.Errorf("git cat-file: %w", proc.Error(ctx, "git", err, nil))
 	}
 	err = readBatch(bufio.NewReader(out), batch, blobs)
 	if err != nil {
 		_ = cmd.Process.Kill()
 	}
 	if werr := cmd.Wait(); err == nil && werr != nil {
-		err = proc.Error("git", werr, stderr.Bytes())
+		err = proc.Error(ctx, "git", werr, stderr.Bytes())
 	}
 	if err != nil {
 		return fmt.Errorf("git cat-file: %w", err)
@@ -608,7 +618,7 @@ func (r *Repo) Owns(ctx context.Context, dir string) (bool, error) {
 		return false, nil
 	}
 	cmd, stderr := r.command(ctx, nil, "git", "-C", dir, "rev-parse", "--show-toplevel")
-	out, err := output(cmd, stderr)
+	out, err := output(ctx, cmd, stderr)
 	if _, ok := errors.AsType[*exec.ExitError](err); ok {
 		return false, nil // dir is in no working tree
 	}

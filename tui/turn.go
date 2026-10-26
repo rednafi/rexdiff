@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -57,8 +58,11 @@ func (m *model) askCwd(block string) tea.Cmd {
 	a.asking = true
 	c, ctx := m.rex, m.ctx
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(ctx, rexTimeout)
-		defer cancel()
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("rex cwd: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("rex cwd: done: %w", context.Canceled))
 		cwd, err := c.Cwd(ctx, block)
 		return cwdMsg{block: block, cwd: cwd, err: err}
 	}
@@ -187,8 +191,11 @@ func (m *model) checkTurnLater() tea.Cmd {
 	m.turnChecking = true
 	p, repo, ctx := m.pending, m.repo, m.ctx
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(ctx, reloadTimeout)
-		defer cancel()
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
+			fmt.Errorf("turn check: %v timeout: %w", reloadTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("turn check: done: %w", context.Canceled))
 		tree, err := repo.Snapshot(ctx)
 		return turnCheckMsg{turn: p, tree: tree, err: err}
 	}

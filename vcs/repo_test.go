@@ -706,15 +706,16 @@ func TestGrepLimit(t *testing.T) {
 	}
 }
 
-// TestGrepCancelled checks that Grep returns the error of a cancelled
+// TestGrepCancelled checks that Grep returns the cause of a cancelled
 // context.
 func TestGrepCancelled(t *testing.T) {
 	t.Parallel()
 	r, _ := newRepo(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, _, err := r.Grep(ctx, "one", 10, time.Minute); !errors.Is(err, context.Canceled) {
-		t.Errorf("Grep with a cancelled context = %v, want %v", err, context.Canceled)
+	ctx, cancel := context.WithCancelCause(t.Context())
+	errStop := errors.New("the test stops the search")
+	cancel(errStop)
+	if _, _, err := r.Grep(ctx, "one", 10, time.Minute); !errors.Is(err, errStop) {
+		t.Errorf("Grep with a cancelled context = %v, want the cause %v", err, errStop)
 	}
 }
 

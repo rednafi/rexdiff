@@ -226,7 +226,7 @@ func (r *Repo) Grep(ctx context.Context, q string, limit int, budget time.Durati
 		if pastDeadline(ctx) {
 			return nil, true, nil
 		}
-		return nil, false, fmt.Errorf("git grep: %w", proc.Error("git", err, nil))
+		return nil, false, fmt.Errorf("git grep: %w", proc.Error(ctx, "git", err, nil))
 	}
 	// Past the budget, Grep stops git if it has a line, or else at the
 	// next line.
@@ -254,9 +254,9 @@ func (r *Repo) Grep(ctx context.Context, q string, limit int, budget time.Durati
 	case pastDeadline(ctx):
 		return ms, true, nil
 	case ctx.Err() != nil:
-		return nil, false, ctx.Err()
+		return nil, false, context.Cause(ctx)
 	}
-	return nil, false, fmt.Errorf("git grep: %w", proc.Error("git", err, stderr.Bytes()))
+	return nil, false, fmt.Errorf("git grep: %w", proc.Error(ctx, "git", err, stderr.Bytes()))
 }
 
 // pastDeadline reports whether ctx ends at its deadline.

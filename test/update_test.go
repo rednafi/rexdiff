@@ -71,8 +71,8 @@ func TestUpdate(t *testing.T) {
 	var nextErr error
 	var wg sync.WaitGroup
 	nextDir := t.TempDir()
-	wg.Go(func() { next, nextErr = build(nextDir, "0.2.0") })
-	bin, err := build(t.TempDir(), "0.1.0")
+	wg.Go(func() { next, nextErr = build(t.Context(), nextDir, "0.2.0") })
+	bin, err := build(t.Context(), t.TempDir(), "0.1.0")
 	wg.Wait()
 	if err = cmp.Or(err, nextErr); err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package tui
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"image/color"
 	"log/slog"
 	"slices"
@@ -307,8 +308,8 @@ type model struct {
 	// recent has the files that the user picks in the search in this
 	// session, the last pick first.
 	recent     []string
-	grepCancel context.CancelFunc // stops the code search that runs
-	grepGen    int                // the last code search
+	grepCancel context.CancelCauseFunc // stops the code search that runs
+	grepGen    int                     // the last code search
 	find       findState
 	findLines  splitLines // the lines that find searches
 	md         mdRenderer // the last markdown renderer
@@ -512,7 +513,7 @@ type reloads struct {
 func (m *model) loadNow() {
 	m.loads.gen++
 	m.loads.want, m.loads.force = false, false
-	m.onChanges(m.reloadInput(true).run())
+	m.onChanges(m.reloadInput(true).run(m.ctx))
 }
 
 // reloadTimeout is the longest time of a reload. A git that hangs then
@@ -529,16 +530,16 @@ func (m *model) startReload() tea.Cmd {
 	}
 	l.gen++
 	l.running, l.want, l.stale = true, false, false
-	in := m.reloadInput(l.force)
+	in, ctx := m.reloadInput(l.force), m.ctx
 	l.force = false
-	return func() tea.Msg { return in.run() }
+	return func() tea.Msg { return in.run(ctx) }
 }
 
 // reloadInput returns what a reload needs, copied from the model, so that
 // the reload can run in a command.
 func (m *model) reloadInput(force bool) reloadInput {
 	in := reloadInput{
-		ctx: m.ctx, repo: m.repo, gen: m.loads.gen, scope: m.scope,
+		repo: m.repo, gen: m.loads.gen, scope: m.scope,
 		base: m.base, from: m.from, to: m.to, force: force, shown: m.shownTrees,
 		prev: make(map[string]changedFile, len(m.changeFiles)),
 	}
@@ -560,7 +561,6 @@ func (m *model) reloadInput(force bool) reloadInput {
 // reloadInput is the input of a reload. note tells why there is nothing
 // to compare, or is "".
 type reloadInput struct {
-	ctx                  context.Context
 	repo                 *vcs.Repo
 	gen                  int
 	scope                Scope
@@ -583,10 +583,13 @@ type changesMsg struct {
 
 // run reads the changes of in. It counts the lines of each file that is
 // not in in.prev with the same content.
-func (in reloadInput) run() changesMsg {
+func (in reloadInput) run(ctx context.Context) changesMsg {
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(in.ctx, reloadTimeout)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
+		fmt.Errorf("reload: %v timeout: %w", reloadTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("reload: done: %w", context.Canceled))
 	msg := changesMsg{gen: in.gen, note: in.note}
 	if msg.note == "" {
 		from, to, err := in.trees(ctx)

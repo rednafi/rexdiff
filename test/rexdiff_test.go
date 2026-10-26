@@ -28,9 +28,10 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// buildDev builds rexdiff once.
+// buildDev builds rexdiff once. The build serves all the tests, as
+// TestMain does, so it has the context of no test.
 var buildDev = sync.OnceValues(func() (string, error) {
-	return build(filepath.Join(buildDir, "dev"), "")
+	return build(context.Background(), filepath.Join(buildDir, "dev"), "")
 })
 
 // binary returns the path of a rexdiff that the package builds once.
@@ -44,14 +45,15 @@ func binary(t *testing.T) string {
 }
 
 // build builds rexdiff with the version into dir, and returns its path.
-// A run with the race detector builds a rexdiff with it.
-func build(dir, version string) (string, error) {
+// A run with the race detector builds a rexdiff with it. The build stops
+// when ctx is done.
+func build(ctx context.Context, dir, version string) (string, error) {
 	bin := filepath.Join(dir, "rexdiff")
 	args := []string{"build", "-o", bin, "-ldflags", "-X main.version=" + version}
 	if raceOn {
 		args = append(args, "-race")
 	}
-	cmd := exec.CommandContext(context.Background(), "go", append(args, "../cmd/rexdiff")...)
+	cmd := exec.CommandContext(ctx, "go", append(args, "../cmd/rexdiff")...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %w\n%s", err, out)
 	}

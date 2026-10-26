@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/rednafi/rexdiff/rex"
 )
@@ -298,6 +299,10 @@ func install(ctx context.Context, env []string, bin string, args []string, stdou
 	return nil
 }
 
+// upgradeReloadTimeout is the longest time of the reload of the Rex
+// config after an upgrade.
+const upgradeReloadTimeout = 10 * time.Second
+
 // upgrade replaces the code part of rexdiff.lua with the code for bin, if
 // they differ, and keeps the settings. It is not the update of rexdiff
 // itself (see the update package). It upgrades only the Lua code of the
@@ -320,6 +325,13 @@ func upgrade(ctx context.Context, env []string, bin string) string {
 	if err := os.WriteFile(lua, []byte(code), 0o644); err != nil {
 		return "rexdiff.lua upgrade failed: " + err.Error()
 	}
+	// The upgrade runs before the first frame, and the user does not see
+	// it. Thus the reload has a deadline.
+	ctx, cancel := context.WithCancelCause(ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, upgradeReloadTimeout,
+		fmt.Errorf("rex config reload: %v timeout: %w", upgradeReloadTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("rex config reload: done: %w", context.Canceled))
 	if err := rex.ReloadConfig(ctx, env); err != nil {
 		return "upgraded rexdiff.lua; reload Rex's config yourself: rex config reload"
 	}
@@ -404,6 +416,8 @@ func removeRequire(path string) error {
 
 // reload tells Rex to read its configuration file again. rex runs with
 // the environment env. If Rex fails, reload tells the user how to reload.
+// The reload has no deadline, because the user sees it in a terminal and
+// can press Ctrl-C.
 func reload(ctx context.Context, env []string, stdout io.Writer) {
 	if err := rex.ReloadConfig(ctx, env); err != nil {
 		fmt.Fprintf(stdout, "reload Rex's config yourself: rex config reload (%v)\n", err)

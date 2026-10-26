@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -85,7 +86,8 @@ func TestRealRex(t *testing.T) {
 	r.run("new", r.session, "--cwd", repo, "--", "sh")
 	t.Cleanup(func() {
 		// t.Context is done in a cleanup, so drop its cancel.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+		ctx, cancel := context.WithTimeoutCause(context.WithoutCancel(t.Context()), 10*time.Second,
+			fmt.Errorf("rex kill: 10s timeout: %w", context.DeadlineExceeded))
 		defer cancel()
 		kill := exec.CommandContext(ctx, bin, "--autostart=false", "kill", r.session)
 		_ = kill.Run()

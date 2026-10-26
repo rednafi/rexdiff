@@ -194,10 +194,10 @@ func TestInstallBrew(t *testing.T) {
 			}
 			pathEnv := "PATH=" + filepath.Join(prefix, "path") + ":/usr/bin:/bin"
 
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
 			if tt.cancel {
-				cancel()
+				cancel(fmt.Errorf("test stops the install: %w", context.Canceled))
 			}
 			u := detect(t, "http://127.0.0.1:1/latest", link, "0.1.0", pathEnv)
 			err := u.Install(ctx, update.Release{Tag: "v0.2.0"})

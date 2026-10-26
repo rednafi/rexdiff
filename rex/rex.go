@@ -97,7 +97,7 @@ func (c *Client) runRex(ctx context.Context, args ...string) ([]byte, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, proc.Error("rex", err, stderr.Bytes())
+		return nil, proc.Error(ctx, "rex", err, stderr.Bytes())
 	}
 	return out, nil
 }
@@ -225,7 +225,8 @@ type Agent struct {
 const terminalCreator = "com.superlogical.terminal"
 
 // Agents returns the agents in the session, in the order of the layout.
-// It does not return the block of the client.
+// It does not return the block of the client. If ctx ends, Agents returns
+// the cause of ctx.
 func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 	// Get the windows at the same time as the blocks.
 	var windows []window
@@ -267,6 +268,11 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 		})
 	}
 	wg.Wait()
+	if ctx.Err() != nil {
+		// A status call that fails at the deadline does not tell that the
+		// block is not an agent.
+		return nil, context.Cause(ctx)
+	}
 
 	for i, b := range reply.Blocks {
 		agents[i].Window = windowLabel(windows, b.WindowID)
@@ -414,7 +420,7 @@ const (
 // runs "rex events" to get the events. If rex fails, Watch calls fn with
 // an event that has the error. If rex stops, Watch starts it again after
 // 2 seconds. Then it calls fn with a Reconnect event before the next
-// events. Watch returns the error of ctx when ctx is done.
+// events. Watch returns the cause of ctx when ctx is done.
 func (c *Client) Watch(ctx context.Context, fn func(Event)) error {
 	for again := false; ; again = true {
 		if err := c.watchOnce(ctx, again, fn); err != nil && ctx.Err() == nil {
@@ -422,7 +428,7 @@ func (c *Client) Watch(ctx context.Context, fn func(Event)) error {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		case <-time.After(reconnectDelay):
 		}
 	}
@@ -440,7 +446,7 @@ func (c *Client) watchOnce(ctx context.Context, again bool, fn func(Event)) erro
 		return fmt.Errorf("rex events: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("rex events: %w", proc.Error("rex", err, nil))
+		return fmt.Errorf("rex events: %w", proc.Error(ctx, "rex", err, nil))
 	}
 	if again {
 		fn(Event{Reconnect: true})
@@ -460,7 +466,7 @@ func (c *Client) watchOnce(ctx context.Context, again bool, fn func(Event)) erro
 		return fmt.Errorf("rex events: %w", err)
 	}
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("rex events: %w", proc.Error("rex", err, stderr.Bytes()))
+		return fmt.Errorf("rex events: %w", proc.Error(ctx, "rex", err, stderr.Bytes()))
 	}
 	return nil
 }

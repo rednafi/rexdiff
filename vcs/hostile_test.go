@@ -385,7 +385,8 @@ printf 'a.go\0001\000hit\nb.go\00012'
 exec /bin/sleep 10
 `)
 	grep := func(timeout, budget time.Duration) ([]vcs.Match, bool, error) {
-		ctx, cancel := context.WithTimeout(t.Context(), timeout)
+		ctx, cancel := context.WithTimeoutCause(t.Context(), timeout,
+			fmt.Errorf("test grep: %v timeout: %w", timeout, context.DeadlineExceeded))
 		defer cancel()
 		return r.Grep(ctx, "hit", 10, budget)
 	}
@@ -405,5 +406,51 @@ exec /bin/sleep 10
 	}
 	if ms, more, err := grep(200*time.Millisecond, time.Millisecond); err != nil || !more || len(ms) != 0 {
 		t.Errorf("Grep past the deadline = %+v, %v, %v, want none, more, no error", ms, more, err)
+	}
+}
+
+// TestSnapshotWaitStops checks that a Snapshot that waits for another
+// Snapshot returns the cause of its context when the context ends.
+func TestSnapshotWaitStops(t *testing.T) {
+	t.Parallel()
+	env, link := gitLink(t)
+	r, _ := newRepoEnv(t, env)
+	// The fake git takes the place of git after Open. It writes to the FIFO
+	// started, so the test knows that the first Snapshot holds the lock.
+	// Then it waits on the FIFO block until it stops.
+	removeGit(t, link)
+	bin := filepath.Dir(link)
+	for _, name := range []string{"started", "block"} {
+		if err := syscall.Mkfifo(filepath.Join(bin, name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testgit.Script(t, bin, "git", `d="${0%/*}"
+echo started > "$d/started"
+read -r _ < "$d/block"
+`)
+	errFirst := errors.New("the test stops the first snapshot")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Snapshot(ctx)
+		done <- err
+	}()
+	if _, err := os.ReadFile(filepath.Join(bin, "started")); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx2, cancel2 := context.WithTimeoutCause(t.Context(), 50*time.Millisecond,
+		fmt.Errorf("second snapshot: 50ms timeout: %w", context.DeadlineExceeded))
+	defer cancel2()
+	_, err := r.Snapshot(ctx2)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Snapshot that waits = %v, want the cause of its context", err)
+	}
+
+	cancel(errFirst)
+	if err := <-done; !errors.Is(err, errFirst) {
+		t.Errorf("Snapshot that holds the lock = %v, want the cause %v", err, errFirst)
 	}
 }
