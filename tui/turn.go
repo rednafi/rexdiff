@@ -131,10 +131,10 @@ func (m *model) observeTurn() tea.Cmd {
 	}
 	started, ended := m.tracker.Observe(states...)
 	if started {
-		m.startTurn(ms)
+		return m.startTurn(ms)
 	}
 	if ended {
-		m.endTurn()
+		return m.endTurn()
 	}
 	return nil
 }
@@ -155,50 +155,74 @@ func (m *model) turnWaitMessage() string {
 // already write, as in herdr-reviewr.
 const raceBefore = time.Second
 
-// startTurn takes a snapshot of the working tree at the start of a turn
-// of the members ms. The turn stays pending until it changes a file. As in
-// herdr-reviewr, a write from raceBefore the start to the snapshot can be
-// in the snapshot. Then the turn is not known, and the scope says so.
-func (m *model) startTurn(ms []member) {
+// startTurn returns a command that takes a snapshot of the working tree
+// at the start of a turn of the members ms. The snapshot comes as a
+// turnStartMsg.
+func (m *model) startTurn(ms []member) tea.Cmd {
 	m.pending = nil
-	ctx, cancel := context.WithCancelCause(m.ctx)
-	ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
-		fmt.Errorf("turn snapshot: %v timeout: %w", reloadTimeout, context.DeadlineExceeded))
-	defer cancelTimeout()
-	defer cancel(fmt.Errorf("turn snapshot: done: %w", context.Canceled))
-	tree, err := m.repo.Snapshot(ctx)
-	if err != nil {
-		m.log.Warn("turn snapshot failed", "err", err)
-		return
-	}
-	snapped := time.Now()
+	m.turnGen++
 	i := slices.IndexFunc(ms, func(a member) bool { return a.state == rex.StateWorking })
+	gen, a, repo, ctx := m.turnGen, ms[i], m.repo, m.ctx
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
+			fmt.Errorf("turn snapshot: %v timeout: %w", reloadTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("turn snapshot: done: %w", context.Canceled))
+		tree, err := repo.Snapshot(ctx)
+		return turnStartMsg{gen: gen, agent: a, tree: tree, snapped: time.Now(), err: err}
+	}
+}
+
+// turnStartMsg is the snapshot at the start of a turn.
+type turnStartMsg struct {
+	gen     int    // the value of model.turnGen at the start
+	agent   member // the first agent of the turn that works
+	tree    string
+	snapped time.Time // the end of the snapshot
+	err     error
+}
+
+// onTurnStart makes the turn of msg pending. The turn stays pending until
+// it changes a file. As in herdr-reviewr, a write from raceBefore the start
+// to the snapshot can be in the snapshot. Then the turn is not known, and
+// the scope says so. A start or an end after the start of msg drops msg.
+func (m *model) onTurnStart(msg turnStartMsg) tea.Cmd {
+	if msg.gen != m.turnGen {
+		return nil
+	}
+	if msg.err != nil {
+		m.log.Warn("turn snapshot failed", "err", msg.err)
+		return nil
+	}
+	a := msg.agent
 	if m.watch != nil {
 		w := m.watch.LastWrite()
-		if !w.Before(ms[i].since.Add(-raceBefore)) && !w.After(snapped) {
-			m.log.Debug("turn raced", "block", ms[i].block, "write", w)
-			m.dropTurn()
-			return
+		if !w.Before(a.since.Add(-raceBefore)) && !w.After(msg.snapped) {
+			m.log.Debug("turn raced", "block", a.block, "write", w)
+			return m.dropTurn()
 		}
 	}
-	m.log.Debug("turn start", "block", ms[i].block, "tree", tree)
+	m.log.Debug("turn start", "block", a.block, "tree", msg.tree)
 	m.pending = &turnState{
-		app:     ms[i].app,
-		tree:    tree,
+		app:     a.app,
+		tree:    msg.tree,
 		running: true,
 		at:      time.Now(),
 	}
+	return nil
 }
 
 // checkTurnLater returns a command that takes a snapshot for the pending
 // turn. onTurnCheck makes the turn the last turn if the working tree
-// differs from its start.
-func (m *model) checkTurnLater() tea.Cmd {
-	if m.turnChecking {
-		return nil // one check at a time
+// differs from its start. A check at the end of the turn always runs.
+// Else one check runs at a time.
+func (m *model) checkTurnLater(end bool) tea.Cmd {
+	if m.turnChecking && !end {
+		return nil
 	}
-	m.turnChecking = true
-	p, repo, ctx := m.pending, m.repo, m.ctx
+	m.turnChecking = m.turnChecking || !end
+	p, gen, repo, ctx := m.pending, m.turnGen, m.repo, m.ctx
 	return func() tea.Msg {
 		ctx, cancel := context.WithCancelCause(ctx)
 		ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
@@ -206,76 +230,85 @@ func (m *model) checkTurnLater() tea.Cmd {
 		defer cancelTimeout()
 		defer cancel(fmt.Errorf("turn check: done: %w", context.Canceled))
 		tree, err := repo.Snapshot(ctx)
-		return turnCheckMsg{turn: p, tree: tree, err: err}
+		return turnCheckMsg{turn: p, gen: gen, end: end, tree: tree, err: err}
 	}
 }
 
 // turnCheckMsg is a snapshot for the pending turn.
 type turnCheckMsg struct {
 	turn *turnState
+	gen  int  // the value of model.turnGen at the check
+	end  bool // the check is at the end of the turn
 	tree string
 	err  error
 }
 
-// onTurnCheck makes the turn of msg the last turn if it is still pending
-// and the working tree differs from its start.
-func (m *model) onTurnCheck(msg turnCheckMsg) {
-	m.turnChecking = false
+// onTurnCheck makes the turn of msg the last turn if the working tree
+// differs from its start. Before the end, the turn must still be pending.
+// After the end, no new turn must start. Else the last turn stays.
+func (m *model) onTurnCheck(msg turnCheckMsg) tea.Cmd {
+	if !msg.end {
+		m.turnChecking = false
+	}
 	switch {
 	case msg.err != nil:
 		m.log.Warn("turn change check failed", "err", msg.err)
-	case msg.turn == m.pending && msg.tree != msg.turn.tree:
-		m.promote()
+	case msg.tree == msg.turn.tree:
+	case msg.end && msg.gen == m.turnGen, !msg.end && msg.turn == m.pending:
+		return m.promote(msg.turn)
 	}
-}
-
-// checkTurn makes the pending turn the last turn if the working tree
-// differs from its start. Else the last turn stays. The end of a turn
-// checks at once, before the turn stops being pending.
-func (m *model) checkTurn() {
-	ctx, cancel := context.WithCancelCause(m.ctx)
-	ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
-		fmt.Errorf("turn check: %v timeout: %w", reloadTimeout, context.DeadlineExceeded))
-	defer cancelTimeout()
-	defer cancel(fmt.Errorf("turn check: done: %w", context.Canceled))
-	tree, err := m.repo.Snapshot(ctx)
-	if err != nil {
-		m.log.Warn("turn change check failed", "err", err)
-		return
-	}
-	if tree != m.pending.tree {
-		m.promote()
-	}
+	return nil
 }
 
 // dropTurn forgets the last turn, because a new turn starts that is not
-// known.
-func (m *model) dropTurn() {
+// known. It returns a command that deletes the saved tree.
+func (m *model) dropTurn() tea.Cmd {
 	m.turn, m.raced = nil, true
-	if err := m.repo.SaveTurn(m.ctx, ""); err != nil {
-		m.log.Warn("turn baseline ref delete failed", "err", err)
+	if m.scope == ScopeLastTurn {
+		m.reload()
+	}
+	return m.saveTurn("")
+}
+
+// promote makes the turn t the last turn. It returns a command that saves
+// its tree.
+func (m *model) promote(t *turnState) tea.Cmd {
+	m.turn, m.raced = t, false
+	if m.pending == t {
+		m.pending = nil
 	}
 	if m.scope == ScopeLastTurn {
 		m.reload()
 	}
+	return m.saveTurn(t.tree)
 }
 
-// promote makes the pending turn the last turn, and saves its tree.
-func (m *model) promote() {
-	m.turn, m.pending, m.raced = m.pending, nil, false
-	if err := m.repo.SaveTurn(m.ctx, m.turn.tree); err != nil {
-		m.log.Warn("turn baseline ref write failed", "err", err)
-	}
-	if m.scope == ScopeLastTurn {
-		m.reload()
+// saveTurn returns a command that saves tree as the tree of the last turn.
+// An empty tree deletes the saved tree.
+func (m *model) saveTurn(tree string) tea.Cmd {
+	repo, ctx, log := m.repo, m.ctx, m.log
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, reloadTimeout,
+			fmt.Errorf("turn save: %v timeout: %w", reloadTimeout, context.DeadlineExceeded))
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("turn save: done: %w", context.Canceled))
+		if err := repo.SaveTurn(ctx, tree); err != nil {
+			log.Warn("turn baseline ref write failed", "err", err)
+		}
+		return nil
 	}
 }
 
-// endTurn ends the turn. A pending turn that changes the working tree
-// becomes the last turn. After the end, a change is not from the turn.
-func (m *model) endTurn() {
+// endTurn ends the turn. It returns a command that checks the pending turn.
+// The turn becomes the last turn if it changes the working tree. After the
+// end, a change is not from the turn.
+func (m *model) endTurn() tea.Cmd {
+	m.turnGen++ // a start that is not pending yet stays out
+	var cmd tea.Cmd
 	if m.pending != nil {
-		m.checkTurn()
+		m.pending.running = false
+		cmd = m.checkTurnLater(true)
 		m.pending = nil
 	}
 	if m.turn != nil {
@@ -284,4 +317,5 @@ func (m *model) endTurn() {
 	if m.scope == ScopeLastTurn {
 		m.reload()
 	}
+	return cmd
 }

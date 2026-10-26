@@ -233,6 +233,9 @@ type model struct {
 	loads       reloads
 	// turnChecking is true while a check of the pending turn runs.
 	turnChecking bool
+	// turnGen counts the starts and the ends of the turns. A snapshot
+	// from before the last start or end is stale.
+	turnGen int
 
 	tab   tab
 	scope Scope
@@ -785,8 +788,10 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case changesMsg:
 		m.onChanges(msg)
+	case turnStartMsg:
+		cmd = m.onTurnStart(msg)
 	case turnCheckMsg:
-		m.onTurnCheck(msg)
+		cmd = m.onTurnCheck(msg)
 	case tea.WindowSizeMsg:
 		m.click = clickChain{}
 		m.w, m.h, m.sized = msg.Width, msg.Height, true
@@ -999,7 +1004,7 @@ func (m *model) onTick() tea.Cmd {
 	ch := m.watchChanges()
 	var cmds []tea.Cmd
 	if ch.Files && m.pending != nil {
-		cmds = append(cmds, m.checkTurnLater())
+		cmds = append(cmds, m.checkTurnLater(false))
 	}
 	m.reloadOwed = m.reloadOwed || ch.Files || ch.Refs
 	m.filesOwed = m.filesOwed || ch.Files
