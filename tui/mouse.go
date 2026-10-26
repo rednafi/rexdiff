@@ -57,6 +57,10 @@ func (m *model) onClick(mouse tea.Mouse) tea.Cmd {
 	p := m.cur()
 	m.focusList = false
 	p.cur, p.anchor = p.head(rowAt[y]), -1
+	if m.onFold() {
+		m.expandFold(p.cur)
+		return nil
+	}
 	side, onNumber := p.side(mouse.X - m.mainX() - gutter)
 	m.drag = dragState{
 		active: true,

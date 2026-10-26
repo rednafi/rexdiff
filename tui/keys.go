@@ -226,6 +226,7 @@ type helpKeys struct {
 	split   bool
 	visual  bool
 	finding bool
+	onFold  bool // the cursor is on a fold
 }
 
 // ShortHelp returns the keys of the footer.
@@ -250,6 +251,10 @@ func (h helpKeys) ShortHelp() []key.Binding {
 		}
 	case h.tab == tabPR:
 		return []key.Binding{k.Down, k.OpenPR, k.Refresh, k.TabChanges, k.Keys, k.Quit}
+	case h.onFold:
+		return []key.Binding{
+			hint(k.Right, k.Right.Help().Key, "show the lines"), k.Comment, k.Send, k.NextHunk, k.Keys, k.Quit,
+		}
 	}
 	return []key.Binding{k.Comment, k.Send, k.NextHunk, k.NextFile, k.Split, k.Keys, k.Quit}
 }

@@ -144,6 +144,8 @@ func (m *model) moveKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.pickFile(m.listSel() + 1)
 	case key.Matches(msg, k.PrevFile):
 		m.pickFile(m.listSel() - 1)
+	case key.Matches(msg, k.Right) && m.onFold():
+		m.expandFold(p.cur)
 	case key.Matches(msg, k.Right) && !m.wrap:
 		p.xoff += scrollStep
 		m.rerender()
@@ -281,9 +283,47 @@ func (m *model) setTab(t tab) {
 
 // setScope shows the Changes tab in scope s.
 func (m *model) setScope(s Scope) {
-	m.tab, m.scope = tabChanges, s
+	m.tab, m.scope, m.folds = tabChanges, s, nil
 	m.reload()
 	m.changes.cur, m.changes.top = 0, 0
+}
+
+// onFold tells if the cursor is on a fold of the Changes tab.
+func (m *model) onFold() bool {
+	p := m.cur()
+	return m.tab == tabChanges && p.cur < len(p.rows) && p.rows[p.cur].Fold.Lines > 0
+}
+
+// showFold tells if the lines of fold f of the file at path show: the user
+// expanded the fold, or a comment is on one of its lines.
+func (m *model) showFold(path string, f diff.Fold) bool {
+	if m.folds[path][f.New] {
+		return true
+	}
+	for _, c := range m.comments.All() {
+		lo := f.New
+		if c.Side == diff.SideOld {
+			lo = f.Old
+		}
+		if c.Path == path && c.Start < lo+f.Lines && c.End >= lo {
+			return true
+		}
+	}
+	return false
+}
+
+// expandFold shows the lines of the fold at row i of the Changes tab. A
+// cursor on the fold moves to the first of them.
+func (m *model) expandFold(i int) {
+	p := &m.changes
+	if m.folds == nil {
+		m.folds = map[string]map[int]bool{}
+	}
+	if m.folds[p.path] == nil {
+		m.folds[p.path] = map[int]bool{}
+	}
+	m.folds[p.path][p.rows[i].Fold.New] = true
+	m.renderChanges()
 }
 
 // listSel returns the index of the selected file in the file list.
@@ -466,6 +506,13 @@ func (m *model) gotoLine(s string) {
 	if err != nil {
 		m.flash("not a line number: " + s)
 		return
+	}
+	// A line in a fold shows after the fold expands.
+	for i, r := range p.rows {
+		if f := r.Fold; p == &m.changes && n >= f.New && n < f.New+f.Lines {
+			m.expandFold(i)
+			break
+		}
 	}
 	for i, r := range p.rows {
 		if r.New == n || (r.New == 0 && r.Old == n) {

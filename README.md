@@ -44,6 +44,9 @@ them, run `rexdiff uninstall`.
 - Update: when rexdiff shows a new version at the bottom, press `U`. Your
   comments stay.
 
+A long run of unchanged lines folds into one row. Three lines show beside each
+change.
+
 When the agent edits a file, the comments move with their lines. If the lines
 are gone, rexdiff marks the comment as stale.
 
@@ -51,6 +54,7 @@ are gone, rexdiff marks the comment as stale.
 | --- | --- |
 | `u` `b` `t` | uncommitted, branch, or last-turn changes |
 | `]` `[` | next or previous change |
+| `→` or click | show the unchanged lines of a fold (`⋯ 12 unmodified lines`) |
 | `f` `F` | next or previous file |
 | `c` | comment |
 | `s` | send the comments to the agent |

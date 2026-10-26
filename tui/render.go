@@ -120,7 +120,9 @@ func (m *model) renderChanges() {
 	case m.rendered && isMarkdown(f.Path) && f.Status != vcs.StatusDeleted:
 		m.setMarkdown(p, f.New)
 	default:
-		p.setDiff(diff.Render(f.Path, f.Old, f.New, m.diffOptions(p.xoff)))
+		o := m.diffOptions(p.xoff)
+		o.Show = func(fd diff.Fold) bool { return m.showFold(f.Path, fd) }
+		p.setDiff(diff.Render(f.Path, f.Old, f.New, o))
 	}
 }
 

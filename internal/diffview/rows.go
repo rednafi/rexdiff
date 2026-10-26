@@ -16,10 +16,12 @@ const (
 // Row tells which source lines one rendered line shows. Before and After are
 // line numbers from 1, or 0 if the row has no line on that side. Continued
 // is true for the second and the next screen lines of a wrapped line.
+// For a hunk header, Fold is the run of lines that hides above it.
 type Row struct {
 	Kind          RowKind
 	Before, After int
 	Continued     bool
+	Fold          Fold
 }
 
 // rows returns one row for each line of the output of text. Call it after
@@ -56,8 +58,8 @@ func (v *View) lineRows() []Row {
 // unifiedRows returns the rows of the unified layout.
 func (v *View) unifiedRows() []Row {
 	var rows []Row
-	for _, h := range v.unified.Hunks {
-		rows = append(rows, Row{Kind: RowHunk})
+	for i, h := range v.unified.Hunks {
+		rows = append(rows, v.headerRow(i))
 		b, a := h.FromLine, h.ToLine
 		for _, l := range h.Lines {
 			switch l.Kind {
@@ -80,8 +82,8 @@ func (v *View) unifiedRows() []Row {
 // splitRows returns the rows of the split layout.
 func (v *View) splitRows() []Row {
 	var rows []Row
-	for _, h := range v.splitHunks {
-		rows = append(rows, Row{Kind: RowHunk})
+	for i, h := range v.splitHunks {
+		rows = append(rows, v.headerRow(i))
 		b, a := h.fromLine, h.toLine
 		for _, l := range h.lines {
 			r := Row{Kind: splitKind(l)}
@@ -97,6 +99,11 @@ func (v *View) splitRows() []Row {
 		}
 	}
 	return rows
+}
+
+// headerRow returns the row of the header of hunk i.
+func (v *View) headerRow(i int) Row {
+	return Row{Kind: RowHunk, Fold: v.folds[i]}
 }
 
 // splitKind returns the kind of the row of l in the split layout.

@@ -38,10 +38,21 @@ const (
 // line numbers that start at 1. A value of 0 means that the row has no line
 // on that side. Continued is true if the line continues the source lines of
 // the line above, because [Options.Wrap] wrapped them.
+//
+// A long run of equal lines folds into the hunk header below it. For a
+// hunk header, Fold is that run.
 type Row struct {
 	Kind      Kind
 	Old, New  int
 	Continued bool
+	Fold      Fold
+}
+
+// Fold is a run of equal lines that hides. Old and New are the line
+// numbers of its first line. Lines is the number of lines, 0 if no line
+// hides.
+type Fold struct {
+	Old, New, Lines int
 }
 
 // Line returns the line number of the row on side s.
@@ -64,6 +75,9 @@ type Options struct {
 	// Wrap continues a line that is wider than Width on the next lines,
 	// instead of cutting it. Then Offset does not apply.
 	Wrap bool
+	// Show tells if the lines of a fold show. If Show is nil, no fold
+	// shows. RenderFile does not use it.
+	Show func(Fold) bool
 	// Signs marks a changed line with + or -. Without Signs, a bar in the
 	// colour of the line marks it.
 	Signs bool
@@ -96,6 +110,9 @@ func Render(path, old, new string, o Options) *Diff {
 		Width(o.Width).
 		TabWidth(tabWidth).
 		XOffset(o.Offset)
+	if o.Show != nil {
+		dv = dv.Show(func(f diffview.Fold) bool { return o.Show(Fold{f.Before, f.After, f.Lines}) })
+	}
 	if o.Split {
 		dv = dv.Split()
 	}
@@ -115,6 +132,7 @@ func Render(path, old, new string, o Options) *Diff {
 			Old:       r.Before,
 			New:       r.After,
 			Continued: r.Continued,
+			Fold:      Fold{r.Fold.Before, r.Fold.After, r.Fold.Lines},
 		})
 	}
 	if len(d.Rows) > 0 {

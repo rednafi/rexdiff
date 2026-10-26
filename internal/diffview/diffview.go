@@ -60,6 +60,8 @@ type View struct {
 	isComputed bool
 	err        error
 	unified    udiff.UnifiedDiff
+	folds      []Fold          // folds[i] hides above unified.Hunks[i]
+	show       func(Fold) bool // the folds that show, see [View.Show]
 
 	splitHunks []splitHunk
 
@@ -201,13 +203,19 @@ func (v *View) computeDiff() error {
 	}
 	v.isComputed = true
 	edits := udiff.Lines(v.before.content, v.after.content)
+	// With a context as long as the file, the diff has one hunk with all
+	// the lines. foldHunk then hides the long runs of equal lines.
+	context := strings.Count(v.before.content, "\n") + 1
 	v.unified, v.err = udiff.ToUnifiedDiff(
 		v.before.path,
 		v.after.path,
 		v.before.content,
 		edits,
-		udiff.DefaultContextLines,
+		context,
 	)
+	if v.err == nil && len(v.unified.Hunks) == 1 {
+		v.unified.Hunks, v.folds = foldHunk(v.unified.Hunks[0], v.show)
+	}
 	return v.err
 }
 
@@ -269,10 +277,10 @@ func codeWidthOf(l *udiff.Line) int {
 // header in the unified layout.
 func (v *View) detectUnifiedCodeWidth() {
 	v.codeWidth = 0
-	for _, h := range v.unified.Hunks {
-		headerWidth := ansi.StringWidth(hunkHeader(h))
+	for i, h := range v.unified.Hunks {
+		v.codeWidth = max(v.codeWidth, ansi.StringWidth(v.header(i)))
 		for _, l := range h.Lines {
-			v.codeWidth = max(v.codeWidth, codeWidthOf(&l), headerWidth)
+			v.codeWidth = max(v.codeWidth, codeWidthOf(&l))
 		}
 	}
 }
@@ -282,13 +290,13 @@ func (v *View) detectUnifiedCodeWidth() {
 func (v *View) detectSplitCodeWidth() {
 	v.codeWidth = 0
 	for i, h := range v.splitHunks {
-		headerWidth := ansi.StringWidth(hunkHeader(v.unified.Hunks[i]))
+		v.codeWidth = max(v.codeWidth, ansi.StringWidth(v.header(i)))
 		for _, l := range h.lines {
 			if l.before != nil {
-				v.codeWidth = max(v.codeWidth, codeWidthOf(l.before), headerWidth)
+				v.codeWidth = max(v.codeWidth, codeWidthOf(l.before))
 			}
 			if l.after != nil {
-				v.codeWidth = max(v.codeWidth, codeWidthOf(l.after), headerWidth)
+				v.codeWidth = max(v.codeWidth, codeWidthOf(l.after))
 			}
 		}
 	}
@@ -319,8 +327,8 @@ func (v *View) renderUnified() string {
 		return v.lineNum(ls, before, v.beforeNumDigits) +
 			v.lineNum(ls, after, v.afterNumDigits)
 	}
-	for _, h := range v.unified.Hunks {
-		b.WriteString(v.unifiedHeader(h) + "\n")
+	for i, h := range v.unified.Hunks {
+		b.WriteString(v.unifiedHeader(i) + "\n")
 		oldN, newN := h.FromLine, h.ToLine
 		for _, l := range h.Lines {
 			ls, sym := v.kindStyle(l.Kind)
@@ -344,10 +352,10 @@ func (v *View) renderUnified() string {
 	return b.String()
 }
 
-// unifiedHeader renders the divider line of hunk h in the unified layout.
-func (v *View) unifiedHeader(h *udiff.Hunk) string {
+// unifiedHeader renders the divider line of hunk i in the unified layout.
+func (v *View) unifiedHeader(i int) string {
 	div := v.style.dividerLine
-	header := ansi.Truncate(hunkHeader(h), v.fullCodeWidth, ellipsis)
+	header := ansi.Truncate(v.header(i), v.fullCodeWidth, ellipsis)
 	return div.lineNumber.Render(pad(ellipsis, v.beforeNumDigits)) +
 		div.lineNumber.Render(pad(ellipsis, v.afterNumDigits)) +
 		div.code.Width(v.fullCodeWidth).Render(header)
@@ -359,7 +367,7 @@ func (v *View) renderSplit() string {
 	var b strings.Builder
 	afterWidth := v.codeWidth + btoi(v.extraColOnAfter)
 	for i, h := range v.splitHunks {
-		b.WriteString(v.splitHeader(v.unified.Hunks[i]) + "\n")
+		b.WriteString(v.splitHeader(i) + "\n")
 		oldN, newN := h.fromLine, h.toLine
 		for _, l := range h.lines {
 			left, leftFill := v.splitSide(l.before, oldN, v.beforeNumDigits, v.codeWidth)
@@ -382,16 +390,13 @@ func (v *View) renderSplit() string {
 	return b.String()
 }
 
-// splitHeader renders the divider line of hunk h in the split layout. The
-// header shows on the left side only.
-func (v *View) splitHeader(h *udiff.Hunk) string {
+// splitHeader renders the divider line of hunk i in the split layout. The
+// header starts on the left side and can go on across the right side.
+func (v *View) splitHeader(i int) string {
 	div := v.style.dividerLine
-	header := ansi.Truncate(hunkHeader(h), v.fullCodeWidth, ellipsis)
-	afterWidth := v.fullCodeWidth + btoi(v.extraColOnAfter)
+	width := 2*v.fullCodeWidth + btoi(v.extraColOnAfter) + v.afterNumDigits + lineNumPadding*2
 	return div.lineNumber.Render(pad(ellipsis, v.beforeNumDigits)) +
-		div.code.Width(v.fullCodeWidth).Render(header) +
-		div.lineNumber.Render(pad(ellipsis, v.afterNumDigits)) +
-		div.code.Width(afterWidth).Render(" ")
+		div.code.Width(width).Render(ansi.Truncate(v.header(i), width, ellipsis))
 }
 
 // splitSide renders line l on one side of the split layout, one string for
