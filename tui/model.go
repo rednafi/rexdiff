@@ -162,6 +162,7 @@ type dragState struct {
 	pref   diff.Side // the side of the line numbers or the code at the start
 	// The screen line and the code column of the press and of the pointer.
 	row, x, toRow, toX int
+	link               string // the URL under the press, or ""
 }
 
 // draft is the comment that the user writes. It is a new comment, or an
@@ -843,7 +844,7 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 	case tea.MouseMotionMsg:
 		m.onDrag(msg.Mouse())
 	case tea.MouseReleaseMsg:
-		cmd = m.onMouseUp() // the comment box can open below the screen
+		cmd = m.onMouseUp(msg.Mouse()) // the comment box can open below the screen
 	case tea.MouseWheelMsg:
 		m.onWheel(msg.Mouse())
 	case tea.PasteMsg:

@@ -85,9 +85,10 @@ func (m *model) clickMain(mouse tea.Mouse) tea.Cmd {
 		}
 	}
 	m.focusList = false
+	link := ""
 	if p.diff == nil { // a markdown view or the PR tab
 		if url := linkAt(p.lines[rowAt[y]], x); isWebURL(url) {
-			return m.browse(url, "link")
+			link = url
 		}
 	}
 	p.cur, p.anchor = p.head(rowAt[y]), -1
@@ -105,6 +106,7 @@ func (m *model) clickMain(mouse tea.Mouse) tea.Cmd {
 		x:      x,
 		toRow:  rowAt[y],
 		toX:    x,
+		link:   link,
 	}
 	return nil
 }
@@ -258,11 +260,16 @@ func (m *model) copyChars(text string) {
 	}
 }
 
-// onMouseUp ends a drag. A drag on the line numbers opens the comment
-// box. A drag on the code copies the text from the press to the pointer.
-func (m *model) onMouseUp() tea.Cmd {
+// onMouseUp ends a drag at mouse. As in herdr-reviewr, a release on the
+// cell of the press opens the link there. A drag on the line numbers
+// opens the comment box. A drag on the code copies the text from the
+// press to the pointer.
+func (m *model) onMouseUp(mouse tea.Mouse) tea.Cmd {
 	d := m.drag
 	m.drag.active = false
+	if d.active && d.link != "" && m.click.x == mouse.X && m.click.y == mouse.Y {
+		return m.browse(d.link, "link")
+	}
 	p := m.cur()
 	// A reload during the drag can make the pane shorter than the start.
 	if !d.active || d.start >= len(p.rows) {
@@ -293,7 +300,8 @@ func (m *model) dragText(d dragState) string {
 	if a > b || a == b && ca > cb {
 		a, b, ca, cb = b, a, cb, ca
 	}
-	if a == b && ca == cb {
+	// A reload during the drag can make the pane shorter than the drag.
+	if a == b && ca == cb || b >= len(p.lines) {
 		return ""
 	}
 	var lines []string
@@ -418,7 +426,7 @@ func (m *model) clickHeader(a headerAction) tea.Cmd {
 			m.setScope(s)
 		}
 	case a == headerBase:
-		m.openBasePicker()
+		return m.openBasePicker()
 	case a == headerCommits:
 		m.openCommitPicker()
 	case a == headerAgent:
