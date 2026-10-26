@@ -292,8 +292,8 @@ func TestPullRequestCheckLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := len(pr.Checks); n != 100 || pr.Checks[99].Name != "c99" {
-		t.Errorf("PullRequest has %d checks, the last %+v, want 100, the last c99",
-			n, pr.Checks[n-1])
+		t.Errorf("PullRequest has %d checks %+v, want 100, the last c99",
+			n, pr.Checks[max(n-3, 0):])
 	}
 }
 

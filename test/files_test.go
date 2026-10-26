@@ -219,7 +219,10 @@ func TestNoPR(t *testing.T) {
 
 	repo := newRepo(t)
 	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
-	tm = start(t, repo, opts{})
+	// The PATH has only git, as /usr/bin can have gh.
+	bin := t.TempDir()
+	testgit.LinkGit(t, bin)
+	tm = start(t, repo, opts{env: []string{"PATH=" + bin}})
 	tm.keys("3")
 	tm.waitFor("gh is not installed")
 }

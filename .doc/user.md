@@ -111,7 +111,8 @@ The other settings are as in
 - `layout`, `placement`, and `direction` are its `diff_view`, `toggle_placement`,
   and `toggle_direction`.
 - `file_list` is its `navigator_position`.
-- rexdiff adds `file_list_width`, `diff_signs`, and `focus_agent_after_send`.
+- rexdiff adds `key`, `file_list_width`, `diff_signs`, and `focus_agent_after_send`.
+- rexdiff adds the `focus` key action.
 - rexdiff has no `theme` and no `auto_open`.
 
 After a change, run `rex config reload`.

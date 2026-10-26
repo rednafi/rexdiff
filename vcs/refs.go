@@ -102,7 +102,8 @@ func (r *Repo) Branches(ctx context.Context) ([]string, error) {
 
 // DefaultBase returns the default branch of the repository. This is the
 // target of origin/HEAD if it exists, or the first that exists of main,
-// master, trunk, origin/main, and origin/master. If there is none, it returns "HEAD".
+// master, trunk, origin/main, and origin/master. If there is none, it
+// returns "HEAD".
 func (r *Repo) DefaultBase(ctx context.Context) string {
 	if ref, err := r.run(ctx, nil, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
 		// fetch --prune can leave the symbolic ref without a target.
