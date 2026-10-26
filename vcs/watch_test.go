@@ -102,12 +102,13 @@ func TestWatcher(t *testing.T) {
 }
 
 // TestWatcherLastWrite checks that LastWrite sees a new file after the
-// start of the watch, and that the change still shows in Changed.
+// start of the watch, but not after its limit, and that the change still
+// shows in Changed.
 func TestWatcherLastWrite(t *testing.T) {
 	t.Parallel()
 	r, dir := newRepo(t)
 	w := newWatcher(t, r)
-	if got := w.LastWrite(); !got.IsZero() {
+	if got := w.LastWrite(time.Now()); !got.IsZero() {
 		t.Errorf("LastWrite before a write = %v, want zero", got)
 	}
 	testgit.WriteFile(t, dir, "c.txt", "c\n")
@@ -120,8 +121,11 @@ func TestWatcherLastWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if w.LastWrite().IsZero() {
+	if w.LastWrite(later).IsZero() {
 		t.Error("LastWrite after a write is zero")
+	}
+	if got := w.LastWrite(later.Add(-time.Minute)); !got.IsZero() {
+		t.Errorf("LastWrite before the write = %v, want zero", got)
 	}
 	if got := changed(t, w); !got.Files {
 		t.Errorf("Changed after LastWrite: %+v, want Files", got)

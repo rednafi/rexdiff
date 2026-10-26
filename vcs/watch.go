@@ -145,15 +145,16 @@ func (w *Watcher) Changed(ctx context.Context) (Change, error) {
 	return ch, nil
 }
 
-// LastWrite returns the newest modification time of the listed files and
-// of their directories, as they are now. A new or a removed file changes
-// the time of its directory. LastWrite returns the zero time if no such
-// time is after the start of the watch. It does not change what the next
-// call to Changed reports.
-func (w *Watcher) LastWrite() time.Time {
+// LastWrite returns the newest modification time, not after until, of the
+// listed files and of their directories, as they are now. A new or a
+// removed file changes the time of its directory. LastWrite returns the
+// zero time if no such time is after the start of the watch. It does not
+// change what the next call to Changed reports.
+func (w *Watcher) LastWrite(until time.Time) time.Time {
 	var last time.Time
 	for _, p := range slices.Concat(w.files, w.dirs) {
-		if fi, err := os.Lstat(p); err == nil && fi.ModTime().After(last) {
+		fi, err := os.Lstat(p)
+		if err == nil && fi.ModTime().After(last) && !fi.ModTime().After(until) {
 			last = fi.ModTime()
 		}
 	}

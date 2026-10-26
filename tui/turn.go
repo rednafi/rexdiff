@@ -197,7 +197,8 @@ func (m *model) onTurnStart(msg turnStartMsg) tea.Cmd {
 	}
 	a := msg.agent
 	if m.watch != nil {
-		w := m.watch.LastWrite()
+		// A write after the snapshot does not hide a write before it.
+		w := m.watch.LastWrite(msg.snapped)
 		if !w.Before(a.since.Add(-raceBefore)) && !w.After(msg.snapped) {
 			m.log.Debug("turn raced", "block", a.block, "write", w)
 			return m.dropTurn()
