@@ -275,6 +275,28 @@ func TestPullRequestHostile(t *testing.T) {
 	}
 }
 
+// TestPullRequestCheckLimit checks that a pull request has at most 100
+// checks, the first that gh gives, as in herdr-reviewr.
+func TestPullRequestCheckLimit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	checks := make([]string, 101)
+	for i := range checks {
+		checks[i] = fmt.Sprintf(`{"name": "c%d", "conclusion": "SUCCESS"}`, i)
+	}
+	fakeTool(t, dir, "gh", map[string]string{ghArgs: `{"number": 7, "title": "T",
+		"statusCheckRollup": [` + strings.Join(checks, ",") + `]}`})
+	r, _ := repoAt(t, testgit.ToolEnv(t, dir), "https://github.com/o/r")
+	pr, err := r.PullRequest(t.Context(), vcs.Hosts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(pr.Checks); n != 100 || pr.Checks[99].Name != "c99" {
+		t.Errorf("PullRequest has %d checks, the last %+v, want 100, the last c99",
+			n, pr.Checks[n-1])
+	}
+}
+
 // TestNoPullRequest checks that a gh or a glab that finds no pull request
 // gives ErrNoPullRequest. Both exit with 1 and say so.
 func TestNoPullRequest(t *testing.T) {

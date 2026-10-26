@@ -20,8 +20,12 @@ var (
 )
 
 // maxComments is the number of the most recent comments that
-// [Repo.PullRequest] gets.
-const maxComments = 100
+// [Repo.PullRequest] gets. maxChecks is the number of the checks that it
+// gets. The two limits are the same as in herdr-reviewr.
+const (
+	maxComments = 100
+	maxChecks   = 100
+)
 
 // Hosts are the hosts of self-hosted forges. An empty value means only the
 // public host.
@@ -245,7 +249,8 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PullRequest, error) {
 		Body:   v.Body,
 	}
 	// A check run has a conclusion when it is done. A status has a state.
-	for _, c := range v.StatusCheckRollup {
+	// As in herdr-reviewr, the checks are the first that gh gives.
+	for _, c := range v.StatusCheckRollup[:min(len(v.StatusCheckRollup), maxChecks)] {
 		pr.Checks = append(pr.Checks, Check{
 			Name:   cmp.Or(c.Name, c.Context),
 			Result: gitHubResult(cmp.Or(c.Conclusion, c.State)),
