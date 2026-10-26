@@ -158,13 +158,13 @@ func (m *model) keepAgents(agents []rex.Agent) {
 	}
 }
 
-// commentIDs returns the IDs of the comments.
-func (m *model) commentIDs() []int {
-	var ids []int
+// commentTexts returns the texts of the comments, by ID.
+func (m *model) commentTexts() map[int]string {
+	texts := map[int]string{}
 	for _, c := range m.comments.All() {
-		ids = append(ids, c.ID)
+		texts[c.ID] = c.Text
 	}
-	return ids
+	return texts
 }
 
 // reviewText returns the text of the review that a send pastes.
@@ -178,7 +178,7 @@ func (m *model) reviewText() string {
 func (m *model) deliver(a rex.Agent) tea.Cmd {
 	m.sends++
 	c, ctx := m.rex, m.ctx
-	text, ids := m.reviewText(), m.commentIDs()
+	text, sent := m.reviewText(), m.commentTexts()
 	focus := m.cfg.focusesAgent()
 	return func() tea.Msg {
 		ctx, cancel := context.WithCancelCause(ctx)
@@ -204,22 +204,21 @@ func (m *model) deliver(a rex.Agent) tea.Cmd {
 			// Ignore the error, because the paste works.
 			_ = c.Focus(ctx, a.Block)
 		}
-		return sentMsg{agent: a, ids: ids}
+		return sentMsg{agent: a, sent: sent}
 	}
 }
 
 // onSent removes the sent comments if the send worked. The comments that
-// the user adds or changes during the send stay. A saved edit gives a
-// comment a new ID, and msg does not have that ID.
+// the user adds or changes during the send stay.
 func (m *model) onSent(msg sentMsg) {
 	m.sends--
 	if msg.err != nil {
 		m.flashCopy(msg.err.Error())
 		return
 	}
-	m.clearComments(msg.ids)
+	m.clearComments(msg.sent)
 	m.lastSent = msg.agent.Block
-	sent := plural(len(msg.ids), "comment")
+	sent := plural(len(msg.sent), "comment")
 	m.flash(fmt.Sprintf("sent %s to %s", sent, msg.agent.Name))
 }
 
@@ -251,20 +250,20 @@ func (m *model) copyComments() {
 		m.flash("no comments yet")
 		return
 	}
-	ids := m.commentIDs()
-	m.copyText(m.reviewText(), "copied "+plural(len(ids), "comment"), ids)
+	texts := m.commentTexts()
+	m.copyText(m.reviewText(), "copied "+plural(len(texts), "comment"), texts)
 }
 
 // copyTimeout is the longest time of a copy.
 const copyTimeout = 2 * time.Second
 
 // copyText writes text to the clipboard. If the copy works, it removes
-// the comments ids and shows done. As in herdr-reviewr, the copy runs
+// the comments texts and shows done. As in herdr-reviewr, the copy runs
 // before the next frame, so two copies keep their order. A clipboard tool
 // that does not answer fails after copyTimeout. As in herdr-reviewr, the
 // message of a failure names only the fix that the user can make. The log
 // has the error.
-func (m *model) copyText(text, done string, ids []int) {
+func (m *model) copyText(text, done string, texts map[int]string) {
 	ctx, cancel := context.WithCancelCause(m.ctx)
 	ctx, cancelTimeout := context.WithTimeoutCause(ctx, copyTimeout,
 		fmt.Errorf("copy: %v timeout: %w", copyTimeout, context.DeadlineExceeded))
@@ -278,7 +277,7 @@ func (m *model) copyText(text, done string, ids []int) {
 		m.log.Warn("copy failed", "err", err)
 		m.flash("copy failed")
 	default:
-		m.clearComments(ids)
+		m.clearComments(texts)
 		m.flash(done)
 	}
 }
@@ -288,11 +287,15 @@ func (m *model) inCommentList() bool {
 	return m.mode == modeOverlay && m.overlay != nil && m.overlay.kind == overlayComments
 }
 
-// clearComments removes the comments ids after a send or a copy. An open
-// comment list shows the rest, or closes if no comment stays.
-func (m *model) clearComments(ids []int) {
-	for _, id := range ids {
-		m.comments.Remove(id)
+// clearComments removes the comments of texts after a send or a copy. A
+// comment whose text is not the text in texts stays, because the user
+// edits it during the send. An open comment list shows the rest, or
+// closes if no comment stays.
+func (m *model) clearComments(texts map[int]string) {
+	for id, text := range texts {
+		if c := m.comments.Find(id); c != nil && c.Text == text {
+			m.comments.Remove(id)
+		}
 	}
 	if m.inCommentList() {
 		if m.comments.Len() == 0 {

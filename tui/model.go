@@ -410,7 +410,7 @@ type (
 	}
 	sentMsg struct {
 		agent rex.Agent
-		ids   []int // the IDs of the sent comments
+		sent  map[int]string // the texts of the sent comments, by ID
 		err   error
 	}
 	grepMsg struct {

@@ -1,9 +1,11 @@
 package test
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
@@ -95,6 +97,7 @@ func TestCommentBox(t *testing.T) {
 
 // TestSend checks that s pastes the review into the agent and gives it
 // the focus. S does the same, and so does s in the question before a quit.
+// A comment that the user edits during the send stays.
 func TestSend(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -113,6 +116,22 @@ func TestSend(t *testing.T) {
 		`block.event {"block_id":"block:pi","event":{"type":"paste",`+
 			`"payload":{"text":"a.go:4 (removed)\n-\treturn 1\nhi s"}}}`,
 		`session.focus_block {"block_id":"block:pi"}`)
+	gate := filepath.Join(rex.dir, "gate")
+	if err := syscall.Mkfifo(gate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	comment(tm, "hi")
+	tm.keys("s")
+	rex.expectCalls(t, `"payload":{"text":"a.go:4 (removed)\n-\treturn 1\nhi"}`)
+	tm.keys("l", "e", " ")
+	tm.typed("edit")
+	tm.keys("enter")
+	tm.waitFor("a.go:4 (removed)  hi edit")
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tm.keys("esc")
+	tm.waitFor("sent 1 comment to agent", "💬 hi edit")
 }
 
 // TestSendWithoutAgent checks that s outside Rex tells the user to copy.

@@ -61,7 +61,8 @@ func newRepo(t *testing.T) string {
 // fakeRex is a rex for the session S. rexdiff runs in the block
 // block:self. The agents run in repo. The fake logs each call and prints
 // the output of a real rex from testdata/rex, with the values of the test.
-// "rex events" prints the lines that the test adds.
+// "rex events" prints the lines that the test adds. If the FIFO gate
+// exists, a paste waits until the test writes to it.
 type fakeRex struct {
 	dir    string
 	blocks []string // the JSON of each block
@@ -79,6 +80,7 @@ case "$*" in
 "block call -s S -b "*" program_status") cat "$d/status.$6" ;;
 "block call -s S -b "*" process") cat "$d/process" ;;
 "block inspect "*) cat "$d/inspect.$3" ;;
+"api call -s S block.event "*) if [ -p "$d/gate" ]; then cat "$d/gate" >/dev/null; fi ;;
 "events -s S --json") touch "$d/events"; exec tail -n +1 -f "$d/events" ;;
 esac
 `)
