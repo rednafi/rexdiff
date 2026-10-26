@@ -11,6 +11,11 @@ cmp .config/rex/init.lua installed.lua
 grep '^local settings = \{$' .config/rex/rexdiff.lua
 grep '^-- rexdiff code below. Install and upgrades replace it. Do not edit this line.$' .config/rex/rexdiff.lua
 
+# The action starts rexdiff through the shell of the user, so that
+# rexdiff gets EDITOR, VISUAL, and PATH. With shell "none", it gets only
+# the environment of the Rex server.
+! grep 'shell = ' .config/rex/rexdiff.lua
+
 # Rex accepts the action and its key.
 [realrex] exec $REALREX config check .config/rex/init.lua
 [realrex] stdout 'bindings: 2'

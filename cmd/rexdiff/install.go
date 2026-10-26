@@ -103,6 +103,8 @@ end
 -- open_rexdiff opens rexdiff at placement, beside the agent in ctx, with
 -- the settings in config. rexdiff starts in the current directory of the
 -- agent. The rex package of rexdiff finds the directory the same way.
+-- rexdiff starts through the shell of the user, so that it gets the
+-- environment of the user, for example EDITOR and PATH.
 local function open_rexdiff(ctx, placement, config)
   local p = call("process", ctx.block_id)
   local cwd = (p.foreground or {}).cwd or (p.child or {}).cwd
@@ -112,7 +114,6 @@ local function open_rexdiff(ctx, placement, config)
     options = {
       command = { BIN, "--agent", ctx.block_id, "--config", config },
       cwd = cwd,
-      shell = "none",
     },
   }
   if placement == "tab" then

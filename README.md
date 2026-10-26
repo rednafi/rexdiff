@@ -88,6 +88,10 @@ Other settings:
 
 See [herdr-reviewr] for the values and the action names.
 
+`e` opens the file at the cursor line in `editor`, else in `$VISUAL`, `$EDITOR`, or git's
+`core.editor`. A terminal editor, such as `nvim`, `micro`, or `fresh`, opens in a new pane
+beside rexdiff. A window editor, such as `code`, opens in its window.
+
 After a change:
 
 - Run `rex config reload`.

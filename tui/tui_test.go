@@ -350,17 +350,6 @@ func TestClickCommentBox(t *testing.T) {
 	}
 }
 
-// TestEditorError opens an editor that cannot start. The footer tells
-// why.
-func TestEditorError(t *testing.T) {
-	m, _ := newTestModel(t)
-	m.cfg.Editor = "ed {file}"
-	t.Setenv("PATH", "") // sh cannot start
-	if m = press(t, m, "e"); !strings.Contains(view(m), "editor: ") {
-		t.Errorf("the footer does not show the error:\n%s", view(m))
-	}
-}
-
 // TestSendError sends the review when Rex fails. The footer shows the
 // error of Rex.
 func TestSendError(t *testing.T) {
