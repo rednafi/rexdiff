@@ -7,13 +7,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 )
 
-// root is the directory of the fixtures. It is "" until Main runs.
-var root string
+var (
+	// root is the directory of the fixtures. It is "" until Main runs.
+	root string
+	// gitPath is the path of git, from the PATH of the process. It is ""
+	// until Main runs.
+	gitPath string
+)
 
 // Main runs the tests of m in a git environment that ignores the setup of
 // the user. Each package that runs git calls it from its TestMain.
@@ -24,12 +30,27 @@ var root string
 // add config, are unset. HOME and XDG_CONFIG_HOME are a new directory, so
 // no ignore or attributes file of the user applies. The commits have a
 // fixed author.
+//
+// Main finds git in the PATH of the process, before the tests run. A test
+// that gives a library an environment of its own gets git from
+// [ToolEnv] or [LinkGit].
 func Main(m *testing.M) {
 	dir, err := os.MkdirTemp("", "testgit")
 	if err != nil {
 		panic(err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
+	path, err := exec.LookPath("git")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
+		panic(err)
+	}
+	if err := os.Symlink(path, filepath.Join(dir, "bin", "git")); err != nil {
+		panic(err)
+	}
+	gitPath = path
 	env := append(Env(), "HOME="+dir, "XDG_CONFIG_HOME="+dir)
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -58,6 +79,27 @@ func Env() []string {
 		"GIT_AUTHOR_EMAIL=t@t",
 		"GIT_COMMITTER_NAME=t",
 		"GIT_COMMITTER_EMAIL=t@t",
+	}
+}
+
+// ToolEnv returns the environment of a library that runs git in a test.
+// It has the variables of [Env] and PATH. PATH has dirs, then a directory
+// with only git, then /usr/bin and /bin. A test puts its fake tools in
+// dirs. ToolEnv has no HOME, so no file of the user applies.
+func ToolEnv(tb testing.TB, dirs ...string) []string {
+	tb.Helper()
+	ready(tb)
+	path := slices.Concat(dirs, []string{filepath.Join(root, "bin"), "/usr/bin", "/bin"})
+	return append(Env(), "PATH="+strings.Join(path, string(os.PathListSeparator)))
+}
+
+// LinkGit makes a link to git in dir. A test that removes the link takes
+// git away from a PATH with dir.
+func LinkGit(tb testing.TB, dir string) {
+	tb.Helper()
+	ready(tb)
+	if err := os.Symlink(gitPath, filepath.Join(dir, "git")); err != nil {
+		tb.Fatal(err)
 	}
 }
 

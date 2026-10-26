@@ -3,9 +3,6 @@ package vcs_test
 import (
 	"cmp"
 	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -29,11 +26,11 @@ func fakeTool(t *testing.T, dir, name string, calls map[string]string) {
 	testgit.Script(t, dir, name, script.String())
 }
 
-// repoAt returns the test repository, on the branch feat, with origin at
-// the URL remote.
-func repoAt(t *testing.T, remote string) (*vcs.Repo, string) {
+// repoAt returns the test repository with the environment env, on the
+// branch feat, with origin at the URL remote.
+func repoAt(t *testing.T, env []string, remote string) (*vcs.Repo, string) {
 	t.Helper()
-	r, dir := newRepo(t)
+	r, dir := newRepoEnv(t, env)
 	testgit.Git(t, dir, "remote", "add", "origin", remote)
 	return r, dir
 }
@@ -48,11 +45,11 @@ func azArgs(branch string) string {
 	return "repos pr list --source-branch " + branch + " --status all --top 1 --output json"
 }
 
-// TestPullRequest checks the pull request that each forge tool gives. The
-// fake tools are in PATH, so only the subtests run in parallel.
+// TestPullRequest checks the pull request that each forge tool gives.
 func TestPullRequest(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	fakePath(t, dir)
+	env := testgit.ToolEnv(t, dir)
 	fakeTool(t, dir, "gh", map[string]string{ghArgs: `{
 		"number": 7, "title": "Add x", "state": "OPEN", "isDraft": true,
 		"url": "https://github.com/o/r/pull/7",
@@ -144,7 +141,7 @@ func TestPullRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.remote, func(t *testing.T) {
 			t.Parallel()
-			r, _ := repoAt(t, tt.remote)
+			r, _ := repoAt(t, env, tt.remote)
 			pr, err := r.PullRequest(t.Context(), tt.hosts)
 			if err != nil {
 				t.Fatalf("PullRequest = %v, want no error", err)
@@ -159,9 +156,10 @@ func TestPullRequest(t *testing.T) {
 // TestPullRequestErrors checks the error for a missing remote, an unknown
 // forge, a missing pull request, and a missing tool.
 func TestPullRequestErrors(t *testing.T) {
-	dir := t.TempDir()
-	fakePath(t, dir)
-	fakeTool(t, dir, "az", map[string]string{azArgs("none"): `[]`})
+	t.Parallel()
+	bin := t.TempDir()
+	env := testgit.ToolEnv(t, bin)
+	fakeTool(t, bin, "az", map[string]string{azArgs("none"): `[]`})
 	const azure = "https://dev.azure.com/o/p/_git/r"
 	const unsupported = "the remote is not on GitHub, GitLab, or Azure DevOps"
 	corp := vcs.Hosts{GitLab: "Git.Corp"}
@@ -195,7 +193,7 @@ func TestPullRequestErrors(t *testing.T) {
 		// Two cases have the same remote, so the name has the branch.
 		t.Run(cmp.Or(tt.remote, "no remote")+" on "+tt.branch, func(t *testing.T) {
 			t.Parallel()
-			r, dir := newRepo(t)
+			r, dir := newRepoEnv(t, env)
 			if tt.remote != "" {
 				testgit.Git(t, dir, "remote", "add", "origin", tt.remote)
 			}
@@ -218,15 +216,15 @@ func TestPullRequestErrors(t *testing.T) {
 // TestPullRequestHostile checks that the text of a pull request has no
 // control characters.
 func TestPullRequestHostile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	fakePath(t, dir)
 	const osc = `\u001b]0;owned\u0007`
 	fakeTool(t, dir, "gh", map[string]string{ghArgs: `{
 		"number": 7, "title": "Add` + osc + `", "state": "OPEN",
 		"body": "a` + osc + `\nb", "author": {"login": "ann` + osc + `"},
 		"comments": [{"author": {"login": "bob"}, "body": "x` + osc + `"}],
 		"statusCheckRollup": [{"name": "t` + osc + `", "conclusion": "SUCCESS"}]}`})
-	r, _ := repoAt(t, "https://github.com/o/r")
+	r, _ := repoAt(t, testgit.ToolEnv(t, dir), "https://github.com/o/r")
 	pr, err := r.PullRequest(t.Context(), vcs.Hosts{})
 	if err != nil {
 		t.Fatal(err)
@@ -241,28 +239,15 @@ func TestPullRequestHostile(t *testing.T) {
 // TestNoPullRequest checks that a gh or a glab that finds no pull request
 // gives ErrNoPullRequest. Both exit with 1 and say so.
 func TestNoPullRequest(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	fakePath(t, dir)
+	env := testgit.ToolEnv(t, dir)
 	testgit.Script(t, dir, "gh", "echo 'no pull requests found for branch \"feat\"' >&2\nexit 1\n")
 	testgit.Script(t, dir, "glab", "echo 'no open merge request available for \"feat\"' >&2\nexit 1\n")
 	for _, remote := range []string{"https://github.com/o/r", "https://gitlab.com/o/r"} {
-		r, _ := repoAt(t, remote)
+		r, _ := repoAt(t, env, remote)
 		if _, err := r.PullRequest(t.Context(), vcs.Hosts{}); !errors.Is(err, vcs.ErrNoPullRequest) {
 			t.Errorf("PullRequest(%s) = %v, want ErrNoPullRequest", remote, err)
 		}
 	}
-}
-
-// fakePath sets PATH to dir and the system directories, and links git into
-// dir. Then PATH has the fake forge tools and no real ones.
-func fakePath(t *testing.T, dir string) {
-	t.Helper()
-	p, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(p, filepath.Join(dir, "git")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", strings.Join([]string{dir, "/bin", "/usr/bin"}, string(os.PathListSeparator)))
 }

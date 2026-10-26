@@ -259,7 +259,7 @@ const copyTimeout = 2 * time.Second
 func (m *model) copyText(text, done string, ids []int) {
 	ctx, cancel := context.WithTimeout(m.ctx, copyTimeout)
 	defer cancel()
-	err := clipboard.Write(ctx, text)
+	err := clipboard.Write(ctx, m.env, text)
 	switch {
 	case err != nil:
 		if !errors.Is(err, clipboard.ErrNoTool) {

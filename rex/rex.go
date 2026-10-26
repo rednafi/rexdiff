@@ -6,6 +6,10 @@
 // for example "pi" and "working". This is the status of the program. A
 // [Client] finds the agents in a session, pastes text into an agent, and
 // gets each status change.
+//
+// The caller gives the environment as a value, as in [exec.Cmd.Env]. The
+// package finds rex with it and runs rex with it. It does not read the
+// environment of the process.
 package rex
 
 import (
@@ -18,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -28,44 +33,50 @@ import (
 
 // Client runs rex commands in one Rex session.
 type Client struct {
-	block   string // the block of this process, or ""
-	session string // the ID of the session
-	bin     string // the path of the rex command, or "" for "rex" in PATH
+	block   string   // the block of this process, or ""
+	session string   // the ID of the session
+	bin     string   // the path of the rex command, or "" for "rex" in PATH
+	env     []string // the environment of rex
 }
 
-// FromEnv returns a client for the session of this process. Rex sets
-// REX_SESSION and REX_BLOCK in each block. FromEnv returns nil if the
-// process does not run in Rex.
-func FromEnv() *Client {
-	session := os.Getenv("REX_SESSION")
+// New returns a client for the session in the environment env, for
+// example the environment of the process from [os.Environ]. Rex sets
+// REX_SESSION and REX_BLOCK in each block. New returns nil if env is not
+// the environment of a Rex block. The client runs rex with env.
+func New(env []string) *Client {
+	session := proc.Getenv(env, "REX_SESSION")
 	if session == "" {
 		return nil
 	}
 	return &Client{
-		block:   os.Getenv("REX_BLOCK"),
+		block:   proc.Getenv(env, "REX_BLOCK"),
 		session: session,
-		bin:     binFromEnv(),
+		bin:     binFromEnv(env),
+		env:     env,
 	}
 }
 
 // Block returns the block of this process, or "" if Rex does not tell it.
 func (c *Client) Block() string { return c.block }
 
-// binFromEnv returns the path of the rex command, or "" for the rex in PATH.
-// Rex sets REX_BIN_DIR in its terminals. Other programs, for example brew,
-// do not have it. If REX_BIN_DIR is empty and PATH has no rex, binFromEnv
-// returns the rex of the Rex server app on macOS, if it is there.
-func binFromEnv() string {
-	if dir := os.Getenv("REX_BIN_DIR"); dir != "" {
+// binFromEnv returns the path of the rex command in env, or "" for the rex
+// in PATH. Rex sets REX_BIN_DIR in its terminals. Other programs, for
+// example brew, do not have it. If REX_BIN_DIR is empty and PATH has no
+// rex, binFromEnv returns the rex of the Rex server app in HOME on macOS,
+// if it is there.
+func binFromEnv(env []string) string {
+	if dir := proc.Getenv(env, "REX_BIN_DIR"); dir != "" {
 		return filepath.Join(dir, "rex")
 	}
-	if _, err := exec.LookPath("rex"); err == nil {
+	if _, err := proc.LookPath(env, "rex"); err == nil {
 		return ""
 	}
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	home := proc.Getenv(env, "HOME")
+	if runtime.GOOS != "darwin" || home == "" {
 		return ""
 	}
+	// The app is in the directory of os.UserConfigDir on macOS.
+	dir := filepath.Join(home, "Library", "Application Support")
 	bin := filepath.Join(dir, "com.superlogical.rex", "RexServer", "Versions", "Current", "Rex Server.app", "Contents", "MacOS", "rex")
 	if _, err := os.Stat(bin); err != nil {
 		return ""
@@ -75,7 +86,7 @@ func binFromEnv() string {
 
 // command returns the command "rex args...".
 func (c *Client) command(ctx context.Context, args ...string) *exec.Cmd {
-	return proc.Command(ctx, cmp.Or(c.bin, "rex"), args...)
+	return proc.Command(ctx, c.env, cmp.Or(c.bin, "rex"), args...)
 }
 
 // runRex runs "rex args..." and returns the output. If rex fails, the
@@ -354,25 +365,24 @@ func (c *Client) Split(ctx context.Context, cwd string, argv ...string) error {
 	return err
 }
 
-// ConfigPath returns the path of the configuration file of Rex. This is
-// $REX_CONFIG if it is set. If not, it is init.lua in the rex directory of
-// $XDG_CONFIG_HOME, or of ~/.config.
-func ConfigPath() string {
-	if path := os.Getenv("REX_CONFIG"); path != "" {
+// ConfigPath returns the path of the configuration file of Rex in the
+// environment env. This is $REX_CONFIG if it is set. If not, it is
+// init.lua in the rex directory of $XDG_CONFIG_HOME, or of $HOME/.config.
+func ConfigPath(env []string) string {
+	if path := proc.Getenv(env, "REX_CONFIG"); path != "" {
 		return path
 	}
-	dir := os.Getenv("XDG_CONFIG_HOME")
+	dir := proc.Getenv(env, "XDG_CONFIG_HOME")
 	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".config")
+		dir = filepath.Join(proc.Getenv(env, "HOME"), ".config")
 	}
 	return filepath.Join(dir, "rex", "init.lua")
 }
 
-// ReloadConfig tells Rex to read its configuration file again. It also
-// works outside a Rex session.
-func ReloadConfig(ctx context.Context) error {
-	c := &Client{bin: binFromEnv()}
+// ReloadConfig tells Rex to read its configuration file again. It runs
+// rex with the environment env. It also works outside a Rex session.
+func ReloadConfig(ctx context.Context, env []string) error {
+	c := &Client{bin: binFromEnv(env), env: env}
 	_, err := c.runRex(ctx, "config", "reload")
 	return err
 }

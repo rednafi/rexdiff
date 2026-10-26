@@ -53,6 +53,11 @@ type Options struct {
 	// Resume is the file of the state that Run returned before an update,
 	// or "". Run reads it and removes it.
 	Resume string
+	// Env is the environment of the editor, the URL opener, and the
+	// clipboard tool, for example the environment of the process from
+	// os.Environ. Run finds them in its PATH, and reads $VISUAL and
+	// $EDITOR from it.
+	Env []string
 }
 
 // check returns an error for options that Run cannot use.

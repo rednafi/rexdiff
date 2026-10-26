@@ -31,13 +31,14 @@ func mkdir(t *testing.T, dir string) string {
 }
 
 // detect returns the Updater of the rexdiff at bin, with the latest
-// release at latest. A test that calls it cannot run in parallel.
-func detect(t *testing.T, latest, bin, stamped string) *update.Updater {
+// release at latest. Its environment has REXDIFF_LATEST_URL and the PATH
+// /usr/bin:/bin, then the variables of env. A later variable wins.
+func detect(t *testing.T, latest, bin, stamped string, env ...string) *update.Updater {
 	t.Helper()
-	t.Setenv("REXDIFF_LATEST_URL", latest)
-	u := update.Detect(bin, stamped)
+	env = append([]string{"REXDIFF_LATEST_URL=" + latest, "PATH=/usr/bin:/bin"}, env...)
+	u := update.Detect(bin, stamped, env)
 	if u == nil {
-		t.Fatalf("Detect(%s, %s) = nil, want an Updater", bin, stamped)
+		t.Fatalf("Detect(%s, %s, %q) = nil, want an Updater", bin, stamped, env)
 	}
 	return u
 }
@@ -78,7 +79,7 @@ func TestVersion(t *testing.T) {
 		{"", "0.1.0"},
 	}
 	for _, tt := range tests {
-		if u := update.Detect(tt.bin, tt.stamped); u != nil {
+		if u := update.Detect(tt.bin, tt.stamped, nil); u != nil {
 			t.Errorf("Detect(%q, %q) = %+v, want nil", tt.bin, tt.stamped, u)
 		}
 	}
@@ -87,6 +88,7 @@ func TestVersion(t *testing.T) {
 // TestLatest checks Latest against a fake GitHub API, and which tags are
 // newer than the running version.
 func TestLatest(t *testing.T) {
+	t.Parallel()
 	release := func(tag string) string {
 		return `{"tag_name": "` + tag + `", "assets": [], "other": 1}`
 	}
@@ -121,6 +123,7 @@ func TestLatest(t *testing.T) {
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			u := detect(t, fmt.Sprint(base, "/", i), "/bin/rexdiff", tt.have)
 			r, newer, err := u.Latest(t.Context())
 			if tt.errText != "" {
@@ -140,12 +143,11 @@ func TestLatest(t *testing.T) {
 // TestInstallBrew checks the commands of a Homebrew install, and the check
 // of the new version.
 func TestInstallBrew(t *testing.T) {
+	t.Parallel()
 	// The fake brew logs the flags of brew and its arguments. Rex starts
 	// rexdiff with a PATH without Homebrew, so the brew beside the
-	// Caskroom comes first.
-	for _, k := range []string{"HOMEBREW_NO_ENV_HINTS", "NONINTERACTIVE", "HOMEBREW_NO_AUTO_UPDATE"} {
-		t.Setenv(k, "")
-	}
+	// Caskroom comes first. The environment of the Updater has none of the
+	// flags of brew.
 	const logBrew = `echo "hints=$HOMEBREW_NO_ENV_HINTS ` +
 		`ni=$NONINTERACTIVE auto=$HOMEBREW_NO_AUTO_UPDATE ${0##*/} $*" ` +
 		`>> "${0%/*}/../calls"` + "\n"
@@ -185,6 +187,7 @@ func TestInstallBrew(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			prefix := t.TempDir()
 			caskDir := mkdir(t, filepath.Join(prefix, "Caskroom", "rexdiff", "0.2.0"))
 			cask := testgit.Script(t, caskDir, "rexdiff", "echo "+tt.version+"\n")
@@ -197,14 +200,14 @@ func TestInstallBrew(t *testing.T) {
 			if err := os.Symlink(cask, link); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("PATH", filepath.Join(prefix, "path")+":/usr/bin:/bin")
+			pathEnv := "PATH=" + filepath.Join(prefix, "path") + ":/usr/bin:/bin"
 
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if tt.cancel {
 				cancel()
 			}
-			u := detect(t, "http://127.0.0.1:1/latest", link, "0.1.0")
+			u := detect(t, "http://127.0.0.1:1/latest", link, "0.1.0", pathEnv)
 			err := u.Install(ctx, update.Release{Tag: "v0.2.0"})
 			failed := err != nil
 			if tt.errText != "" {
@@ -256,6 +259,7 @@ func archive(t *testing.T, content string) []byte {
 // the binary in the archive, and the check of its version. It also checks
 // the replacement of the target file of a link.
 func TestDownload(t *testing.T) {
+	t.Parallel()
 	name := fmt.Sprintf("rexdiff-v0.2.0-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	newBin := "#!/bin/sh\necho v0.2.0\n"
 	good := archive(t, newBin)
@@ -298,6 +302,7 @@ func TestDownload(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			const oldBin = "echo v0.1.0\n"
 			realDir := mkdir(t, filepath.Join(dir, "real"))

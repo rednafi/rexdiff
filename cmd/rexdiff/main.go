@@ -20,8 +20,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
+	"strings"
 	"syscall"
 
+	"github.com/rednafi/rexdiff/internal/proc"
 	"github.com/rednafi/rexdiff/rex"
 	"github.com/rednafi/rexdiff/tui"
 	"github.com/rednafi/rexdiff/update"
@@ -32,7 +35,9 @@ func main() {
 	// A closed pane sends SIGHUP. The stop of ctx lets rexdiff remove its
 	// files before it exits.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	// rexdiff reads the environment once, here. The packages get it as a
+	// value.
+	err := run(ctx, os.Environ(), os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	switch {
 	case errors.Is(err, flag.ErrHelp):
@@ -65,8 +70,9 @@ const usage = `usage: rexdiff [flags] [repo]
 flags:
 `
 
-// run runs the subcommand in args, or else the diff viewer.
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+// run runs the subcommand in args, or else the diff viewer. env is the
+// environment of rexdiff, as "key=value" pairs.
+func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "install":
@@ -74,12 +80,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			if err != nil {
 				return err
 			}
-			return install(ctx, bin, args[1:], stdout, stderr)
+			return install(ctx, env, bin, args[1:], stdout, stderr)
 		case "uninstall":
-			return uninstall(ctx, args[1:], stdout, stderr)
+			return uninstall(ctx, env, args[1:], stdout, stderr)
 		}
 	}
-	f, err := parseFlags(args, stderr)
+	f, err := parseFlags(args, env, stderr)
 	if err != nil {
 		return err
 	}
@@ -94,8 +100,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	// The programs that rexdiff starts, such as an editor, do not get the
+	// variable of the resume file.
+	resumePath, env := takeResume(env)
 	dir := cmp.Or(f.repo, ".")
-	repo, err := vcs.Open(ctx, dir)
+	repo, err := vcs.Open(ctx, dir, env)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", dir, err)
 	}
@@ -108,14 +117,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	// In Rex, upgrade replaces the code of the action if that code differs
 	// from the code of this rexdiff.
-	client := rex.FromEnv()
+	client := rex.New(env)
 	var notice string
 	bin, binErr := executable()
 	if binErr == nil && client != nil {
-		notice = upgrade(ctx, bin)
+		notice = upgrade(ctx, env, bin)
 	}
 	var updater tui.Updater
-	if u := update.Detect(bin, version); u != nil {
+	if u := update.Detect(bin, version, env); u != nil {
 		updater = u // an interface with a nil *update.Updater is not nil
 	}
 	resume, err := tui.Run(ctx, tui.Options{
@@ -123,7 +132,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		Rex:     client,
 		Notice:  notice,
 		Updater: updater,
-		Resume:  resumeFile(),
+		Resume:  resumePath,
+		Env:     env,
 		Config:  f.config,
 		Layout:  tui.Layout(f.layout),
 		Scope:   tui.Scope(f.scope),
@@ -138,17 +148,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// After an update, the new rexdiff runs in this process.
 	closeLog()
 	_ = repo.Close() // the new process does not run the deferred calls
-	return restart(bin, args, resume, stdout)
+	return restart(bin, args, env, resume, stdout)
 }
 
 // restart runs the new rexdiff at bin in this process after an update,
-// with the same args. resumeEnv gives it the saved state in the file
-// resume. restart returns only if it fails.
-func restart(bin string, args []string, resume string, stdout io.Writer) error {
-	err := os.Setenv(resumeEnv, resume)
-	if err == nil {
-		err = update.Restart(bin, args) // returns only if it fails
-	}
+// with the same args and env. resumeEnv gives it the saved state in the
+// file resume. restart returns only if it fails.
+func restart(bin string, args, env []string, resume string, stdout io.Writer) error {
+	env = slices.Concat(env, []string{resumeEnv + "=" + resume})
+	err := update.Restart(bin, args, env) // returns only if it fails
 	// Run keeps the alternate screen for the restart. Leave that screen and
 	// show the cursor.
 	fmt.Fprint(stdout, "\x1b[?1049l\x1b[?25h")
@@ -160,14 +168,12 @@ func restart(bin string, args []string, resume string, stdout io.Writer) error {
 // flag, so that the arguments of the user do not change.
 const resumeEnv = "REXDIFF_RESUME"
 
-// resumeFile returns the file in resumeEnv, or "". It unsets the variable,
-// so that the programs that rexdiff starts, such as an editor, do not get
-// the variable.
-func resumeFile() string {
-	path := os.Getenv(resumeEnv)
-	// Unsetenv fails only for a bad name. resumeEnv is a good name.
-	_ = os.Unsetenv(resumeEnv)
-	return path
+// takeResume returns the file in the variable resumeEnv of env, or "". It
+// also returns a copy of env without the variable.
+func takeResume(env []string) (path string, rest []string) {
+	path = proc.Getenv(env, resumeEnv)
+	isResume := func(kv string) bool { return strings.HasPrefix(kv, resumeEnv+"=") }
+	return path, slices.DeleteFunc(slices.Clone(env), isResume)
 }
 
 // version is the version of rexdiff that GoReleaser sets, for example
@@ -188,10 +194,11 @@ type flags struct {
 	repo    string // the repo argument, or ""
 }
 
-// parseFlags parses the arguments of the diff viewer. It writes the usage
-// and the errors of the flags to stderr. For -h, it returns
-// [flag.ErrHelp], and for a bad flag or argument errUsage.
-func parseFlags(args []string, stderr io.Writer) (flags, error) {
+// parseFlags parses the arguments of the diff viewer. The defaults of
+// -agent and -log come from env. It writes the usage and the errors of the
+// flags to stderr. For -h, it returns [flag.ErrHelp], and for a bad flag
+// or argument errUsage.
+func parseFlags(args, env []string, stderr io.Writer) (flags, error) {
 	var f flags
 	fs := flag.NewFlagSet("rexdiff", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -200,8 +207,8 @@ func parseFlags(args []string, stderr io.Writer) (flags, error) {
 	fs.StringVar(&f.scope, "scope", "", "start scope: uncommitted, branch, or last-turn")
 	fs.BoolVar(&f.wrap, "wrap", true, "wrap of long lines (the key w toggles it)")
 	fs.StringVar(&f.base, "base", "", "base for the branch scope (default: the picked base, else the repo's default branch)")
-	fs.StringVar(&f.agent, "agent", os.Getenv("REXDIFF_AGENT"), "Rex block (ID or label) of the agent beside this pane")
-	fs.StringVar(&f.logPath, "log", os.Getenv("REXDIFF_LOG"), "file for a debug log")
+	fs.StringVar(&f.agent, "agent", proc.Getenv(env, "REXDIFF_AGENT"), "Rex block (ID or label) of the agent beside this pane")
+	fs.StringVar(&f.logPath, "log", proc.Getenv(env, "REXDIFF_LOG"), "file for a debug log")
 	fs.StringVar(&f.config, "config", "", "settings as JSON (the Rex action gives them from rexdiff.lua)")
 	fs.BoolVar(&f.check, "check", false, "settings check only: check -config, then exit")
 	fs.BoolVar(&f.version, "version", false, "version only: print it, then exit")

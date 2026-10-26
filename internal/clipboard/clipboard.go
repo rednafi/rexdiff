@@ -1,12 +1,12 @@
 // Package clipboard writes text to the system clipboard through the first
-// clipboard tool on PATH, as herdr-reviewr does.
+// clipboard tool on PATH, as herdr-reviewr does. The caller gives the
+// environment of the tool, with its PATH.
 package clipboard
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/rednafi/rexdiff/internal/proc"
@@ -23,15 +23,16 @@ var tools = [][]string{
 	{"xsel", "--clipboard", "--input"},
 }
 
-// Write pipes text into the first clipboard tool on PATH. It fails if the
-// tool exits with a status that is not zero.
-func Write(ctx context.Context, text string) error {
+// Write pipes text into the first clipboard tool on the PATH of env. The
+// tool runs with the environment env. Write fails if the tool exits with a
+// status that is not zero.
+func Write(ctx context.Context, env []string, text string) error {
 	for _, t := range tools {
-		path, err := exec.LookPath(t[0])
+		path, err := proc.LookPath(env, t[0])
 		if err != nil {
 			continue
 		}
-		cmd := proc.Command(ctx, path, t[1:]...)
+		cmd := proc.Command(ctx, env, path, t[1:]...)
 		cmd.Stdin = strings.NewReader(text)
 		// The output goes to the null device. xclip and wl-copy leave a
 		// process that keeps the clipboard, and a pipe stays open while it

@@ -195,6 +195,7 @@ type model struct {
 	repo *vcs.Repo
 	rex  *rex.Client // nil outside Rex
 	log  *slog.Logger
+	env  []string // for the editor, the URL opener, and the clipboard
 
 	cfg    config
 	keys   keyMap
@@ -336,6 +337,7 @@ func newModel(ctx context.Context, o Options, cfg config) model {
 		repo:     o.Repo,
 		rex:      o.Rex,
 		log:      o.Log,
+		env:      o.Env,
 		notice:   o.Notice,
 		updater:  o.Updater,
 		w:        120,

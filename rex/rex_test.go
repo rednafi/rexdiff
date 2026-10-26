@@ -16,20 +16,22 @@ import (
 	"github.com/rednafi/rexdiff/rex"
 )
 
-// client writes a rex script with body in a new directory. It sets the
-// environment of the block block:self in the session S, and returns the
-// client of FromEnv and the directory. A test that calls it cannot run in
-// parallel.
+// client writes a rex script with body in a new directory. It returns the
+// client of New in the environment of the block block:self in the session
+// S, and the directory.
 func client(t *testing.T, body string) (*rex.Client, string) {
 	t.Helper()
 	dir := t.TempDir()
 	testgit.Script(t, dir, "rex", body)
-	t.Setenv("REX_SESSION", "S")
-	t.Setenv("REX_BLOCK", "block:self")
-	t.Setenv("REX_BIN_DIR", dir)
-	c := rex.FromEnv()
+	env := []string{
+		"PATH=/usr/bin:/bin",
+		"REX_SESSION=S",
+		"REX_BLOCK=block:self",
+		"REX_BIN_DIR=" + dir,
+	}
+	c := rex.New(env)
 	if c == nil || c.Block() != "block:self" {
-		t.Fatalf("FromEnv = %+v, want the block block:self", c)
+		t.Fatalf("New(%q) = %+v, want the block block:self", env, c)
 	}
 	return c, dir
 }
@@ -83,6 +85,7 @@ esac
 // TestAgents checks that Agents returns only the terminal blocks that send
 // an app name, without the block of the client.
 func TestAgents(t *testing.T) {
+	t.Parallel()
 	c, _ := fakeRex(t)
 	agents, err := c.Agents(t.Context())
 	if err != nil {
@@ -112,6 +115,7 @@ func TestAgents(t *testing.T) {
 // TestCommands checks the rex calls of Resolve, Paste, Focus, Split, and
 // SetLabel.
 func TestCommands(t *testing.T) {
+	t.Parallel()
 	c, dir := fakeRex(t)
 	ctx := t.Context()
 	if id, err := c.Resolve(ctx, "agent"); err != nil || id != "block:pi" {
@@ -166,6 +170,7 @@ func blockEvent(block, name, payload string) string {
 // after the events, so Watch reports a reconnect and then the events
 // again.
 func TestWatch(t *testing.T) {
+	t.Parallel()
 	c, dir := fakeRex(t)
 	events := strings.Join([]string{
 		blockEvent("block:pi", "program_status_changed", `{"id":"",`+
@@ -209,34 +214,53 @@ func TestWatch(t *testing.T) {
 	}
 }
 
-// TestFromEnv checks that FromEnv returns nil outside Rex. The client of
-// the other tests comes from FromEnv in a fake block.
-func TestFromEnv(t *testing.T) {
-	t.Setenv("REX_SESSION", "")
-	if c := rex.FromEnv(); c != nil {
-		t.Errorf("FromEnv outside Rex = %+v, want nil", c)
+// TestNew checks that New returns nil outside Rex. The client of the
+// other tests comes from New in a fake block.
+func TestNew(t *testing.T) {
+	t.Parallel()
+	for _, env := range [][]string{nil, {"REX_SESSION=S", "REX_SESSION="}} {
+		if c := rex.New(env); c != nil {
+			t.Errorf("New(%q) outside Rex = %+v, want nil", env, c)
+		}
+	}
+}
+
+// TestConfigPath checks the places of the configuration file of Rex.
+func TestConfigPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		env  []string
+		want string
+	}{
+		{[]string{"HOME=/h", "XDG_CONFIG_HOME=/x", "REX_CONFIG=/r.lua"}, "/r.lua"},
+		{[]string{"HOME=/h", "XDG_CONFIG_HOME=/x"}, "/x/rex/init.lua"},
+		{[]string{"HOME=/h", "XDG_CONFIG_HOME="}, "/h/.config/rex/init.lua"},
+	}
+	for _, tt := range tests {
+		if got := rex.ConfigPath(tt.env); got != tt.want {
+			t.Errorf("ConfigPath(%q) = %q, want %q", tt.env, got, tt.want)
+		}
 	}
 }
 
 // TestReloadConfigOutsideRex checks that ReloadConfig runs the rex of the
 // Rex server app outside a Rex terminal.
 func TestReloadConfigOutsideRex(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" {
 		t.Skip("the Rex server app is on macOS")
 	}
 	// Outside a Rex terminal, for example under brew, REX_BIN_DIR is not set
 	// and rex is not in PATH.
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("REX_BIN_DIR", "")
-	t.Setenv("PATH", t.TempDir())
+	env := []string{"HOME=" + home, "REX_BIN_DIR=", "PATH=" + t.TempDir()}
 	dir := filepath.Join(home, "Library", "Application Support", "com.superlogical.rex", "RexServer", "Versions", "Current", "Rex Server.app", "Contents", "MacOS")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	log := filepath.Join(home, "log")
 	testgit.Script(t, dir, "rex", "echo \"$*\" > '"+log+"'\n")
-	if err := rex.ReloadConfig(t.Context()); err != nil {
+	if err := rex.ReloadConfig(t.Context(), env); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(log); string(b) != "config reload\n" {
@@ -247,6 +271,7 @@ func TestReloadConfigOutsideRex(t *testing.T) {
 // TestErrorKeepsCause checks that the error of a failed rex is the message
 // of rex. The error also wraps the exit error of the process.
 func TestErrorKeepsCause(t *testing.T) {
+	t.Parallel()
 	c, _ := client(t, "echo 'Error: no Rex server' >&2\nexit 3\n")
 	err := c.Focus(t.Context(), "block:pi")
 	ee, ok := errors.AsType[*exec.ExitError](err)

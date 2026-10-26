@@ -28,6 +28,10 @@ the editor command, text cleaning, and the diff renderer copied from crush.
 `cmd/rexdiff` parses the flags, handles `rexdiff install`, upgrades `rexdiff.lua` at
 the start, and calls `tui`.
 
+Only `cmd/rexdiff` reads the environment of the process, once, with `os.Environ`. It
+gives that list to the libraries, which find and run their programs with it, as
+`exec.Cmd.Env` does.
+
 ## Rex
 
 Rex sets `REX_SESSION` and `REX_BLOCK` in every pane. When they are missing, rexdiff

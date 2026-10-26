@@ -6,6 +6,9 @@
 // install. Else it downloads the archive of the release from GitHub and
 // checks it with the checksums of the release. [Restart] runs the new binary
 // in the same process, so the terminal and the process ID stay.
+//
+// The caller gives the environment as a value, as in [exec.Cmd.Env]. The
+// package does not read the environment of the process.
 package update
 
 import (
@@ -79,10 +82,9 @@ type Updater struct {
 	bin       string // the path of rexdiff as the user runs it, maybe a symlink
 	version   string // the version of the running rexdiff, for example "v0.1.0"
 	method    method
-	brew      string // the brew of the Caskroom of bin, for methodBrew
+	brew      string   // the brew of the Caskroom of bin, for methodBrew
+	env       []string // the environment of brew, go, and rexdiff
 	latestURL string
-	// run runs a command and returns its output. Tests replace it.
-	run func(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
 }
 
 // Version returns the version of rexdiff, for example "v0.2.0". stamped is
@@ -108,16 +110,17 @@ func Version(stamped string) string {
 // The Updater installs a release the same way as the user installed
 // rexdiff. If bin links into a Caskroom, it uses Homebrew. If stamped is ""
 // and the version comes from go install, it uses go install. Else it
-// downloads the release. If REXDIFF_LATEST_URL is set, the Updater gets the
-// latest release from that address. Set it to test a release before it
-// is public.
-func Detect(bin, stamped string) *Updater {
-	return detect(bin, Version(stamped), stamped == "")
+// downloads the release. The Updater runs brew, go, and rexdiff with the
+// environment env, and finds them in the PATH of env. If env sets
+// REXDIFF_LATEST_URL, the Updater gets the latest release from that
+// address. Set it to test a release before it is public.
+func Detect(bin, stamped string, env []string) *Updater {
+	return detect(bin, Version(stamped), stamped == "", env)
 }
 
 // detect is [Detect] with the version already found. goInstall is true if
 // the version comes from go install.
-func detect(bin, version string, goInstall bool) *Updater {
+func detect(bin, version string, goInstall bool, env []string) *Updater {
 	if _, valid := numbers(version); bin == "" || !valid {
 		return nil
 	}
@@ -125,7 +128,8 @@ func detect(bin, version string, goInstall bool) *Updater {
 		bin:       bin,
 		version:   version,
 		method:    methodDownload,
-		latestURL: cmp.Or(os.Getenv("REXDIFF_LATEST_URL"), latestURL),
+		env:       env,
+		latestURL: cmp.Or(proc.Getenv(env, "REXDIFF_LATEST_URL"), latestURL),
 	}
 	target, err := filepath.EvalSymlinks(bin)
 	caskroom := string(filepath.Separator) + "Caskroom" + string(filepath.Separator)
@@ -189,7 +193,7 @@ func (u *Updater) Install(ctx context.Context, r Release) error {
 		env := []string{"GOBIN=" + filepath.Dir(u.bin)}
 		goTool := "go"
 		// Rex starts panes with a PATH without Go.
-		if _, lerr := exec.LookPath(goTool); lerr != nil {
+		if _, lerr := proc.LookPath(u.env, goTool); lerr != nil {
 			goTool = tool("go", "/opt/homebrew/bin", "/usr/local/go/bin", "/usr/local/bin")
 		}
 		_, err = u.runProgram(ctx, env, goTool, "install", modulePath+"@"+r.Tag)
@@ -215,14 +219,12 @@ func (u *Updater) checkVersion(ctx context.Context, bin, tag string) error {
 	return nil
 }
 
-// runProgram runs name with args, with env added to the environment. Its
-// error has the end of the output, which tells what went wrong.
+// runProgram runs name with args, with env added to the environment of u.
+// Its error has the end of the output, which tells what went wrong.
 func (u *Updater) runProgram(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
-	run := u.run
-	if run == nil {
-		run = runCommand
-	}
-	out, err := run(ctx, env, name, args...)
+	// A copy keeps u.env as it is.
+	cmd := proc.Command(ctx, slices.Concat(u.env, env), name, args...)
+	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return out, nil
 	}
@@ -236,9 +238,9 @@ func (u *Updater) runProgram(ctx context.Context, env []string, name string, arg
 }
 
 // tool returns the path of the program name in dirs. If dirs do not have
-// the program, tool returns name, and exec looks for name in PATH. tool
-// looks in dirs first, because Rex starts panes with a PATH without
-// Homebrew or Go.
+// the program, tool returns name, and the Updater looks for name in the
+// PATH of its environment. tool looks in dirs first, because Rex starts
+// panes with a PATH without Homebrew or Go.
 func tool(name string, dirs ...string) string {
 	for _, dir := range dirs {
 		path := filepath.Join(dir, name)
@@ -247,15 +249,6 @@ func tool(name string, dirs ...string) string {
 		}
 	}
 	return name
-}
-
-// runCommand is the run of an Updater outside tests.
-func runCommand(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
-	cmd := proc.Command(ctx, name, args...)
-	if env != nil {
-		cmd.Env = append(cmd.Environ(), env...)
-	}
-	return cmd.CombinedOutput()
 }
 
 // download downloads the archive of r for this system and checks it with
@@ -391,11 +384,11 @@ func get(ctx context.Context, url string, limit int64) ([]byte, error) {
 	return body, nil
 }
 
-// Restart runs the rexdiff at bin with args in place of this process. The
-// process ID and the terminal stay, so Rex sees the same program. Restart
-// returns only if it fails.
-func Restart(bin string, args []string) error {
-	return syscall.Exec(bin, append([]string{bin}, args...), os.Environ())
+// Restart runs the rexdiff at bin with args and the environment env in
+// place of this process. The process ID and the terminal stay, so Rex sees
+// the same program. Restart returns only if it fails.
+func Restart(bin string, args, env []string) error {
+	return syscall.Exec(bin, append([]string{bin}, args...), env)
 }
 
 // newer reports whether the version tag is newer than the version have.

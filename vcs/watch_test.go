@@ -233,9 +233,11 @@ func TestWatcherNested(t *testing.T) {
 // TestWatcherRunsNoGit checks that a Watcher runs no git process while
 // nothing changes.
 func TestWatcherRunsNoGit(t *testing.T) {
-	r, _ := newRepo(t)
+	t.Parallel()
+	env, link := gitLink(t)
+	r, _ := newRepoEnv(t, env)
 	w := newWatcher(t, r)
-	t.Setenv("PATH", t.TempDir())
+	removeGit(t, link)
 	for range 3 {
 		ch, err := w.Changed(t.Context())
 		if err != nil || ch != (vcs.Change{}) {

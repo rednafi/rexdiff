@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rednafi/rexdiff/internal/proc"
 	"github.com/rednafi/rexdiff/internal/testgit"
 	"github.com/rednafi/rexdiff/vcs"
 )
@@ -197,7 +197,7 @@ func TestReadFileStaysInRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := exec.CommandContext(t.Context(), "mkfifo", filepath.Join(dir, "fifo")).Run(); err != nil {
+	if err := proc.Command(t.Context(), testgit.ToolEnv(t), "mkfifo", filepath.Join(dir, "fifo")).Run(); err != nil {
 		t.Fatal(err)
 	}
 	bad := []string{"../secret", secret, "to-secret", "to-zero", "to-dir", "fifo"}
@@ -321,6 +321,7 @@ func TestCommitsHostileSubject(t *testing.T) {
 // TestPullRequestBadJSON checks the output of gh that is not a normal pull
 // request.
 func TestPullRequestBadJSON(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, out string
 		wantErr   error // nil for an error of any type
@@ -338,10 +339,10 @@ func TestPullRequestBadJSON(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			bin := t.TempDir()
-			fakePath(t, bin)
 			fakeTool(t, bin, "gh", map[string]string{ghArgs: tt.out})
-			r, _ := repoAt(t, "https://github.com/o/r")
+			r, _ := repoAt(t, testgit.ToolEnv(t, bin), "https://github.com/o/r")
 			pr, err := r.PullRequest(t.Context(), vcs.Hosts{})
 			switch {
 			case tt.ok && (err != nil || pr.Title != "T"):
@@ -359,15 +360,18 @@ func TestPullRequestBadJSON(t *testing.T) {
 // before the deadline of ctx, with more set, as herdr-reviewr does with
 // its time budget.
 func TestGrepDeadline(t *testing.T) {
-	r, _ := newRepo(t)
-	bin := t.TempDir()
-	// The fake git prints one match and a cut record, then hangs. With
-	// SLOW set, it first waits past the budget.
-	testgit.Script(t, bin, "git", `[ -n "$SLOW" ] && /bin/sleep 0.3
+	t.Parallel()
+	env, link := gitLink(t)
+	r, _ := newRepoEnv(t, env)
+	// The fake git takes the place of git after Open. It prints one match
+	// and a cut record, then hangs. With the file slow beside it, it first
+	// waits past the budget.
+	removeGit(t, link)
+	bin := filepath.Dir(link)
+	testgit.Script(t, bin, "git", `[ -e "${0%/*}/slow" ] && /bin/sleep 0.3
 printf 'a.go\0001\000hit\nb.go\00012'
 exec /bin/sleep 10
 `)
-	t.Setenv("PATH", bin)
 	grep := func(timeout, budget time.Duration) ([]vcs.Match, bool, error) {
 		ctx, cancel := context.WithTimeout(t.Context(), timeout)
 		defer cancel()
@@ -377,7 +381,7 @@ exec /bin/sleep 10
 		len(ms) != 1 || ms[0].Text != "hit" {
 		t.Errorf("Grep past the budget = %+v, %v, %v, want the hit, more, no error", ms, more, err)
 	}
-	t.Setenv("SLOW", "1")
+	testgit.WriteFile(t, bin, "slow", "")
 	if ms, more, err := grep(5*time.Second, time.Millisecond); err != nil || !more || len(ms) != 1 {
 		t.Errorf("Grep with no line at the budget = %+v, %v, %v, want the first hit, more", ms, more, err)
 	}

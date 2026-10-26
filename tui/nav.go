@@ -311,7 +311,7 @@ func (m *model) openPR() tea.Cmd {
 	if m.pr.pr == nil || m.pr.pr.URL == "" {
 		return nil
 	}
-	wait, err := openURL(m.cfg, m.pr.pr.URL)
+	wait, err := openURL(m.env, m.cfg, m.pr.pr.URL)
 	if err != nil {
 		m.flash("open failed: " + err.Error())
 	}

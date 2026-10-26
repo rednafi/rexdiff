@@ -17,6 +17,10 @@ exports. A test that needs git runs real git in a temporary repository.
 `internal/testgit` makes these repositories and hides your git config, so hooks or
 signing do not change the result.
 
+The libraries take their environment as a value, so each test gives its own
+environment, with its own `PATH` for the fake tools. No library test changes the
+environment of the process, so all of them run in parallel.
+
 ## Black-box tests
 
 Each test starts rexdiff in a pseudo-terminal, sends keys or mouse events, and waits

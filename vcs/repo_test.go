@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rednafi/rexdiff/internal/proc"
 	"github.com/rednafi/rexdiff/internal/testgit"
 	"github.com/rednafi/rexdiff/vcs"
 )
@@ -41,25 +42,57 @@ var testRepo = testgit.NewFixture(func(tb testing.TB, dir string) {
 })
 
 // newRepo copies testRepo to a new directory, and returns the repository
-// and its directory.
+// and its directory. The repository has the environment of
+// [testgit.ToolEnv].
 func newRepo(t *testing.T) (*vcs.Repo, string) {
+	t.Helper()
+	return newRepoEnv(t, testgit.ToolEnv(t))
+}
+
+// newRepoEnv is like newRepo, but the repository has the environment env.
+func newRepoEnv(t *testing.T, env []string) (*vcs.Repo, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "a repo ") // git keeps the space
 	testRepo.Copy(t, dir)
 
 	// Open from a subdirectory. Open must find the root.
-	return open(t, filepath.Join(dir, "build")), dir
+	return openEnv(t, filepath.Join(dir, "build"), env), dir
 }
 
-// open opens the repository at dir, and closes it at the end of the test.
+// open opens the repository at dir with the environment of
+// [testgit.ToolEnv], and closes it at the end of the test.
 func open(t *testing.T, dir string) *vcs.Repo {
 	t.Helper()
-	r, err := vcs.Open(t.Context(), dir)
+	return openEnv(t, dir, testgit.ToolEnv(t))
+}
+
+// openEnv is like open, but the repository has the environment env.
+func openEnv(t *testing.T, dir string, env []string) *vcs.Repo {
+	t.Helper()
+	r, err := vcs.Open(t.Context(), dir, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = r.Close() })
 	return r
+}
+
+// gitLink returns an environment with a PATH of only a new directory, and
+// the link to git in that directory. A test removes the link to take git
+// away from a repository that is open.
+func gitLink(t *testing.T) (env []string, link string) {
+	t.Helper()
+	bin := t.TempDir()
+	testgit.LinkGit(t, bin)
+	return append(testgit.Env(), "PATH="+bin), filepath.Join(bin, "git")
+}
+
+// removeGit removes the link to git of gitLink.
+func removeGit(t *testing.T, link string) {
+	t.Helper()
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // snapshot returns the tree of the working tree.
@@ -301,7 +334,7 @@ func TestFilesInConflict(t *testing.T) {
 	run("checkout", "-q", "main")
 	testgit.WriteFile(t, dir, "f.txt", "main\n")
 	run("commit", "-qam", "main")
-	cmd := exec.CommandContext(t.Context(), "git", "merge", "other")
+	cmd := proc.Command(t.Context(), testgit.ToolEnv(t), "git", "merge", "other")
 	cmd.Dir = dir
 	if err := cmd.Run(); err == nil {
 		t.Fatal("git merge other: no error, want a conflict")
@@ -406,8 +439,10 @@ func TestOwns(t *testing.T) {
 // TestOwnsWithoutGit checks that Owns fails without git. No git runs for
 // a path outside the root.
 func TestOwnsWithoutGit(t *testing.T) {
-	r, dir := newRepo(t)
-	t.Setenv("PATH", t.TempDir())
+	t.Parallel()
+	env, link := gitLink(t)
+	r, dir := newRepoEnv(t, env)
+	removeGit(t, link)
 	if _, err := r.Owns(t.Context(), dir); err == nil {
 		t.Error("Owns without git gives no error")
 	}
@@ -503,7 +538,7 @@ func TestDiffRenameAndSubmodule(t *testing.T) {
 // TestOpenOutsideARepo checks that Open fails outside a repository.
 func TestOpenOutsideARepo(t *testing.T) {
 	t.Parallel()
-	if _, err := vcs.Open(t.Context(), t.TempDir()); err == nil {
+	if _, err := vcs.Open(t.Context(), t.TempDir(), testgit.ToolEnv(t)); err == nil {
 		t.Error("Open outside a repository: no error, want an error")
 	}
 }
@@ -518,7 +553,7 @@ func TestNewRepo(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), name)
 			testgit.InitRepo(t, dir)
 			testgit.WriteFile(t, dir, "a.txt", "one\n")
-			r, err := vcs.Open(t.Context(), dir)
+			r, err := vcs.Open(t.Context(), dir, testgit.ToolEnv(t))
 			if err != nil {
 				t.Fatal(err)
 			}

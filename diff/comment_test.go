@@ -2,14 +2,13 @@ package diff_test
 
 import (
 	"encoding/json/v2"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/rednafi/rexdiff/diff"
+	"github.com/rednafi/rexdiff/internal/proc"
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
@@ -202,13 +201,12 @@ func TestSnippetIsTheRealDiff(t *testing.T) {
 		testgit.WriteFile(t, dir, name, src)
 	}
 	// git diff exits with 1 when the files differ.
-	git := exec.CommandContext(t.Context(),
+	// No diff setting of the user applies.
+	git := proc.Command(t.Context(), testgit.ToolEnv(t),
 		"git", "diff", "--no-index", "-U1",
 		filepath.Join(dir, "old"),
 		filepath.Join(dir, "new"),
 	)
-	// No diff setting of the user applies.
-	git.Env = append(os.Environ(), testgit.Env()...)
 	out, _ := git.Output()
 	_, body, _ := strings.Cut(string(out), "@@\n")
 	if strings.TrimSuffix(body, "\n") != want {

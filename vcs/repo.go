@@ -4,6 +4,10 @@
 // A [Repo] compares trees. A tree is the ID of a git tree object.
 // [Repo.Snapshot] gets a tree of the working tree. [Repo.Diff] gets the files
 // that differ between two trees.
+//
+// [Open] takes the environment of git and of the forge tools as a value,
+// as in [exec.Cmd.Env]. The package does not read the environment of the
+// process.
 package vcs
 
 import (
@@ -48,7 +52,8 @@ var (
 // Repo is a git repository.
 type Repo struct {
 	root  string
-	index string // the path of the real index
+	index string   // the path of the real index
+	env   []string // the environment of git and of the forge tools
 
 	// snapMu guards the private index of Snapshot, in the directory
 	// snapDir, or "" before the first Snapshot.
@@ -56,9 +61,16 @@ type Repo struct {
 	snapDir string
 }
 
-// Open returns the repository that contains dir.
-func Open(ctx context.Context, dir string) (*Repo, error) {
-	r := &Repo{root: dir}
+// Open returns the repository that contains dir. The repository runs git
+// and the forge tools with the environment env, and finds them in the
+// PATH of env. Open does not change env.
+func Open(ctx context.Context, dir string, env []string) (*Repo, error) {
+	// git gets the root in PWD. PWD must be an absolute path.
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	r := &Repo{root: abs, env: env}
 	// Get each path with its own git process, because a path can have a
 	// newline. A path can also end with a space, so remove only the last
 	// newline.
@@ -93,7 +105,7 @@ func (r *Repo) Close() error {
 func (r *Repo) Root() string { return r.root }
 
 // run runs git in the root directory and returns its standard output. env
-// adds to the environment of the process.
+// adds to the environment of the repository.
 func (r *Repo) run(ctx context.Context, env []string, args ...string) (string, error) {
 	return r.runInput(ctx, env, nil, args...)
 }
@@ -110,14 +122,14 @@ func (r *Repo) runInput(ctx context.Context, env []string, in io.Reader, args ..
 }
 
 // command returns the command "name args..." in the root directory. env
-// adds to the environment of the process. The buffer gets the standard
+// adds to the environment of the repository. The buffer gets the standard
 // error.
 func (r *Repo) command(ctx context.Context, env []string, name string, args ...string) (*exec.Cmd, *bytes.Buffer) {
-	cmd := proc.Command(ctx, name, args...)
+	// PWD is the directory of the command, as exec sets it for a nil Env.
+	// A copy keeps r.env as it is.
+	env = slices.Concat(r.env, []string{"PWD=" + r.root}, env)
+	cmd := proc.Command(ctx, env, name, args...)
 	cmd.Dir = r.root
-	if env != nil {
-		cmd.Env = append(cmd.Environ(), env...) // Environ sets PWD to cmd.Dir
-	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	return cmd, &stderr
