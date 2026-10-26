@@ -189,7 +189,9 @@ func TestMouse(t *testing.T) {
 	tm.waitFor("copied 14 chars")
 	waitFile(t, clip, func(s string) bool { return s == "func A() int {" })
 	tm.drag("package a", "func A()")
-	waitFile(t, clip, func(s string) bool { return s == "package a\n\nfunc A() int {" })
+	waitFile(t, clip, func(s string) bool { return s == "package a\n\nf" })
+	tm.drag("A() int", "func A")
+	waitFile(t, clip, func(s string) bool { return s == "func A" })
 
 	tm.click("M long.txt", 1)
 	tm.keys(":", "2", "0", "enter") // opens the fold

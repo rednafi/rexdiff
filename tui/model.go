@@ -159,6 +159,8 @@ type dragState struct {
 	gutter bool      // the drag starts on the line numbers
 	start  int       // the row where the drag starts
 	pref   diff.Side // the side of the line numbers or the code at the start
+	// The screen line and the code column of the press and of the pointer.
+	row, x, toRow, toX int
 }
 
 // draft is the comment that the user writes. It is a new comment, or an

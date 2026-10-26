@@ -101,6 +101,10 @@ func (m *model) clickMain(mouse tea.Mouse) tea.Cmd {
 		start:  p.cur,
 		gutter: onNumber,
 		pref:   side,
+		row:    rowAt[y],
+		x:      x,
+		toRow:  rowAt[y],
+		toX:    x,
 	}
 	return nil
 }
@@ -149,9 +153,10 @@ func (m *model) onDrag(mouse tea.Mouse) {
 			}
 		}
 	}
+	m.drag.toRow, m.drag.toX = p.cur, mouse.X-m.mainX()-gutter
 	p.cur = p.head(p.cur) // the drag moves by source lines
 	m.drag.moved = p.cur != m.drag.start
-	if m.drag.moved {
+	if m.drag.moved || m.drag.toX != m.drag.x {
 		m.click = clickChain{} // a drag is not a click
 	}
 }
@@ -254,7 +259,7 @@ func (m *model) copyChars(text string) {
 }
 
 // onMouseUp ends a drag. A drag on the line numbers opens the comment
-// box. A drag on the code copies the lines.
+// box. A drag on the code copies the text from the press to the pointer.
 func (m *model) onMouseUp() tea.Cmd {
 	d := m.drag
 	m.drag.active = false
@@ -269,11 +274,36 @@ func (m *model) onMouseUp() tea.Cmd {
 			p.anchor = d.start
 		}
 		return m.startComment(d.pref)
-	case d.moved: // a drag on the code copies the range
-		lo, hi := p.span(d.start, p.cur)
-		m.copyChars(strings.Join(m.sourceLines(lo, hi, d.pref), "\n"))
+	default:
+		m.copyChars(m.dragText(d))
 	}
 	return nil
+}
+
+// dragText returns the text of drag d on the code, as herdr-reviewr
+// copies it. The text starts at the rune under the press and ends at the
+// rune under the pointer, both included. A drag that ends on its start
+// rune is a click, and gives "".
+func (m *model) dragText(d dragState) string {
+	p := m.cur()
+	a, b := p.head(d.row), p.head(d.toRow)
+	_, ca, _ := m.textAt(d.row, d.x)
+	_, cb, _ := m.textAt(d.toRow, d.toX)
+	if a > b || a == b && ca > cb {
+		a, b, ca, cb = b, a, cb, ca
+	}
+	if a == b && ca == cb {
+		return ""
+	}
+	lines := m.sourceLines(a, p.end(b), d.pref)
+	if len(lines) == 0 {
+		return ""
+	}
+	last := []rune(lines[len(lines)-1])
+	lines[len(lines)-1] = string(last[:min(cb+1, len(last))])
+	first := []rune(lines[0])
+	lines[0] = string(first[min(ca, len(first)):])
+	return strings.Join(lines, "\n")
 }
 
 // sourceLines returns the source lines of rows lo to hi of the current
