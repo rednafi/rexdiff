@@ -50,7 +50,8 @@ func shape(rows []tree.Row) []string {
 			mark string
 		}{{r.Changed, "+"}, {r.Ignored, "!"}, {r.Expanded, "v"}} {
 			if m.on {
-				b.WriteString(" " + m.mark)
+				b.WriteString(" ")
+				b.WriteString(m.mark)
 			}
 		}
 		out = append(out, b.String())

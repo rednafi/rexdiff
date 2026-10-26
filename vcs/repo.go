@@ -322,7 +322,8 @@ func (r *Repo) dropIgnored(ctx context.Context, env []string) error {
 	var drop strings.Builder
 	for p := range strings.SplitSeq(strings.TrimSuffix(out, "\x00"), "\x00") {
 		if !keep[p] {
-			drop.WriteString(p + "\x00")
+			drop.WriteString(p)
+			drop.WriteString("\x00")
 		}
 	}
 	if drop.Len() == 0 {
@@ -476,7 +477,8 @@ func (r *Repo) readBlobs(ctx context.Context, ids []string, blobs []blob) error 
 	for i, id := range ids {
 		if id != "" {
 			batch = append(batch, i)
-			in.WriteString(id + "\n")
+			in.WriteString(id)
+			in.WriteString("\n")
 		}
 	}
 	if len(batch) == 0 {

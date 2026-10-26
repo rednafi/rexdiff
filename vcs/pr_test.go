@@ -19,7 +19,11 @@ func fakeTool(t *testing.T, dir, name string, calls map[string]string) {
 	var script strings.Builder
 	script.WriteString("case \"$*\" in\n")
 	for args, out := range calls {
-		script.WriteString("'" + args + "') cat <<'EOF'\n" + out + "\nEOF\n;;\n")
+		script.WriteString("'")
+		script.WriteString(args)
+		script.WriteString("') cat <<'EOF'\n")
+		script.WriteString(out)
+		script.WriteString("\nEOF\n;;\n")
 	}
 	script.WriteString("*) echo unexpected call: \"$*\" >&2; exit 1 ;;\nesac\n")
 	testgit.Script(t, dir, name, script.String())

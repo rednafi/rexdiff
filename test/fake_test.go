@@ -40,7 +40,10 @@ var repoFixture = testgit.NewFixture(func(tb testing.TB, dir string) {
 func numbered(word string, first, last int) string {
 	var b strings.Builder
 	for n := first; n <= last; n++ {
-		b.WriteString(word + " " + strconv.Itoa(n) + "\n")
+		b.WriteString(word)
+		b.WriteString(" ")
+		b.WriteString(strconv.Itoa(n))
+		b.WriteString("\n")
 	}
 	return b.String()
 }

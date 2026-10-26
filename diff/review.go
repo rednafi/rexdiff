@@ -35,7 +35,8 @@ func format(c *Comment) string {
 	// diff.
 	if len(c.snippet) > 0 {
 		for _, l := range c.snippet {
-			b.WriteString("\n" + termtext.Plain(l))
+			b.WriteString("\n")
+			b.WriteString(termtext.Plain(l))
 		}
 	} else {
 		mark := "+"
@@ -43,7 +44,9 @@ func format(c *Comment) string {
 			mark = "-"
 		}
 		for _, l := range c.code {
-			b.WriteString("\n" + mark + termtext.Plain(l))
+			b.WriteString("\n")
+			b.WriteString(mark)
+			b.WriteString(termtext.Plain(l))
 		}
 	}
 	var text []string
@@ -52,7 +55,8 @@ func format(c *Comment) string {
 			text = append(text, strings.TrimRight(l, " \t"))
 		}
 	}
-	b.WriteString("\n" + strings.Join(text, "\n"))
+	b.WriteString("\n")
+	b.WriteString(strings.Join(text, "\n"))
 	return b.String()
 }
 

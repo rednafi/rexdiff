@@ -359,7 +359,8 @@ func (v *View) renderUnified() string {
 			v.lineNum(ls, after, v.afterNumDigits)
 	}
 	for i, h := range v.unified.Hunks {
-		b.WriteString(v.unifiedHeader(i) + "\n")
+		b.WriteString(v.unifiedHeader(i))
+		b.WriteString("\n")
 		oldN, newN := h.FromLine, h.ToLine
 		for _, l := range h.Lines {
 			ls, sym := v.kindStyle(l.Kind)
@@ -398,7 +399,8 @@ func (v *View) renderSplit() string {
 	var b strings.Builder
 	afterWidth := v.codeWidth + btoi(v.extraColOnAfter)
 	for i, h := range v.splitHunks {
-		b.WriteString(v.splitHeader(i) + "\n")
+		b.WriteString(v.splitHeader(i))
+		b.WriteString("\n")
 		oldN, newN := h.fromLine, h.toLine
 		for _, l := range h.lines {
 			left, leftFill := v.splitSide(l.before, oldN, v.beforeNumDigits, v.codeWidth)
