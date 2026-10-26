@@ -104,9 +104,9 @@ local settings = {
 }
 ```
 
-The other settings are the same as in
-[herdr-reviewr](https://github.com/persiyanov/herdr-reviewr). After a change, run
-`rex config reload`.
+Most other settings are as in
+[herdr-reviewr](https://github.com/persiyanov/herdr-reviewr), but `file_list` is its
+`navigator_position`. After a change, run `rex config reload`.
 
 Press `?` to see all the keys.
 
