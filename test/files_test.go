@@ -31,10 +31,12 @@ func TestFilesTab(t *testing.T) {
 
 // TestMarkdownSetting checks that markdown_view shows rendered markdown
 // at the start. As in herdr-reviewr, a changed block of rendered markdown
-// has the bar, and a comment on it is on all the lines of the block.
+// has the bar, and a comment on it is on all the lines of the block. A
+// drag copies the rendered text. n goes to a comment that starts in a
+// block.
 func TestMarkdownSetting(t *testing.T) {
 	repo := newRepo(t)
-	testgit.WriteFile(t, repo, "README.md", "# Title\n\nSome text.\n\nNew text\non two lines.\n")
+	testgit.WriteFile(t, repo, "README.md", "# Title\n\nSome text.\n\nNew text\non\nthree lines.\n")
 	bin := clipboard(t)
 	tm := start(t, repo, opts{path: bin, env: clipEnv, args: []string{
 		"-config", `{"markdown_view": "rendered"}`,
@@ -45,18 +47,30 @@ func TestMarkdownSetting(t *testing.T) {
 	tm.keys("1", "tab")
 	tm.waitFor("Some text.")
 	tm.waitUntil(func(s string) bool {
-		return sameLine(s, "▌", "New text on two lines.") && !sameLine(s, "▌", "Some text.")
+		return sameLine(s, "▌", "New text on three lines.") && !sameLine(s, "▌", "Some text.")
 	}, "mark the changed block")
 	tm.keys(":", "6", "enter")
-	tm.waitCursor("New text on two lines.")
+	tm.waitCursor("New text on three lines.")
 	tm.keys("c")
 	tm.typed("hi")
 	tm.keys("enter")
 	tm.waitFor("💬 hi")
 	tm.keys("y")
 	waitFile(t, filepath.Join(bin, "clip"), func(s string) bool {
-		return s == "README.md:5-6\n+New text\n+on two lines.\nhi"
+		return s == "README.md:5-7\n+New text\n+on\n+three lines.\nhi"
 	})
+	tm.drag("Some", "text.")
+	waitFile(t, filepath.Join(bin, "clip"), func(s string) bool { return s == "Some t" })
+	tm.keys("m", ":", "6", "enter")
+	tm.waitCursor("on")
+	tm.keys("c")
+	tm.typed("x")
+	tm.keys("enter")
+	tm.waitFor("💬 x")
+	tm.keys("m", ":", "0", "enter")
+	tm.waitCursor("Title")
+	tm.keys("n")
+	tm.waitCursor("New text on three lines.")
 }
 
 // TestSearch checks that / finds files by name and lines by code, shows a

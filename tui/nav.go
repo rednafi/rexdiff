@@ -651,9 +651,15 @@ func cursorToLine(p *pane, s diff.Side, line int) {
 	}
 }
 
-// rowOf returns the first row of p that shows line on side s, or -1.
+// rowOf returns the first row of p that shows line on side s, or -1. In
+// rendered markdown, a line in a block is on the first row of the block,
+// as in gotoLine.
 func (p *pane) rowOf(s diff.Side, line int) int {
-	return slices.IndexFunc(p.rows, func(r diff.Row) bool { return r.Line(s) == line })
+	i := slices.IndexFunc(p.rows, func(r diff.Row) bool { return r.Line(s) == line })
+	if i < 0 && p.src != nil && slices.ContainsFunc(p.src, func(r diff.Row) bool { return r.Line(s) == line }) {
+		return p.head(lineRow(p.rows, s, line))
+	}
+	return i
 }
 
 // gotoLine moves the cursor to the line in text, as herdr-reviewr does.

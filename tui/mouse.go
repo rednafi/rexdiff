@@ -287,6 +287,9 @@ func (m *model) onMouseUp() tea.Cmd {
 func (m *model) dragText(d dragState) string {
 	p := m.cur()
 	a, b := p.head(d.row), p.head(d.toRow)
+	if p.src != nil {
+		a, b = d.row, d.toRow // rendered markdown gives the text on the screen
+	}
 	_, ca, _ := m.textAt(d.row, d.x)
 	_, cb, _ := m.textAt(d.toRow, d.toX)
 	if a > b || a == b && ca > cb {
@@ -295,7 +298,14 @@ func (m *model) dragText(d dragState) string {
 	if a == b && ca == cb {
 		return ""
 	}
-	lines := m.sourceLines(a, p.end(b), d.pref)
+	var lines []string
+	if p.src != nil {
+		for _, l := range p.lines[a : b+1] {
+			lines = append(lines, strings.TrimRight(ansi.Strip(l), " "))
+		}
+	} else {
+		lines = m.sourceLines(a, p.end(b), d.pref)
+	}
 	if len(lines) == 0 {
 		return ""
 	}
