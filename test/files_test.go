@@ -144,7 +144,7 @@ func TestPR(t *testing.T) {
 {"number": 7, "title": "Add b", "state": "OPEN", "isDraft": false,
  "url": "${PR_URL:-https://github.com/o/r/pull/7}", "body": "The body of the PR. See [the docs](https://example.com/docs).",
  "author": {"login": "ann"}, "headRefName": "feat", "baseRefName": "main",
- "comments": [{"author": {"login": "bob"}, "body": "Looks good.\n\n<details><summary>The  logs</summary>\n\nA hidden line.\n\n</details>",
+ "comments": [{"author": {"login": "bob"}, "body": "Looks good.\n\n<details><summary>The  logs</summary>\n\nA hidden line.\n\n<details><summary>Inner</summary>\n\nDeep.\n\n</details>\n\nAfter inner.\n\n</details>",
    "createdAt": "` + created + `"}],
  "statusCheckRollup": [{"name": "test", "conclusion": "SUCCESS"},
    {"name": "lint", "conclusion": "FAILURE"}]}
@@ -158,11 +158,12 @@ EOF
 	tm.waitFor("Add b #7", "● open", "feat → main", "by ann",
 		"checks: ✓ 1  ✗ 1", "✗ lint", "The body of the PR.", "bob  3h",
 		"Looks good.", "▸ The logs")
-	if s := tm.waitFor("▸ The logs"); strings.Contains(s, "A hidden line.") {
+	if s := tm.waitFor("▸ The logs"); strings.Contains(s, "A hidden line.") ||
+		strings.Contains(s, "After inner.") {
 		t.Errorf("a closed details block shows its body. The screen shows:\n%s", s)
 	}
 	tm.keys("right")
-	tm.waitFor("▾ The logs", "A hidden line.")
+	tm.waitFor("▾ The logs", "A hidden line.", "▾ Inner", "Deep.", "After inner.")
 	tm.keys("left")
 	tm.waitFor("▸ The logs")
 	tm.waitGone("A hidden line.")

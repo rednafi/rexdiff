@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -168,21 +169,33 @@ func (m *model) renderPR() {
 }
 
 // detailsRE matches a <details> block with its summary and its body.
-var detailsRE = regexp.MustCompile(
-	`(?is)<details[^>]*>\s*<summary[^>]*>(.*?)</summary>(.*?)</details>`)
+// detailsOpenRE matches the start of a block.
+var (
+	detailsRE = regexp.MustCompile(
+		`(?is)\A<details[^>]*>\s*<summary[^>]*>(.*?)</summary>(.*?)</details>`)
+	detailsOpenRE = regexp.MustCompile(`(?i)<details[^>]*>`)
+)
 
 // details returns src with each <details> block as its summary line, as
 // herdr-reviewr shows it. The line starts with ▸ for a closed block, and
 // with ▾ for an open block. The body of an open block follows the line.
+// The last block is done first. Thus an inner block is done before the
+// block that holds it.
 func (m *model) details(src string) string {
-	return detailsRE.ReplaceAllStringFunc(src, func(b string) string {
-		sub := detailsRE.FindStringSubmatch(b)
-		summary := strings.Join(strings.Fields(sub[1]), " ")
-		if !m.prDetails {
-			return "\n\n▸ " + summary + "\n\n"
+	for _, o := range slices.Backward(detailsOpenRE.FindAllStringIndex(src, -1)) {
+		sub := detailsRE.FindStringSubmatchIndex(src[o[0]:])
+		if sub == nil {
+			continue
 		}
-		return "\n\n▾ " + summary + "\n\n" + sub[2] + "\n\n"
-	})
+		b := src[o[0]:]
+		summary := strings.Join(strings.Fields(b[sub[2]:sub[3]]), " ")
+		block := "\n\n▸ " + summary + "\n\n"
+		if m.prDetails {
+			block = "\n\n▾ " + summary + "\n\n" + b[sub[4]:sub[5]] + "\n\n"
+		}
+		src = src[:o[0]] + block + b[sub[1]:]
+	}
+	return src
 }
 
 // age returns the time from when to now, as herdr-reviewr shows it, for
