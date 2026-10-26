@@ -169,8 +169,7 @@ func isWebURL(url string) bool {
 	web := len(url) > len("http://") && strings.HasPrefix(lower, "http://") ||
 		len(url) > len("https://") && strings.HasPrefix(lower, "https://")
 	return web && !strings.ContainsFunc(url, func(r rune) bool {
-		return unicode.IsControl(r) || r >= '\u202a' && r <= '\u202e' ||
-			r >= '\u2066' && r <= '\u2069' || r == '\u200e' || r == '\u200f'
+		return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
 	})
 }
 
