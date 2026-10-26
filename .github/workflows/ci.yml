@@ -45,7 +45,7 @@ jobs:
       - name: go fix
         run: test -z "$(go fix -diff ./... | tee /dev/stderr)"
       # golangci-lint also runs the formatters gofmt and gofumpt.
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           # Older releases cannot read the export data of a newer Go.
           version: v2.15.0
