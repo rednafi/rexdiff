@@ -22,7 +22,9 @@ import each other.
 - `update` installs a newer release and restarts rexdiff.
 
 `internal/` holds helpers: the file tree, search ranking, turn detection, the clipboard,
-the editor command, text cleaning, and the diff renderer copied from crush.
+the editor command, text cleaning, the runs of other programs, and the diff renderer
+copied from crush. The libraries get their environment from `cmd/rexdiff`, and do not
+read the environment of the process.
 `internal/testgit` sets up git for the tests.
 
 `cmd/rexdiff` parses the flags, handles `rexdiff install`, upgrades `rexdiff.lua` at

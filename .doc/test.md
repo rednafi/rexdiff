@@ -33,8 +33,8 @@ tm.waitFor("💬 hi")
 ```
 
 The keys and the mouse go through a terminal emulator, so rexdiff gets them as from a
-real terminal. No test waits a fixed time for rexdiff; each waits for the screen or for
-a file.
+real terminal. No test waits a fixed time for rexdiff. Each one waits for the screen or
+for a file.
 
 Short shell scripts on `PATH` stand in for rex, gh, pbcopy, and the editors. The fake
 rex prints output recorded from a real Rex, in `test/testdata/rex`. The scripts in
