@@ -707,3 +707,23 @@ func TestGrepCancelled(t *testing.T) {
 		t.Errorf("Grep with a cancelled context = %v, want %v", err, context.Canceled)
 	}
 }
+
+// TestSnapshotFollowsIndex checks that a Snapshot after an earlier one
+// drops a file that git now ignores, and keeps a file that the user adds
+// with "git add -f".
+func TestSnapshotFollowsIndex(t *testing.T) {
+	t.Parallel()
+	r, dir := newRepo(t)
+	testgit.WriteFile(t, dir, "build.log", "x\n")
+	testgit.WriteFile(t, dir, "keep.env", "k\n")
+	if got := uncommitted(t, r); got != "A.gitignore Ma.txt Abuild.log Akeep.env Anew.txt" {
+		t.Fatalf("Diff(HEAD, Snapshot) = %s, want A.gitignore Ma.txt Abuild.log Akeep.env Anew.txt", got)
+	}
+	testgit.WriteFile(t, dir, ".gitignore", "ignored.txt\nbuild/\n*.log\n*.env\n")
+	testgit.Git(t, dir, "add", ".gitignore")
+	testgit.Git(t, dir, "add", "-f", "keep.env")
+	testgit.Git(t, dir, "commit", "-qm", "ignore")
+	if got := uncommitted(t, r); got != "Ma.txt Anew.txt" {
+		t.Errorf("Diff(HEAD, Snapshot) after the ignore = %s, want Ma.txt Anew.txt", got)
+	}
+}

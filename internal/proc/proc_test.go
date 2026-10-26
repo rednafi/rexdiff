@@ -170,4 +170,17 @@ func TestLookPath(t *testing.T) {
 	if got, err := proc.LookPath(nil, "sh"); !errors.Is(err, exec.ErrNotFound) {
 		t.Errorf("LookPath(nil, sh) = %q, %v, want exec.ErrNotFound", got, err)
 	}
+	// A relative entry names a directory of the working directory, which
+	// can be the repository under review.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(wd, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := proc.LookPath([]string{"PATH=" + rel}, "both"); !errors.Is(err, exec.ErrNotFound) {
+		t.Errorf("LookPath(PATH=%s, both) = %q, %v, want exec.ErrNotFound", rel, got, err)
+	}
 }

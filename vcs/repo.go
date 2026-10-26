@@ -56,10 +56,16 @@ type Repo struct {
 	env   []string // the environment of git and of the forge tools
 
 	// snapMu guards the private index of Snapshot, in the directory
-	// snapDir, or "" before the first Snapshot.
-	snapMu  sync.Mutex
-	snapDir string
+	// snapDir, or "" before the first Snapshot. snapSeed is the file status
+	// of the real index at the last copy.
+	snapMu   sync.Mutex
+	snapDir  string
+	snapSeed string
+	closed   bool
 }
+
+// errClosed is the error of a Snapshot after Close.
+var errClosed = errors.New("the repository is closed")
 
 // Open returns the repository that contains dir. The repository runs git
 // and the forge tools with the environment env, and finds them in the
@@ -94,7 +100,7 @@ func (r *Repo) Close() error {
 	r.snapMu.Lock()
 	defer r.snapMu.Unlock()
 	dir := r.snapDir
-	r.snapDir = ""
+	r.snapDir, r.closed = "", true
 	if dir == "" {
 		return nil
 	}
@@ -234,23 +240,17 @@ func (r *Repo) MergeBaseCommit(ctx context.Context, base string) (string, error)
 func (r *Repo) Snapshot(ctx context.Context) (string, error) {
 	r.snapMu.Lock()
 	defer r.snapMu.Unlock()
-	if r.snapDir == "" {
-		dir, err := os.MkdirTemp("", "rexdiff-index-*")
-		if err != nil {
-			return "", err
-		}
-		// "add -A" makes any index match the working tree. The copy of the
-		// real index only saves the first hash of the tracked files.
-		if err := r.copyIndex(filepath.Join(dir, "index")); err != nil {
-			_ = os.RemoveAll(dir)
-			return "", err
-		}
-		r.snapDir = dir
+	if r.closed {
+		return "", errClosed
 	}
-	// git reads a missing index file as empty, for example after a clean
-	// of the temporary directory.
-	env := []string{"GIT_INDEX_FILE=" + filepath.Join(r.snapDir, "index")}
-	_, err := r.run(ctx, env, "add", "-A", "--ignore-errors")
+	env, err := r.privateIndex()
+	if err != nil {
+		return "", fmt.Errorf("snapshot: %w", err)
+	}
+	if err := r.dropIgnored(ctx, env); err != nil {
+		return "", fmt.Errorf("snapshot: %w", err)
+	}
+	_, err = r.run(ctx, env, "add", "-A", "--ignore-errors")
 	if exitedOne(err) {
 		err = nil // git cannot add some files, but it adds the others
 	}
@@ -262,6 +262,64 @@ func (r *Repo) Snapshot(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("snapshot: %w", err)
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// privateIndex returns the environment that points git at the private
+// index of Snapshot. It copies the real index when the real index changes,
+// for example after a commit or a "git add -f". A clean of the temporary
+// directory makes a new directory. snapMu must be held.
+func (r *Repo) privateIndex() ([]string, error) {
+	seed := ""
+	if st, err := os.Stat(r.index); err == nil {
+		seed = fmt.Sprint(st.Size(), st.ModTime().UnixNano())
+	}
+	_, err := os.Stat(r.snapDir)
+	if r.snapDir == "" || err != nil || seed != r.snapSeed {
+		if r.snapDir != "" {
+			_ = os.RemoveAll(r.snapDir)
+		}
+		dir, err := os.MkdirTemp(proc.Getenv(r.env, "TMPDIR"), "rexdiff-index-*")
+		if err != nil {
+			return nil, err
+		}
+		if err := r.copyIndex(filepath.Join(dir, "index")); err != nil {
+			_ = os.RemoveAll(dir)
+			return nil, err
+		}
+		r.snapDir, r.snapSeed = dir, seed
+	}
+	return []string{"GIT_INDEX_FILE=" + filepath.Join(r.snapDir, "index")}, nil
+}
+
+// dropIgnored removes from the private index of env the files that git
+// ignores now and that the real index does not have. "add -A" keeps such
+// files, for example after an edit of a .gitignore file.
+func (r *Repo) dropIgnored(ctx context.Context, env []string) error {
+	ignored := []string{"ls-files", "-z", "-c", "-i", "--exclude-standard"}
+	out, err := r.run(ctx, env, ignored...)
+	if err != nil || out == "" {
+		return err
+	}
+	tracked, err := r.run(ctx, nil, ignored...) // force-added files stay
+	if err != nil {
+		return err
+	}
+	keep := map[string]bool{}
+	for p := range strings.SplitSeq(tracked, "\x00") {
+		keep[p] = true
+	}
+	var drop strings.Builder
+	for p := range strings.SplitSeq(strings.TrimSuffix(out, "\x00"), "\x00") {
+		if !keep[p] {
+			drop.WriteString(p + "\x00")
+		}
+	}
+	if drop.Len() == 0 {
+		return nil
+	}
+	_, err = r.runInput(ctx, env, strings.NewReader(drop.String()),
+		"rm", "--cached", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul")
+	return err
 }
 
 // copyIndex copies the real index to dst. If there is no real index, it

@@ -181,6 +181,10 @@ func (m *model) startTurn(ms []member) {
 // turn. onTurnCheck makes the turn the last turn if the working tree
 // differs from its start.
 func (m *model) checkTurnLater() tea.Cmd {
+	if m.turnChecking {
+		return nil // one check at a time
+	}
+	m.turnChecking = true
 	p, repo, ctx := m.pending, m.repo, m.ctx
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(ctx, reloadTimeout)
@@ -200,6 +204,7 @@ type turnCheckMsg struct {
 // onTurnCheck makes the turn of msg the last turn if it is still pending
 // and the working tree differs from its start.
 func (m *model) onTurnCheck(msg turnCheckMsg) {
+	m.turnChecking = false
 	switch {
 	case msg.err != nil:
 		m.log.Warn("turn change check failed", "err", msg.err)

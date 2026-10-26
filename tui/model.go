@@ -229,6 +229,8 @@ type model struct {
 	reloadAt    time.Time
 	reloadRetry retryTimer
 	loads       reloads
+	// turnChecking is true while a check of the pending turn runs.
+	turnChecking bool
 
 	tab   tab
 	scope Scope
@@ -482,7 +484,11 @@ func (m *model) flash(s string) {
 
 // reload reads the changes of the scope again, even if the trees do not
 // change.
-func (m *model) reload() { m.loads.want, m.loads.force = true, true }
+// A reload that runs is then stale, because the view can change.
+func (m *model) reload() {
+	l := &m.loads
+	l.want, l.force, l.stale = true, true, l.running
+}
 
 // reloadIfChanged reads the changes of the scope again if the trees differ
 // from the shown trees.
@@ -496,6 +502,7 @@ type reloads struct {
 	running bool // the reload gen runs
 	want    bool // a reload is due
 	force   bool // the due reload shows the changes even if the trees are the same
+	stale   bool // the view changes while the reload gen runs, so its result is old
 }
 
 // loadNow reads the changes at once, for the first screen. Nothing shows
@@ -519,7 +526,7 @@ func (m *model) startReload() tea.Cmd {
 		return nil
 	}
 	l.gen++
-	l.running, l.want = true, false
+	l.running, l.want, l.stale = true, false, false
 	in := m.reloadInput(l.force)
 	l.force = false
 	return func() tea.Msg { return in.run() }
@@ -641,10 +648,17 @@ func (in reloadInput) changedFiles(ctx context.Context, from, to string) ([]chan
 // of the scope that show, and the error shows in their place only if no
 // files show. A change of the view during the reload starts one more.
 func (m *model) onChanges(msg changesMsg) {
-	if msg.gen != m.loads.gen {
+	l := &m.loads
+	if msg.gen != l.gen {
 		return
 	}
-	m.loads.running = false
+	l.running = false
+	if l.stale || m.mode == modeComment {
+		// As in herdr-reviewr, the view does not change under the comment
+		// box. The reload runs again later.
+		l.want, l.stale = true, false
+		return
+	}
 	m.reloadAt = time.Now().Add(reloadPauseFactor * msg.took)
 	m.retry(msg.err)
 	note, err := msg.note, msg.err

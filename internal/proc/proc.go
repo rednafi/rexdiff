@@ -69,7 +69,9 @@ func LookPath(env []string, file string) (string, error) {
 		return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
 	}
 	for dir := range strings.SplitSeq(Getenv(env, "PATH"), string(filepath.ListSeparator)) {
-		if dir == "" {
+		if !filepath.IsAbs(dir) {
+			// A relative entry, as ".", names a directory of the working
+			// tree that rexdiff shows. exec.LookPath refuses it too.
 			continue
 		}
 		if path := filepath.Join(dir, file); executable(path) {
