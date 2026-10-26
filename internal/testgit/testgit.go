@@ -55,7 +55,8 @@ func Main(m *testing.M) {
 // Git reads no global or system config, so no hooksPath, signing,
 // fsmonitor, or diff setting applies. Git reads no system attributes
 // file. An empty GIT_TEMPLATE_DIR copies no template, so a new repository
-// gets no hooks. The commits have a fixed author.
+// gets no hooks. Git does no maintenance in the background. The commits
+// have a fixed author.
 func Env() []string {
 	return []string{
 		"GIT_CONFIG_GLOBAL=" + os.DevNull,
@@ -66,6 +67,12 @@ func Env() []string {
 		"GIT_AUTHOR_EMAIL=t@t",
 		"GIT_COMMITTER_NAME=t",
 		"GIT_COMMITTER_EMAIL=t@t",
+		// git starts its maintenance in the background after some commands.
+		// It then writes into .git while a test copies or reads the
+		// repository.
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_KEY_1=gc.auto", "GIT_CONFIG_VALUE_1=0",
 	}
 }
 
