@@ -4,22 +4,21 @@ import (
 	"testing"
 
 	"github.com/rednafi/rexdiff/internal/turn"
-	"github.com/rednafi/rexdiff/rex"
 )
 
 // The tests come from turn.rs of herdr-reviewr.
 
 // The states of one agent that give each state of a repository.
 var (
-	resting = []rex.State{rex.StateIdle}
-	working = []rex.State{rex.StateWorking}
-	held    = []rex.State{rex.StateBlocked}
+	resting = []string{"idle"}
+	working = []string{"working"}
+	held    = []string{"blocked"}
 )
 
 // step is one call to a Tracker and the edges that it gives. With gap,
 // the step calls Gap and not Observe.
 type step struct {
-	states         []rex.State
+	states         []string
 	gap            bool
 	started, ended bool
 }
@@ -30,19 +29,19 @@ func TestFold(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
-		states []rex.State
+		states []string
 		// starts tells that the states start a turn after a rest. ends
 		// tells that they end a turn after work. A held state does neither.
 		starts, ends bool
 	}{
 		// No agent rests, so a fresh pane tracks the next turn it sees.
 		{"no agent", nil, false, true},
-		{"idle and working", []rex.State{rex.StateIdle, rex.StateWorking}, true, false},
-		{"blocked and working", []rex.State{rex.StateBlocked, rex.StateWorking}, true, false},
-		{"idle and done", []rex.State{rex.StateIdle, rex.StateDone}, false, true},
-		{"blocked and idle", []rex.State{rex.StateBlocked, rex.StateIdle}, false, false},
+		{"idle and working", []string{"idle", "working"}, true, false},
+		{"blocked and working", []string{"blocked", "working"}, true, false},
+		{"idle and done", []string{"idle", "done"}, false, true},
+		{"blocked and idle", []string{"blocked", "idle"}, false, false},
 		// An unknown state never rests, so it starts no turn.
-		{"unknown", []rex.State{"compacting"}, false, false},
+		{"unknown", []string{"compacting"}, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

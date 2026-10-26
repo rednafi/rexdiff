@@ -55,10 +55,10 @@ func Resolve(s Sources, file string, line int) (Command, error) {
 // {file}, and line in place of {line}. Without {file}, file goes at the
 // end.
 func fromTemplate(template, file string, line int) Command {
-	r := strings.NewReplacer("{file}", ShellQuote(file), "{line}", strconv.Itoa(line))
+	r := strings.NewReplacer("{file}", shellQuote(file), "{line}", strconv.Itoa(line))
 	script := r.Replace(template)
 	if !strings.Contains(template, "{file}") {
-		script += " " + ShellQuote(file)
+		script += " " + shellQuote(file)
 	}
 	return Command{Script: script, Program: program(template), Window: dialectOf(template).window}
 }
@@ -68,8 +68,8 @@ func fromTemplate(template, file string, line int) Command {
 // adds file and line in the form that the editor expects.
 func fromEditor(command, file string, line int) Command {
 	d := dialectOf(command)
-	n, f := strconv.Itoa(line), ShellQuote(file)
-	at := ShellQuote(file + ":" + n)
+	n, f := strconv.Itoa(line), shellQuote(file)
+	at := shellQuote(file + ":" + n)
 	var args string
 	switch d.line {
 	case argNone:
@@ -86,8 +86,8 @@ func fromEditor(command, file string, line int) Command {
 	return Command{Script: command + " " + args, Program: program(command), Window: d.window}
 }
 
-// ShellQuote quotes s as one word for sh.
-func ShellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+// shellQuote quotes s as one word for sh.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // lineArg is how an editor takes the line to open at.
 type lineArg int

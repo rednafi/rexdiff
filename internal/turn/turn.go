@@ -4,11 +4,7 @@
 // come from herdr-reviewr.
 package turn
 
-import (
-	"slices"
-
-	"github.com/rednafi/rexdiff/rex"
-)
+import "slices"
 
 // state is the work state of a repository. fold makes it from the states
 // of all the agents in the repository.
@@ -26,15 +22,15 @@ const (
 
 // rests reports whether s is a state between turns. A blocked agent and an
 // unknown state are in the middle of a turn.
-func rests(s rex.State) bool { return s == rex.StateIdle || s == rex.StateDone }
+func rests(s string) bool { return s == "idle" || s == "done" }
 
 // fold returns the state of a repository whose agents are in the states
 // states. One working agent makes the repository work.
-func fold(states ...rex.State) state {
-	if slices.Contains(states, rex.StateWorking) {
+func fold(states ...string) state {
+	if slices.Contains(states, "working") {
 		return stateWorking
 	}
-	if slices.ContainsFunc(states, func(s rex.State) bool { return !rests(s) }) {
+	if slices.ContainsFunc(states, func(s string) bool { return !rests(s) }) {
 		return stateHeld
 	}
 	return stateResting
@@ -53,9 +49,10 @@ type Tracker struct {
 }
 
 // Observe takes the states of all the agents in the repository at one
-// time. A turn starts when one agent works after all rest. A turn ends
+// time. The states are those of the OSC 7501 protocol, for example
+// "idle". A turn starts when one agent works after all rest. A turn ends
 // when all rest after work, also through a prompt.
-func (t *Tracker) Observe(states ...rex.State) (started, ended bool) {
+func (t *Tracker) Observe(states ...string) (started, ended bool) {
 	s := fold(states...)
 	started = s == stateWorking && t.prevResting
 	ended = t.worked && s == stateResting

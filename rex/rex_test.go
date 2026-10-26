@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
@@ -175,48 +176,52 @@ func blockEvent(block, name, payload string) string {
 // again.
 func TestWatch(t *testing.T) {
 	t.Parallel()
-	c, dir := fakeRex(t)
-	events := strings.Join([]string{
-		blockEvent("block:pi", "program_status_changed", `{"id":"",`+
-			`"record":{"state":"working","kind":"","app":"x","effective_app":"pi",`+
-			`"updated_at":"2026-10-25T21:11:03.5Z"},`+
-			`"reason":"report"}`),
-		blockEvent("block:pi", "program_status_changed",
-			`{"id":"sub","record":{"state":"idle"}}`),
-		`not json`,
-		// The removal of a sub record is not a change of the agent.
-		blockEvent("block:pi", "program_status_removed",
-			`{"ids":["sub"],"reason":"clear"}`),
-		blockEvent("block:pi", "program_status_removed",
-			`{"ids":[""],"reason":"clear"}`),
-		`{"type":"session_event","payload":{"event":{"type":"block_closed",` +
-			`"payload":{"block_id":"block:pi"}}}}`,
-	}, "\n")
-	testgit.WriteFile(t, dir, "events", events+"\n")
+	// synctest has a fake clock. Thus the test does not wait 2 seconds
+	// before rex starts again.
+	synctest.Test(t, func(t *testing.T) {
+		c, dir := fakeRex(t)
+		events := strings.Join([]string{
+			blockEvent("block:pi", "program_status_changed", `{"id":"",`+
+				`"record":{"state":"working","kind":"","app":"x","effective_app":"pi",`+
+				`"updated_at":"2026-10-25T21:11:03.5Z"},`+
+				`"reason":"report"}`),
+			blockEvent("block:pi", "program_status_changed",
+				`{"id":"sub","record":{"state":"idle"}}`),
+			`not json`,
+			// The removal of a sub record is not a change of the agent.
+			blockEvent("block:pi", "program_status_removed",
+				`{"ids":["sub"],"reason":"clear"}`),
+			blockEvent("block:pi", "program_status_removed",
+				`{"ids":[""],"reason":"clear"}`),
+			`{"type":"session_event","payload":{"event":{"type":"block_closed",` +
+				`"payload":{"block_id":"block:pi"}}}}`,
+		}, "\n")
+		testgit.WriteFile(t, dir, "events", events+"\n")
 
-	at := time.Date(2026, 10, 25, 21, 11, 3, 5e8, time.UTC)
-	once := []rex.Event{
-		{Block: "block:pi", Status: rex.Status{App: "pi", State: rex.StateWorking, At: at}},
-		{Block: "block:pi"},
-		{Block: "block:pi", Closed: true},
-	}
-	want := slices.Concat(once, []rex.Event{{Reconnect: true}}, once)
-	// Stop Watch when it reports all the events.
-	ctx, cancel := context.WithCancelCause(t.Context())
-	defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
-	errAll := errors.New("the test has all the events")
-	var got []rex.Event
-	err := c.Watch(ctx, func(e rex.Event) {
-		if got = append(got, e); len(got) == len(want) {
-			cancel(errAll)
+		at := time.Date(2026, 10, 25, 21, 11, 3, 5e8, time.UTC)
+		once := []rex.Event{
+			{Block: "block:pi", Status: rex.Status{App: "pi", State: rex.StateWorking, At: at}},
+			{Block: "block:pi"},
+			{Block: "block:pi", Closed: true},
+		}
+		want := slices.Concat(once, []rex.Event{{Reconnect: true}}, once)
+		// Stop Watch when it reports all the events.
+		ctx, cancel := context.WithCancelCause(t.Context())
+		defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
+		errAll := errors.New("the test has all the events")
+		var got []rex.Event
+		err := c.Watch(ctx, func(e rex.Event) {
+			if got = append(got, e); len(got) == len(want) {
+				cancel(errAll)
+			}
+		})
+		if !errors.Is(err, errAll) {
+			t.Errorf("Watch = %v, want the cause %v", err, errAll)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("events = \n%+v\nwant:\n%+v", got, want)
 		}
 	})
-	if !errors.Is(err, errAll) {
-		t.Errorf("Watch = %v, want the cause %v", err, errAll)
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("events = \n%+v\nwant:\n%+v", got, want)
-	}
 }
 
 // TestNew checks that New returns nil outside Rex. The client of the

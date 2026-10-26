@@ -125,9 +125,9 @@ func (m *model) observeTurn() tea.Cmd {
 			m.reload() // show the new wait message
 		}
 	}
-	states := make([]rex.State, len(ms))
+	states := make([]string, len(ms))
 	for i, a := range ms {
-		states[i] = a.state
+		states[i] = string(a.state)
 	}
 	started, ended := m.tracker.Observe(states...)
 	if started {
