@@ -3,7 +3,7 @@ package tui
 // The mouse works as in herdr-reviewr. Click or drag on the line numbers to
 // comment on a line or a range. Drag on the code to copy it. Double-click
 // to copy a word, and triple-click to copy a line. Click a file or a tab to
-// open it. Double-click a file to copy its path.
+// open it. Double-click a file to copy its path. Click a link to open it.
 
 import (
 	"strings"
@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/rednafi/rexdiff/diff"
@@ -84,6 +85,11 @@ func (m *model) clickMain(mouse tea.Mouse) tea.Cmd {
 		}
 	}
 	m.focusList = false
+	if p.diff == nil { // a markdown view or the PR tab
+		if url := linkAt(p.lines[rowAt[y]], x); isWebURL(url) {
+			return m.browse(url, "link")
+		}
+	}
 	p.cur, p.anchor = p.head(rowAt[y]), -1
 	if m.atFold() {
 		m.expandFold(p.rows[p.cur].Fold)
@@ -97,6 +103,18 @@ func (m *model) clickMain(mouse tea.Mouse) tea.Cmd {
 		pref:   side,
 	}
 	return nil
+}
+
+// linkAt returns the URL of the hyperlink at column x of line, or "".
+// The markdown renderer puts a hyperlink on each link.
+func linkAt(line string, x int) string {
+	w := ansi.StringWidth(line)
+	if x < 0 || x >= w {
+		return ""
+	}
+	buf := uv.NewScreenBuffer(w, 1)
+	uv.NewStyledString(line).Draw(buf, buf.Bounds())
+	return buf.CellAt(x, 0).Link.URL
 }
 
 // inList reports whether the screen cell at column x and line y is on

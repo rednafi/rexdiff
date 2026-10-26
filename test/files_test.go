@@ -121,7 +121,7 @@ func TestPR(t *testing.T) {
 	bin := tools(t, map[string]string{
 		"gh": `cat <<EOF
 {"number": 7, "title": "Add b", "state": "OPEN", "isDraft": false,
- "url": "${PR_URL:-https://github.com/o/r/pull/7}", "body": "The body of the PR.",
+ "url": "${PR_URL:-https://github.com/o/r/pull/7}", "body": "The body of the PR. See [the docs](https://example.com/docs).",
  "author": {"login": "ann"}, "headRefName": "feat", "baseRefName": "main",
  "comments": [{"author": {"login": "bob"}, "body": "Looks good.",
    "createdAt": "` + created + `"}],
@@ -143,6 +143,11 @@ EOF
 	}
 	waitFile(t, filepath.Join(bin, "opened"), func(s string) bool {
 		return s == "https://github.com/o/r/pull/7\n"
+	})
+	tm.click("the docs", 1)
+	tm.waitFor("opened link in browser")
+	waitFile(t, filepath.Join(bin, "opened"), func(s string) bool {
+		return s == "https://example.com/docs\n"
 	})
 
 	repo = newRepo(t)

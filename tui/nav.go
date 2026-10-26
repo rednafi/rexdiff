@@ -317,16 +317,22 @@ func (m *model) openPR() tea.Cmd {
 	if pr == nil || pr.URL == "" {
 		return nil
 	}
-	wait, err := openURL(m.env, m.cfg, pr.URL)
-	if err != nil {
-		m.flash("open failed: " + err.Error())
-		return nil
-	}
 	kind := "PR"
 	if pr.Forge == vcs.ForgeGitLab {
 		kind = "MR"
 	}
-	m.flash("opened " + kind + " in browser")
+	return m.browse(pr.URL, kind)
+}
+
+// browse opens url in the browser, and tells that it opened what, as
+// herdr-reviewr does.
+func (m *model) browse(url, what string) tea.Cmd {
+	wait, err := openURL(m.env, m.cfg, url)
+	if err != nil {
+		m.flash("open failed: " + err.Error())
+		return nil
+	}
+	m.flash("opened " + what + " in browser")
 	return wait
 }
 
