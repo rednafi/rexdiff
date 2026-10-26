@@ -2,7 +2,6 @@ package test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,8 +93,8 @@ func TestSearch(t *testing.T) {
 	tm.waitCursor("line 7")
 }
 
-// TestLiveReload checks that the Changes tab shows an edit and a new file
-// without a key, and that r reloads.
+// TestLiveReload checks that the Changes tab shows an edit, a new file,
+// and a removed file without a key.
 func TestLiveReload(t *testing.T) {
 	repo := newRepo(t)
 	tm := start(t, repo, opts{})
@@ -107,7 +106,6 @@ func TestLiveReload(t *testing.T) {
 	if err := os.Remove(filepath.Join(repo, "new", "c.go")); err != nil {
 		t.Fatal(err)
 	}
-	tm.keys("r")
 	tm.waitFor("Changes (2)")
 }
 
@@ -148,14 +146,14 @@ func TestTurnRaced(t *testing.T) {
 // checks that o opens it, as in herdr-reviewr. Without {url}, the URL goes
 // at the end of the opener command. o does not open a URL that is not
 // http or https. The keys of the scopes and of the base picker do nothing
-// on the PR tab.
+// on the PR tab, and r reads the pull request again.
 func TestPR(t *testing.T) {
 	repo := newRepo(t)
 	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
 	created := time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	bin := tools(t, map[string]string{
 		"gh": `cat <<EOF
-{"number": 7, "title": "Add b", "state": "OPEN", "isDraft": false,
+{"number": 7, "title": "Add b$(cat "${0%/*}/suffix" 2>/dev/null)", "state": "OPEN", "isDraft": false,
  "url": "${PR_URL:-https://github.com/o/r/pull/7}", "body": "The body of the PR. See [the docs](https://example.com/docs).",
  "author": {"login": "ann"}, "headRefName": "feat", "baseRefName": "main",
  "comments": [{"author": {"login": "bob"}, "body": "Looks good.\n\n<details><summary>The  logs</summary>\n\nA hidden line.\n\n<details><summary>Inner</summary>\n\nDeep.\n\n</details>\n\nAfter inner.\n\n</details>",
@@ -169,11 +167,10 @@ EOF
 	config := []string{"-config", `{"url_opener": "opener"}`}
 	tm := start(t, repo, opts{path: bin, args: config})
 	tm.keys("3")
-	tm.waitFor("Add b #7", "● open", "feat → main", "by ann",
+	s := tm.waitFor("Add b #7", "● open", "feat → main", "by ann",
 		"checks: ✓ 1  ✗ 1", "✗ lint", "The body of the PR.", "bob  3h",
 		"Looks good.", "▸ The logs")
-	if s := tm.waitFor("▸ The logs"); strings.Contains(s, "A hidden line.") ||
-		strings.Contains(s, "After inner.") {
+	if strings.Contains(s, "A hidden line.") || strings.Contains(s, "After inner.") {
 		t.Errorf("a closed details block shows its body. The screen shows:\n%s", s)
 	}
 	tm.keys("right")
@@ -201,6 +198,11 @@ EOF
 	tm.waitFor("Add b #7")
 	tm.keys("o")
 	tm.waitFor("open failed: unsupported link scheme")
+	if err := os.WriteFile(filepath.Join(bin, "suffix"), []byte(" again"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tm.keys("r")
+	tm.waitFor("Add b again #7")
 }
 
 // TestNoPR checks that the PR tab tells why it has no pull request. The
@@ -212,16 +214,7 @@ func TestNoPR(t *testing.T) {
 
 	repo := newRepo(t)
 	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
-	// PATH has only git, so it has no gh.
-	git, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := t.TempDir()
-	if err := os.Symlink(git, filepath.Join(bin, "git")); err != nil {
-		t.Fatal(err)
-	}
-	tm = start(t, repo, opts{env: []string{"PATH=" + bin}})
+	tm = start(t, repo, opts{})
 	tm.keys("3")
 	tm.waitFor("gh is not installed")
 }

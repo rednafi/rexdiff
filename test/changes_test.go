@@ -82,16 +82,24 @@ func TestScopes(t *testing.T) {
 	tm.waitFor("vs feat", "Changes (2)")
 }
 
-// TestFlags checks that -scope, -base, and -layout set the start, and that
-// -log writes a log.
+// TestFlags checks that -scope, -base, -layout, and -wrap set the start,
+// and that -log writes a log. As in herdr-reviewr, -wrap off cuts a long
+// line at the start.
 func TestFlags(t *testing.T) {
+	repo := newRepo(t)
+	long := "var long = \"" + strings.Repeat("ab", 100) + "end\"\n"
+	testgit.WriteFile(t, repo, "b.go", "package a\n\n"+long)
 	log := filepath.Join(t.TempDir(), "log")
-	tm := start(t, newRepo(t), opts{width: 220, args: []string{
-		"-scope", "branch", "-base", "main", "-layout", "split", "-log", log,
+	tm := start(t, repo, opts{width: 220, args: []string{
+		"-scope", "branch", "-base", "main", "-layout", "split", "-wrap", "off", "-log", log,
 	}})
 	s := tm.waitFor("vs main", "Changes (3)")
 	if !sameLine(s, "return 1", "x := 2") {
 		t.Errorf("the screen does not show return 1 beside x := 2. It shows:\n%s", s)
+	}
+	tm.keys("f")
+	if s := tm.waitFor("var long"); strings.Contains(s, "end\"") {
+		t.Errorf("-wrap off wraps the long line. The screen shows:\n%s", s)
 	}
 	tm.keys("q")
 	if err := tm.exited(); err != nil {
@@ -116,8 +124,7 @@ func TestSplit(t *testing.T) {
 }
 
 // TestWrap checks that rexdiff wraps a long line, that w cuts it, and
-// that → scrolls to its end. As in herdr-reviewr, -wrap off cuts it at
-// the start.
+// that → scrolls to its end.
 func TestWrap(t *testing.T) {
 	repo := newRepo(t)
 	long := "var long = \"" + strings.Repeat("ab", 60) + "end\"\n"
@@ -131,14 +138,6 @@ func TestWrap(t *testing.T) {
 	// keep its start in the view.
 	tm.keys(slices.Repeat([]string{"right"}, 12)...)
 	tm.waitFor("end\"")
-
-	repo = newRepo(t)
-	testgit.WriteFile(t, repo, "b.go", "package a\n\n"+long)
-	tm = start(t, repo, opts{width: 120, args: []string{"-wrap", "off"}})
-	tm.keys("f")
-	if s := tm.waitFor("var long"); strings.Contains(s, "end\"") {
-		t.Errorf("-wrap off wraps the long line. The screen shows:\n%s", s)
-	}
 }
 
 // column returns the column of text in the first line of s that has it,
@@ -185,7 +184,9 @@ func TestFind(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("f", "ctrl+f")
 	tm.typed("line 3")
-	tm.waitFor("find line 3", " 11") // line 3, and line 30 to line 39
+	// line 3, and line 30 to line 39
+	tm.waitUntil(func(s string) bool { return sameLine(s, "find line 3", " 11") },
+		"count 11 lines")
 	tm.keys("enter")
 	tm.waitCursor("line 3")
 }

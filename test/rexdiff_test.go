@@ -46,10 +46,11 @@ func binary(t *testing.T) string {
 
 // build builds rexdiff with the version into dir, and returns its path.
 // A run with the race detector builds a rexdiff with it. The build stops
-// when ctx is done.
+// when ctx is done. -buildvcs=false keeps the version of a git tag out,
+// so a build with no version does not look for updates.
 func build(ctx context.Context, dir, version string) (string, error) {
 	bin := filepath.Join(dir, "rexdiff")
-	args := []string{"build", "-o", bin, "-ldflags", "-X main.version=" + version}
+	args := []string{"build", "-buildvcs=false", "-o", bin, "-ldflags", "-X main.version=" + version}
 	if raceOn {
 		args = append(args, "-race")
 	}
@@ -125,14 +126,13 @@ func start(t *testing.T, repo string, o opts) *term {
 	// A stop lets rexdiff remove its files before it exits.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 2 * time.Second
-	path := "/usr/bin:/bin:/usr/sbin:/sbin"
-	if git, err := exec.LookPath("git"); err == nil {
-		path = filepath.Dir(git) + string(os.PathListSeparator) + path
-	}
+	var dirs []string
 	if o.path != "" {
-		path = o.path + string(os.PathListSeparator) + path
+		dirs = append(dirs, o.path)
 	}
-	cmd.Env = append(cleanEnv(), "PATH="+path, "TERM=xterm-256color")
+	// The PATH of ToolEnv has git, but no other tool of the user.
+	cmd.Env = append(cleanEnv(), "TERM=xterm-256color")
+	cmd.Env = append(cmd.Env, testgit.ToolEnv(t, dirs...)...)
 	if o.rex != nil {
 		cmd.Env = append(cmd.Env, "REX_SESSION=S", "REX_BLOCK=block:self",
 			"REX_BIN_DIR="+o.rex.dir)

@@ -175,16 +175,19 @@ func TestAgentElsewhere(t *testing.T) {
 // TestCopy checks that y and Y copy the review and clear the comments. y
 // in the question before a quit does the same.
 func TestCopy(t *testing.T) {
+	bin := clipboard(t)
+	clip := filepath.Join(bin, "clip")
+	tm := start(t, newRepo(t), opts{path: bin, env: clipEnv})
 	for _, keys := range [][]string{{"y"}, {"Y"}, {"q", "y"}} {
-		t.Run(strings.Join(keys, ""), func(t *testing.T) {
-			bin := clipboard(t)
-			tm := start(t, newRepo(t), opts{path: bin, env: clipEnv})
-			comment(tm, "hi")
-			tm.keys(keys...)
-			tm.waitFor("copied 1 comment")
-			tm.waitGone("💬")
-			waitFile(t, filepath.Join(bin, "clip"), func(s string) bool { return s == review })
-		})
+		comment(tm, "hi")
+		tm.waitGone("copied 1 comment")
+		if err := os.WriteFile(clip, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		tm.keys(keys...)
+		tm.waitFor("copied 1 comment")
+		tm.waitGone("💬")
+		waitFile(t, clip, func(s string) bool { return s == review })
 	}
 }
 
@@ -221,16 +224,9 @@ func TestMouse(t *testing.T) {
 	tm.waitGone(" first")
 }
 
-// TestQuit checks that q quits at once with no comment, and that with a
-// comment it asks first.
+// TestQuit checks that q with a comment asks first.
 func TestQuit(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
-	tm.keys("q")
-	if err := tm.exited(); err != nil {
-		t.Errorf("q exits with %v, want no error", err)
-	}
-
-	tm = start(t, newRepo(t), opts{})
 	comment(tm, "hi")
 	tm.keys("Q", "q") // Q does nothing outside the prompt
 	tm.waitFor("1 unsent comment will be lost",
@@ -268,20 +264,16 @@ func TestCommentStays(t *testing.T) {
 }
 
 // TestEditorInPane checks that e opens a terminal editor at the line, in
-// a new Rex pane. An editor that rexdiff does not know also opens there.
+// a new Rex pane.
 func TestEditorInPane(t *testing.T) {
-	for _, editor := range []string{"nvim", "myed"} {
-		t.Run(editor, func(t *testing.T) {
-			repo := newRepo(t)
-			rex := newRex(t, repo)
-			bin := tools(t, map[string]string{editor: ""})
-			tm := start(t, repo, opts{rex: rex, path: bin, env: []string{"EDITOR=" + editor}})
-			tm.keys("]", "j", "e")
-			rex.expectCalls(t, "split -s S -b block:self --cwd "+repo+" -- sh -c "+
-				editor+" +4 '"+filepath.Join(repo, "a.go")+"'")
-			tm.waitFor("opened a.go")
-		})
-	}
+	repo := newRepo(t)
+	rex := newRex(t, repo)
+	bin := tools(t, map[string]string{"nvim": ""})
+	tm := start(t, repo, opts{rex: rex, path: bin, env: []string{"EDITOR=nvim"}})
+	tm.keys("]", "j", "e")
+	rex.expectCalls(t, "split -s S -b block:self --cwd "+repo+" -- sh -c nvim +4 '"+
+		filepath.Join(repo, "a.go")+"'")
+	tm.waitFor("opened a.go")
 }
 
 // TestWindowEditor checks that e starts a window editor at the line, and

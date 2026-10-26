@@ -108,7 +108,7 @@ func TestUpgradeFrom027(t *testing.T) {
 	}
 	if bin := os.Getenv("REXDIFF_REX"); bin != "" {
 		check := exec.CommandContext(t.Context(), bin, "config", "check")
-		check.Env = append(os.Environ(), "REX_CONFIG="+config)
+		check.Env = append(cleanEnv(), "REX_CONFIG="+config)
 		out, err := check.CombinedOutput()
 		if err != nil || !strings.Contains(string(out), "actions: 1") {
 			t.Errorf("rex config check after the upgrade: %v\n%s", err, out)

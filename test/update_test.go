@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 )
 
 // release serves the latest release tag with the binary at bin, as GitHub
@@ -44,22 +45,15 @@ func release(t *testing.T, tag, bin string) string {
 	name := "rexdiff-" + tag + "-" + runtime.GOOS + "-" + runtime.GOARCH + ".tar.gz"
 	archive := b.Bytes()
 	sum := sha256.Sum256(archive)
-	files := map[string][]byte{
-		"/" + name:        archive,
-		"/sha256sums.txt": []byte(hex.EncodeToString(sum[:]) + "  " + name + "\n"),
+	files := fstest.MapFS{
+		name:             {Data: archive},
+		"sha256sums.txt": {Data: []byte(hex.EncodeToString(sum[:]) + "  " + name + "\n")},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, ok := files[r.URL.Path]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write(b)
-	}))
+	srv := httptest.NewServer(http.FileServerFS(files))
 	t.Cleanup(srv.Close)
-	files["/latest"] = []byte(`{"tag_name": "` + tag + `", "assets": [` +
+	files["latest"] = &fstest.MapFile{Data: []byte(`{"tag_name": "` + tag + `", "assets": [` +
 		`{"name": "` + name + `", "browser_download_url": "` + srv.URL + "/" + name + `"},` +
-		`{"name": "sha256sums.txt", "browser_download_url": "` + srv.URL + `/sha256sums.txt"}]}`)
+		`{"name": "sha256sums.txt", "browser_download_url": "` + srv.URL + `/sha256sums.txt"}]}`)}
 	return srv.URL + "/latest"
 }
 

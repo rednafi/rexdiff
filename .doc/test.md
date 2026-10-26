@@ -17,6 +17,10 @@ rexdiff has library tests and black-box tests.
 - `tui` has no unit tests. The tests in `test/` build the binary and use it as you do.
 - Each test types keys and clicks through a terminal emulator, and reads the screen.
 - A test waits for the screen or for a file, never for a fixed time.
+- One test waits for the log: `TestLastTurn` waits for the line `msg="turn start"` in
+  the debug log.
+- The scripts in `test/testdata/script` test the commands, for example `install`, with
+  testscript.
 - Shell scripts stand in for rex, gh, the clipboard, and the editors. The fake rex
   prints output recorded from a real Rex.
 - `TestRealRex` runs rexdiff in a real Rex, to find a fake that no longer matches Rex.
