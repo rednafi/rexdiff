@@ -370,7 +370,7 @@ func (h helpKeys) ShortHelp() []key.Binding {
 		return []key.Binding{k.Down, k.OpenPR, k.Refresh, k.TabChanges, k.Keys, k.Quit}
 	case h.atFold:
 		return []key.Binding{
-			hint(k.Expand, firstKey(k.Expand), "show lines"),
+			hint(k.Expand, firstKey(k.Expand), "expand fold"),
 			k.Comment, k.Send, k.NextHunk, k.Keys, k.Quit,
 		}
 	}
