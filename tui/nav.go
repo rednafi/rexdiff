@@ -105,7 +105,7 @@ func (m *model) scopeKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case key.Matches(msg, k.ScopeCommits):
 		m.setScope(scopeCommits)
 	case key.Matches(msg, k.BasePick):
-		m.openBasePicker()
+		return m.openBasePicker(), true
 	case key.Matches(msg, k.CommitPick):
 		m.openCommitPicker()
 	default:

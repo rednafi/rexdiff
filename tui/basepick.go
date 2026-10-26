@@ -9,40 +9,60 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/rednafi/rexdiff/vcs"
 )
 
 // branchTimeout is the longest time of the branch list.
 const branchTimeout = 5 * time.Second
 
-// openBasePicker lets the user pick the base of the branch scope. The
-// current base has a tag. As in herdr-reviewr, the base of an open pull
-// request and the default branch come first, with a tag. The picker does
+// branchesMsg has the branch list of the base picker.
+type branchesMsg struct {
+	branches []string
+	err      error
+}
+
+// openBasePicker lists the branches for the base picker. The list does
 // nothing on the PR tab, or if the base comes from the flag.
-func (m *model) openBasePicker() {
+func (m *model) openBasePicker() tea.Cmd {
 	if m.baseFlag || m.tab == tabPR {
-		return
+		return nil
 	}
-	ov := newOverlay(overlayBase, "base branch for the branch scope (or type any ref)")
 	ctx, cancel := context.WithCancelCause(m.ctx)
 	ctx, cancelTimeout := context.WithTimeoutCause(ctx, branchTimeout,
 		fmt.Errorf("branch list: %v timeout: %w", branchTimeout, context.DeadlineExceeded))
-	defer cancelTimeout()
-	defer cancel(fmt.Errorf("branch list: done: %w", context.Canceled))
-	branches, err := m.repo.Branches(ctx)
-	if err != nil {
-		m.flash("branch list failed: " + err.Error())
+	repo := m.repo
+	return func() tea.Msg {
+		defer cancelTimeout()
+		defer cancel(fmt.Errorf("branch list: done: %w", context.Canceled))
+		branches, err := repo.Branches(ctx)
+		return branchesMsg{branches: branches, err: err}
+	}
+}
+
+// onBranches opens the base picker with the branch list of msg. The
+// current base has a tag. As in herdr-reviewr, the base of an open pull
+// request and the default branch come first, with a tag.
+func (m *model) onBranches(msg branchesMsg) {
+	if msg.err != nil {
+		m.flash("branch list failed: " + msg.err.Error())
 		return
 	}
+	if m.overlay != nil || m.tab == tabPR {
+		return
+	}
+	ov := newOverlay(overlayBase, "base branch for the branch scope (or type any ref)")
 	prBase := ""
 	if pr := m.pr.pr; pr != nil && pr.State == vcs.PROpen {
 		prBase = pr.Base
 	}
 	defaultBase := strings.TrimPrefix(m.defaultBase, "origin/")
+	current := strings.TrimPrefix(m.base, "origin/")
 	// groups has the PR base, then the default branch, then the others.
 	// Each group keeps the newest first.
 	var groups [3][]pickItem
-	for _, b := range branches {
+	for _, b := range msg.branches {
 		var tags []string
 		name, g := strings.TrimPrefix(b, "origin/"), 2
 		if name == prBase {
@@ -51,7 +71,7 @@ func (m *model) openBasePicker() {
 		if name == defaultBase {
 			tags, g = append(tags, "default"), min(g, 1)
 		}
-		if b == m.base {
+		if name == current {
 			tags = append(tags, "current")
 		}
 		groups[g] = append(groups[g], pickItem{label: b, id: b, tag: strings.Join(tags, " ")})

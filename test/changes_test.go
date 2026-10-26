@@ -59,7 +59,10 @@ func TestMove(t *testing.T) {
 // TestScopes checks that each scope shows its changes, and the pickers of
 // the commits and the base.
 func TestScopes(t *testing.T) {
-	tm := start(t, newRepo(t), opts{})
+	repo := newRepo(t)
+	// origin/main hides main in the base picker.
+	testgit.Git(t, repo, "update-ref", "refs/remotes/origin/main", "main")
+	tm := start(t, repo, opts{})
 	tm.keys("b")
 	tm.waitFor("vs main", "Changes (3)", "A b.go")
 	tm.keys("u")
@@ -76,7 +79,9 @@ func TestScopes(t *testing.T) {
 	tm.keys("esc")
 	tm.waitGone("commits · 1 over main")
 	tm.keys("u", "B")
-	tm.waitFor("base branch for the branch scope")
+	if s := tm.waitFor("base branch for the branch scope", "origin/main"); len(lines(s, "default current")) != 1 {
+		t.Errorf("the base picker has no current tag on origin/main. It shows:\n%s", s)
+	}
 	tm.typed("feat")
 	tm.keys("enter")
 	tm.waitFor("vs feat", "Changes (2)")

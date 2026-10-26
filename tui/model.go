@@ -826,6 +826,8 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 		cmd = m.onPR(msg)
 	case grepMsg:
 		m.onGrep(msg)
+	case branchesMsg:
+		m.onBranches(msg)
 	case releaseMsg:
 		m.release = &msg.release
 	case updatedMsg:
