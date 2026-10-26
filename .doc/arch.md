@@ -27,8 +27,8 @@ copied from crush. The libraries get their environment from `cmd/rexdiff`, and d
 read the environment of the process.
 `internal/testgit` sets up git for the tests.
 
-`cmd/rexdiff` parses the flags, handles `rexdiff install`, upgrades `rexdiff.lua` at
-the start, and calls `tui`.
+`cmd/rexdiff` parses the flags, handles `rexdiff install`, upgrades `rexdiff_toggle.lua`
+at the start, and calls `tui`.
 
 Only `cmd/rexdiff` reads the environment of the process, once, with `os.Environ`. It
 gives that list to the libraries, which find and run their programs with it, as
@@ -53,8 +53,20 @@ escape code. rexdiff reads that status from each pane and treats a pane that rep
 name as an agent. A `rex events` command stays running to stream state changes. If it
 exits, rexdiff starts it again after 2 seconds.
 
-`rexdiff install` writes `rexdiff.lua` into the Rex config folder. The file adds the
-"Toggle rexdiff" action, which opens rexdiff in a pane beside the focused agent.
+`rexdiff install` writes two files into the Rex config folder, from the embedded files
+`cmd/rexdiff/rexdiff.lua` and `cmd/rexdiff/rexdiff_toggle.lua`:
+
+- `rexdiff.lua` has the settings of the user. rexdiff writes it only if it is not there.
+  It loads `rexdiff_toggle.lua` with `pcall`, so a failure does not stop the rest of
+  Rex's config, and the key then shows the error.
+- `rexdiff_toggle.lua` has the "Toggle rexdiff" action, which opens rexdiff in a pane
+  beside the focused agent. rexdiff writes it whole. At a start, if the file differs
+  from the embedded code, rexdiff writes it and reloads Rex's config. It does not change
+  a file that runs another rexdiff, such as a build for development.
+
+A `rexdiff.lua` from rexdiff 0.2.7 has the code under a marker line. At the first start
+of a new rexdiff, or at an install, rexdiff keeps the settings above the line and puts
+the loader in place of the code.
 
 ## Git
 
@@ -94,4 +106,4 @@ them to a temporary file and starts the new binary in the same process, and the 
 binary reads the file.
 
 Two git refs under `refs/worktree/rexdiff/` keep the picked base branch and the
-last-turn snapshot across restarts. Settings live at the top of `rexdiff.lua`.
+last-turn snapshot across restarts. Settings live in `rexdiff.lua`.

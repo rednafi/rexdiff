@@ -26,8 +26,8 @@ type Options struct {
 	// Rex is the Rex session of the process, or nil outside Rex. Without
 	// Rex, the user cannot send the review. The user can only copy it.
 	Rex *rex.Client
-	// Config is the settings as JSON, from the top of rexdiff.lua. An
-	// empty text means the default settings.
+	// Config is the settings as JSON, from rexdiff.lua. An empty text
+	// means the default settings.
 	Config string
 	// Layout and Scope override the settings if they are not empty. Set
 	// them from the command-line flags -layout and -scope. The error of a

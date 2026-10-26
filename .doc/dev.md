@@ -20,6 +20,9 @@ pane. The log goes to `/tmp/rexdiff.log`.
 It shows `/tmp/rexreview-demo` by default. Set `REXDIFF_DEMO` for another repository.
 It needs fish and python3.
 
+The Lua of the Rex action is in `cmd/rexdiff/rexdiff.lua` and
+`cmd/rexdiff/rexdiff_toggle.lua`. The binary embeds both. See [arch.md](arch.md).
+
 Outside Rex, `go run ./cmd/rexdiff` works in any git repository but cannot send
 comments.
 

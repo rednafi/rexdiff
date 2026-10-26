@@ -19,6 +19,8 @@ With Go, replace the brew lines with
 To open rexdiff, focus the agent's pane and press Shift+Cmd+R. Press it again to close
 rexdiff.
 
+`rexdiff uninstall` removes rexdiff from Rex's config.
+
 ## Read the changes
 
 ![The Changes tab](../.asset/changes.png)
@@ -91,7 +93,7 @@ needs gh, glab, or az, and you must be logged in.
 
 ## Settings
 
-The settings are at the top of `rexdiff.lua`, next to Rex's `init.lua`. That is
+The settings are in `rexdiff.lua`, next to Rex's `init.lua`. That is
 `~/.config/rex/` unless `REX_CONFIG` or `XDG_CONFIG_HOME` moves it.
 
 ```lua
@@ -109,8 +111,8 @@ Also available: `default_scope`, `markdown_view`, `file_list`, `file_list_width`
 `gitlab_host`, and `azure_devops_host`. They take the same values as in
 [herdr-reviewr](https://github.com/persiyanov/herdr-reviewr).
 
-After a change, run `rex config reload`. Do not edit the line `-- rexdiff code below` or
-anything under it.
+After a change, run `rex config reload`. Do not edit `rexdiff_toggle.lua`, because rexdiff
+writes it again.
 
 Without `editor`, rexdiff uses `$VISUAL`, `$EDITOR`, or git's `core.editor`, read from
 your login shell. With zsh, set them in `~/.zprofile`, not `~/.zshrc`.

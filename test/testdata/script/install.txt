@@ -1,24 +1,65 @@
-# install writes rexdiff.lua, with the settings at its top, adds one line
-# to init.lua, keeps the rest of init.lua, and reloads Rex.
+# install writes rexdiff.lua with the settings and rexdiff_toggle.lua with the
+# code. It adds one line to init.lua, keeps the rest of init.lua, and
+# reloads Rex.
+env REX_CONFIG=$WORK/.config/rex/init.lua
 mkdir .config/rex
 cp mine.lua .config/rex/init.lua
 exec rexdiff install
-stdout 'wrote '$WORK'/.config/rex/rexdiff.lua; the settings are at its top'
+stdout 'wrote '$WORK'/.config/rex/rexdiff_toggle.lua'
+stdout 'wrote '$WORK'/.config/rex/rexdiff.lua with your settings'
 stdout 'added require\("rexdiff"\) to '$WORK'/.config/rex/init.lua'
 stdout 'press the key of the settings'
 cmp .config/rex/init.lua installed.lua
+grep '^local settings = \{' .config/rex/rexdiff.lua
+grep 'require\("rexdiff_toggle"\)\(settings\)' .config/rex/rexdiff.lua
+grep '^-- rexdiff writes this file. Do not edit it.' .config/rex/rexdiff_toggle.lua
+grep '^local BIN = "' .config/rex/rexdiff_toggle.lua
 grep 'config reload' rex.log
 
-# A second install keeps the one line of init.lua, and does not say it adds it.
-exec rexdiff install
-! stdout 'added'
-cmp .config/rex/init.lua installed.lua
-
 # Rex accepts the action and its keys.
-[realrex] exec $REALREX config check .config/rex/init.lua
+[realrex] exec $REALREX config check
 [realrex] stdout 'bindings: 2'
 [realrex] stdout 'actions: 1'
 [realrex] ! stderr .
+
+# With a broken rexdiff_toggle.lua, the rest of init.lua still loads, and the
+# key runs an action of rexdiff.lua that shows the error.
+[realrex] cp after.lua .config/rex/init.lua
+[realrex] cp broken.lua .config/rex/rexdiff_toggle.lua
+[realrex] exec $REALREX config check --json
+[realrex] stdout '"name": "after_x"'
+[realrex] stdout '"source": "rexdiff.lua:'
+[realrex] stdout '"bindings": 2'
+[realrex] stdout '"diagnostics": \[\]'
+[realrex] ! stderr .
+cp installed.lua .config/rex/init.lua
+
+# A second install keeps an edited rexdiff.lua, and writes rexdiff_toggle.lua
+# again. It keeps the one line of init.lua, and does not say it adds it.
+cp edited.lua .config/rex/rexdiff.lua
+cp broken.lua .config/rex/rexdiff_toggle.lua
+exec rexdiff install
+stdout 'kept your settings in '$WORK'/.config/rex/rexdiff.lua'
+! stdout 'added'
+cmp .config/rex/rexdiff.lua edited.lua
+grep '^local BIN = "' .config/rex/rexdiff_toggle.lua
+! grep 'broken' .config/rex/rexdiff_toggle.lua
+cmp .config/rex/init.lua installed.lua
+
+# install moves a rexdiff.lua from rexdiff 0.2.7 to the two files. It
+# keeps the settings above the line of the code, and puts the loader in
+# place of the code.
+cp old.lua .config/rex/rexdiff.lua
+cp broken.lua .config/rex/rexdiff_toggle.lua
+exec rexdiff install
+stdout 'kept your settings in '$WORK'/.config/rex/rexdiff.lua, and moved the code out'
+grep '^local settings = \{ layout = "split" \}$' .config/rex/rexdiff.lua
+grep 'require\("rexdiff_toggle"\)\(settings\)' .config/rex/rexdiff.lua
+! grep 'rexdiff code below|old_code' .config/rex/rexdiff.lua
+! grep 'broken' .config/rex/rexdiff_toggle.lua
+[realrex] exec $REALREX config check --json
+[realrex] stdout '"source": "rexdiff_toggle.lua:'
+[realrex] stdout '"diagnostics": \[\]'
 
 # uninstall -h only shows the usage.
 exec rexdiff uninstall -h
@@ -31,11 +72,13 @@ chmod 0444 .config/rex/init.lua
 exists .config/rex/rexdiff.lua
 chmod 0644 .config/rex/init.lua
 
-# uninstall removes the line and rexdiff.lua, and keeps the rest.
+# uninstall removes the line, rexdiff.lua, and rexdiff_toggle.lua, and keeps
+# the rest.
 exec rexdiff uninstall
 stdout 'removed the rexdiff action, its key, and its settings from Rex'
 cmp .config/rex/init.lua mine.lua
 ! exists .config/rex/rexdiff.lua
+! exists .config/rex/rexdiff_toggle.lua
 
 # If Rex does not reload, install still writes the files and says what to do.
 env REX_FAIL=1
@@ -46,10 +89,27 @@ stdout 'reload Rex''s config yourself: rex config reload'
 # it still works after brew upgrade.
 [darwin] exec sh -c 'mkdir brew && ln -s "$(command -v rexdiff)" brew/rexdiff'
 [darwin] exec $WORK/brew/rexdiff install
-[darwin] grep 'local BIN = "'$WORK'/brew/rexdiff"' .config/rex/rexdiff.lua
+[darwin] grep 'local BIN = "'$WORK'/brew/rexdiff"' .config/rex/rexdiff_toggle.lua
 
 -- mine.lua --
 rex.bind("cmd+e", "pane.zoom")
 -- installed.lua --
 rex.bind("cmd+e", "pane.zoom")
 require("rexdiff")
+-- after.lua --
+rex.bind("cmd+e", "pane.zoom")
+require("rexdiff")
+rex.action{ name = "after_x", title = "After x", run = function() end }
+-- broken.lua --
+-- broken code
+local x = = 1
+-- edited.lua --
+local settings = { layout = "split" }
+require("rexdiff_toggle")(settings)
+-- old.lua --
+-- The settings of rexdiff.
+local settings = { layout = "split" }
+
+-- rexdiff code below. Install and upgrades replace it. Do not edit this line.
+local BIN = "/old/rexdiff"
+local function old_code() end

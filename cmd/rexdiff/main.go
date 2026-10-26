@@ -1,9 +1,9 @@
 // Rexdiff shows the changes that a coding agent makes, beside the agent in
 // Rex. You can comment on the changed lines, then paste the comments into the
 // agent. "rexdiff install" adds a "Toggle rexdiff" action and a key to the Rex
-// configuration, in rexdiff.lua beside Rex's init.lua. The settings of rexdiff
-// are at the top of rexdiff.lua. The action gives them to rexdiff in the
-// --config flag.
+// configuration, in two files beside Rex's init.lua. rexdiff.lua has the
+// settings of rexdiff, and rexdiff_toggle.lua has the code of the action. The
+// action gives the settings to rexdiff in the --config flag.
 //
 //	rexdiff [flags] [repo]
 //	rexdiff install
@@ -120,8 +120,8 @@ func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) erro
 	}
 	defer closeLog()
 
-	// In Rex, upgrade replaces the code of the action if that code differs
-	// from the code of this rexdiff.
+	// In Rex, upgrade writes rexdiff_toggle.lua if it differs from the code
+	// of this rexdiff.
 	client := rex.New(env)
 	var notice string
 	bin, binErr := executable()

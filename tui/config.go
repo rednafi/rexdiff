@@ -75,9 +75,9 @@ var (
 	positions     = []position{positionRight, positionBottom, positionLeft, positionTop}
 )
 
-// config holds the settings of rexdiff. The settings are at the top of
-// rexdiff.lua, beside the configuration file (init.lua) of Rex. The toggle
-// action gives them to rexdiff as JSON in --config.
+// config holds the settings of rexdiff. The settings are in rexdiff.lua,
+// beside the configuration file (init.lua) of Rex. The toggle action gives
+// them to rexdiff as JSON in --config.
 type config struct {
 	Layout       Layout `json:"layout"`
 	DefaultScope Scope  `json:"default_scope"`
