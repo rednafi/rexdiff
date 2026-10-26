@@ -158,6 +158,11 @@ func (m *model) moveKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.setDir(false)
 	case key.Matches(msg, k.Expand) && m.atFold():
 		m.expandFold(p.rows[p.cur].Fold)
+	case key.Matches(msg, k.Expand, k.Collapse) && m.tab == tabPR:
+		// As in herdr-reviewr, right opens all the <details> blocks of
+		// the PR tab, and left closes them.
+		m.prDetails = key.Matches(msg, k.Expand)
+		m.renderPR()
 	case key.Matches(msg, k.Expand) && !m.wrap:
 		p.xoff += scrollStep
 		m.rerender()

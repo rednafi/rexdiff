@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -155,15 +156,33 @@ func (m *model) renderPR() {
 	lines = append(lines, checkLines(pr.Checks)...)
 	lines = append(lines, "")
 	if strings.TrimSpace(pr.Body) != "" {
-		lines = append(lines, renderMarkdown(md, pr.Body)...)
+		lines = append(lines, renderMarkdown(md, m.details(pr.Body))...)
 	}
 	now := time.Now()
 	for _, c := range pr.Comments {
 		author := headerStyle.Render(c.Author) + "  " + dimStyle.Render(age(c.When, now))
 		lines = append(lines, "", "  "+author)
-		lines = append(lines, renderMarkdown(md, c.Body)...)
+		lines = append(lines, renderMarkdown(md, m.details(c.Body))...)
 	}
 	p.set(lines, make([]diff.Row, len(lines)))
+}
+
+// detailsRE matches a <details> block with its summary and its body.
+var detailsRE = regexp.MustCompile(
+	`(?is)<details[^>]*>\s*<summary[^>]*>(.*?)</summary>(.*?)</details>`)
+
+// details returns src with each <details> block as its summary line, as
+// herdr-reviewr shows it. The line starts with ▸ for a closed block, and
+// with ▾ for an open block. The body of an open block follows the line.
+func (m *model) details(src string) string {
+	return detailsRE.ReplaceAllStringFunc(src, func(b string) string {
+		sub := detailsRE.FindStringSubmatch(b)
+		summary := strings.Join(strings.Fields(sub[1]), " ")
+		if !m.prDetails {
+			return "\n\n▸ " + summary + "\n\n"
+		}
+		return "\n\n▾ " + summary + "\n\n" + sub[2] + "\n\n"
+	})
 }
 
 // age returns the time from when to now, as herdr-reviewr shows it, for
