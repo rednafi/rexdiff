@@ -282,7 +282,7 @@ type model struct {
 	allSel      int
 	allTree     fileListTree
 	// viewed and viewedPath are the content and the path in the Files
-	// tab, to notice edits. The path of the pane is "" for Markdown.
+	// tab, to notice edits.
 	viewed     string
 	viewedPath string
 	readErr    string // the last error of the read, which the log has

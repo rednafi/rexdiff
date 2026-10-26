@@ -144,21 +144,25 @@ func (m *model) onEditorDone(msg editorDoneMsg) {
 // openURL opens url with the URL opener of the settings, else with
 // the opener of the system. As in herdr-reviewr, it opens only an http or
 // an https URL. The opener runs with the environment env, and with no
-// shell. The command waits for the opener.
+// shell. A missing opener gives the error of [proc.NotInstalled]. The
+// command waits for the opener.
 func openURL(env []string, cfg config, url string) (tea.Cmd, error) {
 	url = strings.TrimSpace(url)
 	if !isWebURL(url) {
 		return nil, errors.New("unsupported link scheme")
 	}
-	if cfg.URLOpener != "" {
-		args := openerArgs(cfg.URLOpener, url)
-		return detach(env, "open", args[0], args[1:]...)
-	}
-	opener := "xdg-open"
+	name, args := "xdg-open", []string{url}
 	if runtime.GOOS == "darwin" {
-		opener = "open"
+		name = "open"
 	}
-	return detach(env, "open", opener, url)
+	if cfg.URLOpener != "" {
+		w := openerArgs(cfg.URLOpener, url)
+		name, args = w[0], w[1:]
+	}
+	if _, err := proc.LookPath(env, name); err != nil {
+		return nil, proc.NotInstalled(name)
+	}
+	return detach(env, "open", name, args...)
 }
 
 // isWebURL reports whether url is http or https with text after the

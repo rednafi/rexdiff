@@ -53,8 +53,9 @@ local function check(config)
 end
 
 -- open_rexdiff opens rexdiff at placement, beside the agent in ctx, with
--- the settings in config. A split opens in direction, right or down. rexdiff starts in the current directory of the
--- agent. The rex package of rexdiff finds the directory the same way.
+-- the settings in config. A split opens in direction, right or down.
+-- rexdiff starts in the current directory of the agent. The rex package
+-- of rexdiff finds the directory the same way.
 -- rexdiff starts through the login shell of the user, so that it gets the
 -- login environment of the user, for example EDITOR and PATH.
 local function open_rexdiff(ctx, placement, direction, config)
@@ -94,8 +95,8 @@ end
 -- The function gets the settings of rexdiff.lua, and adds the action
 -- and its key.
 return function(settings)
-  -- The key, the placement, and the direction are for Rex. rexdiff gets the other settings
-  -- as JSON.
+  -- The key, the placement, and the direction are for Rex. rexdiff gets
+  -- the other settings as JSON.
   if type(settings) ~= "table" then
     error("config: settings must be a table, as in: local settings = { }", 0)
   end
