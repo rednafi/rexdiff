@@ -11,6 +11,7 @@
     <img alt="macOS" src="https://img.shields.io/badge/macOS-arm64%20%7C%20amd64-8b4cf7?style=flat-square">
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-ff5a3c?style=flat-square"></a>
   </p>
+  <br>
   <p>
     <b>
       <a href=".doc/user.md">User guide</a>
