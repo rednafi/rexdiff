@@ -30,6 +30,8 @@ linters:
     - nolintlint
     - gosec
     - unparam
+    - paralleltest
+    - tparallel
   settings:
     staticcheck:
       checks:
@@ -46,10 +48,6 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
-    dupword:
-      # The Lua code in cmd/rexdiff/install.go ends two blocks with "end end".
-      ignore:
-        - end
     misspell:
       # No locale: the comments use British spelling, for example "colour".
       ignore-rules:
@@ -73,6 +71,10 @@ linters:
         linters: [forcetypeassert, unparam]
       - linters: [revive]
         text: redefines-builtin-id
+      # The tests in test/ run one at a time. The tests of the libraries
+      # run in parallel.
+      - path: ^test/
+        linters: [paralleltest, tparallel]
 
 formatters:
   enable:
