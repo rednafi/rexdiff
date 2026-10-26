@@ -242,6 +242,8 @@ type model struct {
 	// folds has the folds that the user expands in the Changes tab, by path.
 	folds map[string]*openFolds
 	base  string
+	// defaultBase is the default branch at the start, for the base picker.
+	defaultBase string
 	// baseFlag is true if the base comes from the flag. Then the user
 	// cannot pick another.
 	baseFlag bool
@@ -371,8 +373,9 @@ func newModel(ctx context.Context, o Options, cfg config) model {
 			}
 		}
 	}
+	m.defaultBase = o.Repo.DefaultBase(ctx)
 	if m.base == "" {
-		m.base = o.Repo.DefaultBase(ctx)
+		m.base = m.defaultBase
 	}
 	if tree := o.Repo.SavedTurn(ctx); tree != "" {
 		m.turn = &turnState{tree: tree}

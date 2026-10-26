@@ -3,11 +3,17 @@ package tui
 // The base picker picks the base of the branch scope.
 
 import (
+	"context"
+	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/rednafi/rexdiff/vcs"
 )
+
+// branchTimeout is the longest time of the branch list.
+const branchTimeout = 5 * time.Second
 
 // openBasePicker lets the user pick the base of the branch scope. The
 // current base has a tag. As in herdr-reviewr, the base of an open pull
@@ -18,7 +24,12 @@ func (m *model) openBasePicker() {
 		return
 	}
 	ov := newOverlay(overlayBase, "base branch for the branch scope (or type any ref)")
-	branches, err := m.repo.Branches(m.ctx)
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	ctx, cancelTimeout := context.WithTimeoutCause(ctx, branchTimeout,
+		fmt.Errorf("branch list: %v timeout: %w", branchTimeout, context.DeadlineExceeded))
+	defer cancelTimeout()
+	defer cancel(fmt.Errorf("branch list: done: %w", context.Canceled))
+	branches, err := m.repo.Branches(ctx)
 	if err != nil {
 		m.flash("branch list failed: " + err.Error())
 		return
@@ -27,7 +38,7 @@ func (m *model) openBasePicker() {
 	if pr := m.pr.pr; pr != nil && pr.State == vcs.PROpen {
 		prBase = pr.Base
 	}
-	defaultBase := strings.TrimPrefix(m.repo.DefaultBase(m.ctx), "origin/")
+	defaultBase := strings.TrimPrefix(m.defaultBase, "origin/")
 	// groups has the PR base, then the default branch, then the others.
 	// Each group keeps the newest first.
 	var groups [3][]pickItem
