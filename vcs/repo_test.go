@@ -457,7 +457,7 @@ func TestOwnsWithoutGit(t *testing.T) {
 	}
 }
 
-// TestRefs checks Branches, DefaultBase, and Resolve.
+// TestRefs checks Branch, Branches, DefaultBase, and Resolve.
 func TestRefs(t *testing.T) {
 	t.Parallel()
 	r, dir := newRepo(t)
@@ -488,6 +488,16 @@ func TestRefs(t *testing.T) {
 	}
 	if _, err := r.Resolve(ctx, "nosuchref"); err == nil {
 		t.Error("Resolve(nosuchref): no error, want an error")
+	}
+	testgit.Git(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone")
+	if b := r.DefaultBase(ctx); b != "main" {
+		t.Errorf("DefaultBase with a dangling origin/HEAD = %q, want main", b)
+	}
+
+	empty := t.TempDir()
+	testgit.InitRepo(t, empty)
+	if b, err := open(t, empty).Branch(ctx); err != nil || b != "main" {
+		t.Errorf("Branch with no commit = %q, %v, want main, nil", b, err)
 	}
 }
 

@@ -101,12 +101,15 @@ func (r *Repo) Branches(ctx context.Context) ([]string, error) {
 }
 
 // DefaultBase returns the default branch of the repository. This is the
-// target of origin/HEAD, or the first that exists of main, master, trunk,
+// target of origin/HEAD if it exists, or the first that exists of main, master, trunk,
 // origin/main, and origin/master. If there is none, it returns "HEAD".
 func (r *Repo) DefaultBase(ctx context.Context) string {
-	ref, err := r.run(ctx, nil, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-	if err == nil {
-		return strings.TrimSpace(ref)
+	if ref, err := r.run(ctx, nil, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		// fetch --prune can leave the symbolic ref without a target.
+		ref = strings.TrimSpace(ref)
+		if _, err := r.Resolve(ctx, ref); err == nil {
+			return ref
+		}
 	}
 	for _, b := range []string{"main", "master", "trunk", "origin/main", "origin/master"} {
 		if _, err := r.Resolve(ctx, b); err == nil {
@@ -119,7 +122,10 @@ func (r *Repo) DefaultBase(ctx context.Context) string {
 // Branch returns the name of the branch that HEAD points to. With a
 // detached HEAD, it returns "HEAD".
 func (r *Repo) Branch(ctx context.Context) (string, error) {
-	out, err := r.run(ctx, nil, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := r.run(ctx, nil, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if exitedOne(err) {
+		return "HEAD", nil
+	}
 	if err != nil {
 		return "", err
 	}

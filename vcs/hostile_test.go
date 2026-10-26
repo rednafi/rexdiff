@@ -246,7 +246,7 @@ func TestGitWorktree(t *testing.T) {
 	}
 }
 
-// TestDetachedHead checks Diff and Commits when HEAD is detached.
+// TestDetachedHead checks Diff, Commits, and Branch when HEAD is detached.
 func TestDetachedHead(t *testing.T) {
 	t.Parallel()
 	r, dir := newRepo(t)
@@ -258,6 +258,9 @@ func TestDetachedHead(t *testing.T) {
 	}
 	if cs, err := r.Commits(ctx, ""); err != nil || len(cs) != 1 || cs[0].Subject != "init" {
 		t.Errorf("Commits = %+v, %v, want init", cs, err)
+	}
+	if b, err := r.Branch(ctx); err != nil || b != "HEAD" {
+		t.Errorf("Branch = %q, %v, want HEAD, nil", b, err)
 	}
 }
 

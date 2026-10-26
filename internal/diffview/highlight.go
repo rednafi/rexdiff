@@ -3,6 +3,7 @@
 package diffview
 
 import (
+	"cmp"
 	"image/color"
 	"io"
 	"strings"
@@ -99,12 +100,13 @@ func processChromaValue(value string) string {
 	return Escape(strings.TrimRight(value, "\n"))
 }
 
-// chromaLexer returns the lexer of the old file, and keeps it in the
-// cache.
+// chromaLexer returns the lexer of the old file, or of the new file if
+// the old file is empty, and keeps it in the cache.
 func (v *View) chromaLexer() chroma.Lexer {
 	lx := &v.cache.lexer
-	if lx.l == nil || lx.path != v.path || lx.content != v.before {
-		lx.path, lx.content = v.path, v.before
+	content := cmp.Or(v.before, v.after)
+	if lx.l == nil || lx.path != v.path || lx.content != content {
+		lx.path, lx.content = v.path, content
 		lx.l = Lexer(lx.path, lx.content)
 	}
 	return lx.l
