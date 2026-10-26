@@ -1,3 +1,5 @@
+// Derived from charmbracelet/crush (FSL-1.1-MIT). See ../DERIVED.md.
+
 package diffview
 
 import (
@@ -5,13 +7,6 @@ import (
 
 	"github.com/aymanbagabas/go-udiff"
 )
-
-// splitHunk is a hunk in the split layout.
-type splitHunk struct {
-	fromLine int
-	toLine   int
-	lines    []*splitLine
-}
 
 // splitLine is one row of the split layout. A nil side has no line.
 type splitLine struct {
@@ -22,13 +17,9 @@ type splitLine struct {
 // hunkToSplit pairs the lines of h for the split layout. An equal line is on
 // both sides. A deleted line gets the next inserted line beside it, if no
 // equal line comes first.
-func hunkToSplit(h *udiff.Hunk) splitHunk {
+func hunkToSplit(h *udiff.Hunk) []splitLine {
 	lines := slices.Clone(h.Lines)
-	sh := splitHunk{
-		fromLine: h.FromLine,
-		toLine:   h.ToLine,
-		lines:    make([]*splitLine, 0, len(lines)),
-	}
+	out := make([]splitLine, 0, len(lines))
 	for len(lines) > 0 {
 		ul := lines[0]
 		lines = lines[1:]
@@ -42,9 +33,9 @@ func hunkToSplit(h *udiff.Hunk) splitHunk {
 			sl.before = &ul
 			sl.after, lines = takeInsert(lines)
 		}
-		sh.lines = append(sh.lines, &sl)
+		out = append(out, sl)
 	}
-	return sh
+	return out
 }
 
 // takeInsert removes the first inserted line before the next equal line from

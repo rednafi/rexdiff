@@ -8,12 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
-	"strings"
+	"sync"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/rednafi/rexdiff/rex"
+	"github.com/rednafi/rexdiff/update"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -27,11 +27,12 @@ type Options struct {
 	// Rex is the Rex session of the process, or nil outside Rex. Without
 	// Rex, the user cannot send the review. The user can only copy it.
 	Rex *rex.Client
-	// Config is the settings as JSON, from the top of rexdiff.lua. An
-	// empty text means the default settings.
+	// Config is the settings as JSON, from rexdiff.lua. An empty text
+	// means the default settings.
 	Config string
 	// Layout and Scope override the settings if they are not empty. Set
-	// them from the command-line flags.
+	// them from the command-line flags -layout and -scope. The error of a
+	// bad value names the flag.
 	Layout Layout
 	Scope  Scope
 	// Agent is the block ID or the label of the agent that the program
@@ -49,21 +50,35 @@ type Options struct {
 	Notice string
 	// Updater installs a newer release, or is nil if rexdiff cannot update
 	// itself. If it is not nil, the program asks for the latest release.
-	Updater Updater
+	Updater *update.Updater
 	// Resume is the file of the state that Run returned before an update,
 	// or "". Run reads it and removes it.
 	Resume string
+	// Env is the environment of the editor, the URL opener, and the
+	// clipboard tool, for example the environment of the process from
+	// os.Environ. Run finds them in its PATH, and reads $VISUAL, $EDITOR,
+	// $TMPDIR, and the variables of the terminal from it.
+	Env []string
 }
 
 // check returns an error for options that Run cannot use.
 func (o Options) check() error {
-	switch {
-	case o.Repo == nil:
+	if o.Repo == nil {
 		return errors.New("no repository")
-	case o.Layout != "" && !slices.Contains(layouts, o.Layout):
-		return invalid("layout", "one of "+strings.Join(names(layouts...), ", "), string(o.Layout))
-	case o.Scope != "" && !slices.Contains(configScopes, o.Scope):
-		return invalid("scope", "one of "+strings.Join(names(configScopes...), ", "), string(o.Scope))
+	}
+	return CheckFlags(o.Layout, o.Scope)
+}
+
+// CheckFlags returns the error of the values of the flags -layout and
+// -scope, or nil if rexdiff accepts them. An empty value is the default.
+func CheckFlags(layout Layout, scope Scope) error {
+	if layout != "" {
+		if err := choice("-layout", layout, layouts); err != nil {
+			return err
+		}
+	}
+	if scope != "" {
+		return choice("-scope", scope, configScopes)
 	}
 	return nil
 }
@@ -78,9 +93,12 @@ func CheckConfig(text string) error {
 // Run shows the review program in the terminal. It returns when the user
 // quits or when ctx is done. Run returns an error before it starts if the
 // settings are not valid. It also returns an error if Repo is nil, or if
-// it does not know the Layout or the Scope. After an update, Run returns
+// Run does not know the Layout or the Scope. After an update, Run returns
 // the file of the saved state. The caller then runs the new rexdiff with
-// Options.Resume set to that file.
+// Options.Resume set to that file. In that case Run keeps the alternate
+// screen on, with the last frame and no cursor, so that the restart does
+// not show the shell. If the restart fails, the caller leaves the
+// alternate screen and shows the cursor.
 func Run(ctx context.Context, o Options) (resume string, err error) {
 	if err := o.check(); err != nil {
 		return "", err
@@ -89,39 +107,71 @@ func Run(ctx context.Context, o Options) (resume string, err error) {
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(errQuit)
 
-	m := newModel(ctx, o, cfg)
-	var saved *savedState
-	if o.Resume != "" {
-		if saved, err = loadState(o.Resume); err != nil {
-			m.flash("cannot read the comments from before the update: " + err.Error())
-		} else {
-			m.restoreSettings(saved)
-		}
+	m := startModel(ctx, o, cfg)
+	// Bubble Tea reads TERM and COLORTERM from env. A nil env makes it
+	// read the environment of the process.
+	env := o.Env
+	if env == nil {
+		env = []string{}
 	}
-	m.reload()
-	if saved != nil {
-		m.restorePlaces(saved)
-	}
-	if o.Rex != nil && o.Rex.Block != "" {
-		if err := o.Rex.SetLabel(ctx, o.Rex.Block, appName); err != nil {
-			m.log.Debug("set label", "err", err)
-		}
-	}
-	program := tea.NewProgram(&m, tea.WithContext(ctx))
+	program := tea.NewProgram(&m, tea.WithContext(ctx), tea.WithEnvironment(env))
+	var wg sync.WaitGroup
 	if o.Rex != nil {
-		go o.Rex.Watch(ctx, func(e rex.Event) { program.Send(eventMsg(e)) })
+		// Watch returns only the cause of ctx, when ctx is done.
+		wg.Go(func() {
+			_ = o.Rex.Watch(ctx, func(e rex.Event) { program.Send(eventMsg(e)) })
+		})
 	}
 	final, err := program.Run()
+	cancel(errQuit)
+	wg.Wait()
 	if fm, ok := final.(*model); ok && err == nil {
-		if fm.restartState != "" {
+		if fm.resumePath != "" {
 			// Keep the last screen until the new rexdiff draws, so that
 			// the restart does not show the shell of the pane.
 			fmt.Print("\x1b[?1049h\x1b[?25l\x1b[H" + fm.View().Content)
 		}
-		return fm.restartState, nil
+		return fm.resumePath, nil
 	}
 	return "", err
+}
+
+// errQuit is the cause of the stop of the work of Run when rexdiff quits.
+var errQuit = fmt.Errorf("rexdiff quits: %w", context.Canceled)
+
+// startModel returns the model that Run shows. It starts the watcher,
+// reads the state of o.Resume, loads the changes, and labels the block of
+// the program in Rex.
+func startModel(ctx context.Context, o Options, cfg config) model {
+	m := newModel(ctx, o, cfg)
+	if err := m.startWatch(); err != nil {
+		m.dropWatch(err)
+	}
+	var saved *resumeState
+	if o.Resume != "" {
+		var err error
+		if saved, err = loadResume(o.Resume); err != nil {
+			m.flash("restore of the comments failed: " + err.Error())
+		} else {
+			m.restoreSettings(saved)
+		}
+	}
+	m.loadNow()
+	if saved != nil {
+		m.restorePlaces(saved)
+	}
+	if o.Rex != nil && o.Rex.Block() != "" {
+		ctx, cancel := context.WithCancelCause(ctx)
+		ctx, cancelTimeout := context.WithTimeoutCause(ctx, rexTimeout,
+			fmt.Errorf("rex label: %v timeout: %w", rexTimeout, context.DeadlineExceeded))
+		if err := o.Rex.SetLabel(ctx, o.Rex.Block(), appName); err != nil {
+			m.log.Debug("set label failed", "err", err)
+		}
+		cancel(fmt.Errorf("rex label: done: %w", context.Canceled))
+		cancelTimeout()
+	}
+	return m
 }

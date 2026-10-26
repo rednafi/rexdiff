@@ -1,15 +1,16 @@
 package diff
 
 import (
-	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
+
+	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
 // Review returns the comments as herdr-reviewr text for a coding agent. It
 // writes the prefix, if not empty, then the comments in [Comments.All] order.
-// Blank lines separate them. The text has no control characters. A comment is:
+// Blank lines separate them. The text has no control characters.
+//
+// This is an example of a comment:
 //
 //	a.go:3-4
 //	 x := 1
@@ -17,7 +18,7 @@ import (
 //	Merge these lines.
 func (cs *Comments) Review(prefix string) string {
 	var parts []string
-	if p := strings.TrimRight(Plain(prefix), " \n\t"); p != "" {
+	if p := strings.TrimRight(termtext.Plain(prefix), " \n\t"); p != "" {
 		parts = append(parts, p)
 	}
 	for _, c := range cs.All() {
@@ -29,14 +30,13 @@ func (cs *Comments) Review(prefix string) string {
 // format returns c as text for [Comments.Review].
 func format(c *Comment) string {
 	var b strings.Builder
-	b.WriteString(Plain(c.Location()))
-	if c.Stale {
-		b.WriteString(" (stale: the code has changed since)")
-	}
-	// Write the rows as the diff shows them, so that the agent reads a real diff.
+	b.WriteString(termtext.Plain(c.Location()))
+	// Write the rows as the diff shows them, so that the agent reads a real
+	// diff.
 	if len(c.snippet) > 0 {
 		for _, l := range c.snippet {
-			b.WriteString("\n" + Plain(l))
+			b.WriteString("\n")
+			b.WriteString(termtext.Plain(l))
 		}
 	} else {
 		mark := "+"
@@ -44,44 +44,25 @@ func format(c *Comment) string {
 			mark = "-"
 		}
 		for _, l := range c.code {
-			b.WriteString("\n" + mark + Plain(l))
+			b.WriteString("\n")
+			b.WriteString(mark)
+			b.WriteString(termtext.Plain(l))
 		}
 	}
 	var text []string
-	for l := range strings.SplitSeq(Plain(c.Text), "\n") {
+	for l := range strings.SplitSeq(termtext.Plain(c.Text), "\n") {
 		if strings.TrimSpace(l) != "" {
 			text = append(text, strings.TrimRight(l, " \t"))
 		}
 	}
-	b.WriteString("\n" + strings.Join(text, "\n"))
+	b.WriteString("\n")
+	b.WriteString(strings.Join(text, "\n"))
 	return b.String()
 }
 
-// Plain returns s without control characters. This removes the escape
-// sequences too, but keeps tabs and newlines. Use it on text from other
-// people before you show or send it.
-func Plain(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\t' || r == '\n' || !unicode.IsControl(r) {
-			return r
-		}
-		return -1
-	}, s)
-}
-
-// Quote returns s in Go quotes if it has control characters or is not valid
-// UTF-8. git shows such a path the same way. Then s stays on one line and
-// cannot change the terminal.
-func Quote(s string) string {
-	if strings.ContainsFunc(s, unicode.IsControl) || !utf8.ValidString(s) {
-		return strconv.Quote(s)
-	}
-	return s
-}
-
 // snippet returns rows as unified diff lines. See [NewComment].
-func snippet(rows []Row, old, new string) []string {
-	oldLines, newLines := Lines(old), Lines(new)
+func snippet(rows []Row, before, after string) []string {
+	oldLines, newLines := Lines(before), Lines(after)
 	line := func(ls []string, n int) string {
 		if n >= 1 && n-1 < len(ls) {
 			return ls[n-1]

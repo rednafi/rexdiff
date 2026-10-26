@@ -18,17 +18,19 @@ import (
 // Kind is the type of a rendered row.
 type Kind int
 
+// These are the kinds of a row.
 const (
-	KindHunk   Kind = iota // a hunk header. It shows no source line.
+	KindHunk   Kind = iota // a hunk header, with no source line
 	KindEqual              // a line that is the same on the two sides
 	KindInsert             // a line that only the new side has
 	KindDelete             // a line that only the old side has
-	KindChange             // in the split layout, a deleted line beside an inserted line
+	KindChange             // a deleted line beside an inserted line (split)
 )
 
 // Side identifies one version of a file.
 type Side int
 
+// These are the two sides of a file.
 const (
 	SideOld Side = iota // the version before the change
 	SideNew             // the version after the change
@@ -37,11 +39,22 @@ const (
 // Row tells which source lines one rendered line shows. Old and New are
 // line numbers that start at 1. A value of 0 means that the row has no line
 // on that side. Continued is true if the line continues the source lines of
-// the line above, because [Options.Wrap] wrapped them.
+// the line above, because [Options.Wrap] wraps them.
+//
+// A long run of equal lines folds into the hunk header below it. For a
+// hunk header, Fold is that run.
 type Row struct {
 	Kind      Kind
 	Old, New  int
 	Continued bool
+	Fold      Fold
+}
+
+// Fold is a run of equal lines that the diff hides. Old and New are the
+// line numbers of its first line. Lines is the number of lines. Lines is 0
+// if the diff hides no line.
+type Fold struct {
+	Old, New, Lines int
 }
 
 // Line returns the line number of the row on side s.
@@ -64,12 +77,26 @@ type Options struct {
 	// Wrap continues a line that is wider than Width on the next lines,
 	// instead of cutting it. Then Offset does not apply.
 	Wrap bool
+	// Expanded reports whether the lines of a fold show. If Expanded is
+	// nil, no fold shows. RenderFile does not use it.
+	Expanded func(Fold) bool
+	// Signs marks a changed line with + or -. Without Signs, a bar in the
+	// colour of the line marks it.
+	Signs bool
 	// Theme sets the colours.
 	Theme Theme
+	// Cache makes a new render of the same lines fast. If Cache is nil, the
+	// render keeps nothing.
+	Cache *Cache
 }
 
-// tabWidth is the number of spaces that replace a tab.
-const tabWidth = 4
+// Cache keeps the syntax colours of the lines between renders, for example
+// for a sideways scroll. The zero value is an empty Cache. A Cache is not
+// safe for concurrent use.
+type Cache struct {
+	lines diffview.Cache                  // the lines of Render
+	file  struct{ path, src, out string } // the last file of RenderFile
+}
 
 // Diff is the rendered output. Lines[i] is the screen line for Rows[i].
 // Lines is empty when there is nothing to show, for example when the two
@@ -82,42 +109,60 @@ type Diff struct {
 	oldNum   int // width of the old line-number column
 	newNum   int // width of the new line-number column
 	newNumAt int // column where the new line numbers start
+
+	// The fields below are for [Diff.Cell].
+	src    [2]string // the content of each side
+	codeAt [2]int    // column where the code of each side starts
+	offset int       // the sideways scroll, or 0 with wrap
+	wrap   bool
 }
 
-// Render compares the old and the new content of the file at path. The path
-// selects the syntax highlighter.
-func Render(path, old, new string, o Options) *Diff {
-	dv := diffview.New().
-		Before(path, old).
-		After(path, new).
+// Render compares before, the old content of the file at path, with after,
+// its new content. The path selects the syntax highlighter.
+func Render(path, before, after string, o Options) *Diff {
+	dv := diffview.New(path, before, after).
 		Width(o.Width).
-		TabWidth(tabWidth).
-		XOffset(o.Offset)
-	if o.Split {
-		dv = dv.Split()
+		XOffset(o.Offset).
+		Split(o.Split).
+		Signs(o.Signs).
+		Wrap(o.Wrap).
+		Theme(o.Theme.Background, o.Theme.Foreground, o.Theme.Green,
+			o.Theme.Red, o.Theme.dark())
+	if o.Cache != nil {
+		dv = dv.Cache(&o.Cache.lines)
 	}
-	if o.Wrap {
-		dv = dv.Wrap()
+	if o.Expanded != nil {
+		dv = dv.Expand(func(f diffview.Fold) bool { return o.Expanded(foldOf(f)) })
 	}
-	dv = o.Theme.apply(dv)
 	out, rows, g := dv.Render()
 
-	d := &Diff{split: o.Split}
+	d := &Diff{split: o.Split, src: [2]string{before, after}, wrap: o.Wrap}
+	if !o.Wrap {
+		d.offset = o.Offset
+	}
 	for _, r := range rows {
 		d.Rows = append(d.Rows, Row{
 			Kind:      kindOf(r.Kind),
 			Old:       r.Before,
 			New:       r.After,
 			Continued: r.Continued,
+			Fold:      foldOf(r.Fold),
 		})
 	}
 	if len(d.Rows) > 0 {
 		d.Lines = strings.Split(out, "\n")
 	}
 	d.oldNum, d.newNum, d.newNumAt = g.BeforeNum, g.AfterNum, g.AfterNumStart
+	d.codeAt = [2]int{g.BeforeCode, g.AfterCode}
 	return d
 }
 
+// foldOf returns the Fold of the diffview fold f.
+func foldOf(f diffview.Fold) Fold {
+	return Fold{Old: f.Before, New: f.After, Lines: f.Lines}
+}
+
+// kindOf returns the Kind of the diffview row kind k.
 func kindOf(k diffview.RowKind) Kind {
 	switch k {
 	case diffview.RowHunk:
@@ -152,12 +197,11 @@ func (d *Diff) SideAt(x int) (s Side, onNumber bool) {
 	return SideNew, x < d.oldNum+d.newNum
 }
 
-// Count returns the number of lines that a change from old to new adds and
-// deletes. It ignores the difference between CRLF and LF line endings.
-func Count(old, new string) (added, deleted int) {
-	old = strings.ReplaceAll(old, "\r\n", "\n")
-	new = strings.ReplaceAll(new, "\r\n", "\n")
-	u, err := udiff.ToUnifiedDiff("", "", old, udiff.Lines(old, new), 0)
+// Count returns the number of lines that a change from before to after adds
+// and deletes. As in herdr-reviewr, a change from a CRLF to an LF line
+// ending, or back, is a change of the line.
+func Count(before, after string) (added, deleted int) {
+	u, err := udiff.ToUnifiedDiff("", "", before, udiff.Lines(before, after), 0)
 	if err != nil {
 		return 0, 0
 	}
@@ -175,12 +219,26 @@ func Count(old, new string) (added, deleted int) {
 }
 
 // Lines splits s into lines, without the LF or CRLF line endings. Line n of
-// s is Lines(s)[n-1]. A comment counts lines in this way.
+// s is Lines(s)[n-1]. The lines of a [Comment] count in this way.
 func Lines(s string) []string {
 	var lines []string
 	for l := range strings.Lines(s) {
-		l = strings.TrimSuffix(l, "\n")
-		lines = append(lines, strings.TrimSuffix(l, "\r"))
+		lines = append(lines, trimEOL(l))
 	}
 	return lines
+}
+
+// trimEOL returns line without its LF or CRLF line ending.
+func trimEOL(line string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+}
+
+// countLines returns the number of lines of s, as [Lines] counts them. A
+// last line without a newline counts as a line.
+func countLines(s string) int {
+	n := strings.Count(s, "\n")
+	if s != "" && !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }

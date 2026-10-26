@@ -1,3 +1,7 @@
 /rexdiff
 /.pi/
 /dist/
+*.test
+*.out
+*.prof
+.DS_Store

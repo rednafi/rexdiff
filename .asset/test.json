@@ -1,0 +1,36 @@
+[
+  { "type": "text", "id": "title", "x": 0, "y": -100, "text": "How rexdiff is tested", "fontSize": 28 },
+
+  { "type": "rectangle", "id": "bb", "x": 0, "y": 0, "width": 280, "height": 80,
+    "strokeColor": "accent", "backgroundColor": "accent-fill",
+    "label": { "text": "black-box tests\ntest/" } },
+  { "type": "rectangle", "id": "bin", "x": 0, "y": 160, "width": 280, "height": 80,
+    "label": { "text": "rexdiff binary\nin a pty" } },
+  { "type": "rectangle", "id": "tui", "x": 0, "y": 320, "width": 280, "height": 80,
+    "label": { "text": "tui\nno tests of its own" } },
+  { "type": "rectangle", "id": "fakes", "x": -480, "y": 160, "width": 280, "height": 80,
+    "strokeStyle": "dashed", "strokeColor": "muted",
+    "label": { "text": "fake rex, gh, pbcopy\nrecorded output" } },
+
+  { "type": "rectangle", "id": "lt", "x": 520, "y": 0, "width": 280, "height": 80,
+    "label": { "text": "library tests\npackage x_test" } },
+  { "type": "rectangle", "id": "libs", "x": 520, "y": 320, "width": 280, "height": 80,
+    "label": { "text": "libraries\ndiff, vcs, rex, update" } },
+  { "type": "rectangle", "id": "git", "x": 520, "y": 480, "width": 280, "height": 80,
+    "strokeStyle": "dashed", "strokeColor": "muted",
+    "label": { "text": "real git\nin temp repos" } },
+
+  { "type": "arrow", "id": "a1", "x": 140, "y": 80, "points": [[0, 0], [0, 80]],
+    "start": { "id": "bb" }, "end": { "id": "bin" } },
+  { "type": "arrow", "id": "a2", "x": 140, "y": 240, "points": [[0, 0], [0, 80]],
+    "start": { "id": "bin" }, "end": { "id": "tui" } },
+  { "type": "arrow", "id": "a3", "x": 0, "y": 200, "points": [[0, 0], [-200, 0]],
+    "strokeStyle": "dashed", "start": { "id": "bin" }, "end": { "id": "fakes" },
+    "label": { "text": "runs" } },
+  { "type": "arrow", "id": "a4", "x": 280, "y": 360, "points": [[0, 0], [240, 0]],
+    "start": { "id": "tui" }, "end": { "id": "libs" }, "label": { "text": "uses" } },
+  { "type": "arrow", "id": "a5", "x": 660, "y": 80, "points": [[0, 0], [0, 240]],
+    "start": { "id": "lt" }, "end": { "id": "libs" }, "label": { "text": "public API" } },
+  { "type": "arrow", "id": "a6", "x": 660, "y": 400, "points": [[0, 0], [0, 80]],
+    "strokeStyle": "dashed", "start": { "id": "libs" }, "end": { "id": "git" } }
+]

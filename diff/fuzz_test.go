@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -67,44 +66,50 @@ func fuzzOptions(layout, width, offset uint8, colored bool) diff.Options {
 func checkLines(t *testing.T, d *diff.Diff, o diff.Options) {
 	t.Helper()
 	if len(d.Lines) != len(d.Rows) {
-		t.Fatalf("%d lines for %d rows", len(d.Lines), len(d.Rows))
+		t.Fatalf("%d lines for %d rows, want one line for each row",
+			len(d.Lines), len(d.Rows))
 	}
 	for i, l := range d.Lines {
 		if w := ansi.StringWidth(l); o.Width > 0 && w > o.Width {
-			t.Errorf("line %d is %d cells wide, width is %d: %q", i, w, o.Width, l)
+			t.Errorf("line %d is %d cells wide, want %d or fewer: %q",
+				i, w, o.Width, l)
 		}
 		rest := sgr.ReplaceAllString(l, "")
 		if strings.ContainsFunc(rest, unicode.IsControl) {
-			t.Errorf("line %d has a control character: %q", i, l)
+			t.Errorf("line %d = %q, want no control characters", i, l)
 		}
 	}
 }
 
 // checkRows checks that each row points at real lines, in order.
-func checkRows(t *testing.T, rows []diff.Row, old, new string) {
+func checkRows(t *testing.T, rows []diff.Row, before, after string) {
 	t.Helper()
-	nOld, nNew := len(diff.Lines(old)), len(diff.Lines(new))
+	nOld, nNew := len(diff.Lines(before)), len(diff.Lines(after))
 	lastOld, lastNew := 0, 0
 	for i, r := range rows {
 		if r.Old < 0 || r.Old > nOld || r.New < 0 || r.New > nNew {
-			t.Fatalf("row %d = %+v, the files have %d and %d lines", i, r, nOld, nNew)
+			t.Fatalf("row %d = %+v, want Old in 0-%d and New in 0-%d",
+				i, r, nOld, nNew)
 		}
 		if r.Continued {
 			if i == 0 || rows[i-1].Old != r.Old || rows[i-1].New != r.New {
-				t.Fatalf("continued row %d = %+v does not continue the row above", i, r)
+				t.Fatalf("continued row %d = %+v, want the lines of the row above",
+					i, r)
 			}
 			continue
 		}
 		oldBack := r.Old != 0 && r.Old <= lastOld
 		newBack := r.New != 0 && r.New <= lastNew
 		if oldBack || newBack {
-			t.Fatalf("row %d = %+v is not after old line %d and new line %d",
+			t.Fatalf("row %d = %+v, want it after old line %d and new line %d",
 				i, r, lastOld, lastNew)
 		}
 		lastOld, lastNew = max(lastOld, r.Old), max(lastNew, r.New)
 	}
 }
 
+// FuzzRender checks the invariants of Render. It also checks that Count
+// agrees with the snippet.
 func FuzzRender(f *testing.F) {
 	for i, s := range hostile {
 		f.Add(uint8(i), "a\nb\n", s, uint8(i), uint8(i*7), uint8(i%3), i%2 == 0)
@@ -115,31 +120,32 @@ func FuzzRender(f *testing.F) {
 	f.Fuzz(func(
 		t *testing.T,
 		p uint8,
-		old, new string,
+		before, after string,
 		layout, width, offset uint8,
 		colored bool,
 	) {
 		o := fuzzOptions(layout, width, offset, colored)
-		d := diff.Render(paths[int(p)%len(paths)], old, new, o)
+		d := diff.Render(paths[int(p)%len(paths)], before, after, o)
 		checkLines(t, d, o)
-		checkRows(t, d.Rows, old, new)
-		if o.Width == 0 && o.Offset == 0 && !strings.Contains(old+new, "…") {
+		checkRows(t, d.Rows, before, after)
+		if o.Width == 0 && o.Offset == 0 && !strings.Contains(before+after, "…") {
 			// With no width limit, no line is cut.
 			for i, l := range d.Lines {
 				cut := strings.Contains(ansi.Strip(l), "…")
 				if cut && d.Rows[i].Kind != diff.KindHunk {
-					t.Fatalf("line %d is cut with no width limit: %q", i, l)
+					t.Fatalf("line %d = %q, want no cut with no width limit", i, l)
 				}
 			}
 		}
 
-		added, deleted := diff.Count(old, new)
+		added, deleted := diff.Count(before, after)
 		if (added == 0 && deleted == 0) != (len(d.Lines) == 0) {
-			t.Fatalf("Count = %d, %d, but Render has %d lines",
+			t.Fatalf("Count = %d, %d and Render has %d lines, "+
+				"want zero counts only for zero lines",
 				added, deleted, len(d.Lines))
 		}
 		var plus, minus int
-		for _, l := range snippet(d.Rows, old, new) {
+		for _, l := range snippet(d.Rows, before, after) {
 			switch l[0] {
 			case '+':
 				plus++
@@ -148,27 +154,31 @@ func FuzzRender(f *testing.F) {
 			}
 		}
 		if plus != added || minus != deleted {
-			t.Fatalf("the snippet has +%d -%d, Count = +%d -%d",
+			t.Fatalf("the snippet has +%d -%d, want Count = +%d -%d",
 				plus, minus, added, deleted)
 		}
 	})
 }
 
+// FuzzSnippetSameInLayouts checks that the split and the unified layouts give
+// the same snippet.
 func FuzzSnippetSameInLayouts(f *testing.F) {
 	f.Add(oldSrc, newSrc)
 	f.Add("a\nb\nc\nd\n", "x\nb\ny\nz\nd\n")
 	f.Add("\tx\r\n", "\ty\n")
-	f.Fuzz(func(t *testing.T, old, new string) {
-		u := diff.Render("x.txt", old, new, diff.Options{})
+	f.Fuzz(func(t *testing.T, before, after string) {
+		u := diff.Render("x.txt", before, after, diff.Options{})
 		o := diff.Options{Split: true, Width: 30, Wrap: true}
-		s := diff.Render("x.txt", old, new, o)
-		got, want := snippet(s.Rows, old, new), snippet(u.Rows, old, new)
+		s := diff.Render("x.txt", before, after, o)
+		got, want := snippet(s.Rows, before, after), snippet(u.Rows, before, after)
 		if !slices.Equal(got, want) {
-			t.Fatalf("split snippet %q, unified snippet %q", got, want)
+			t.Fatalf("split snippet = %q, want the unified snippet %q",
+				got, want)
 		}
 	})
 }
 
+// FuzzRenderFile checks that RenderFile gives one row for each source line.
 func FuzzRenderFile(f *testing.F) {
 	for i, s := range hostile {
 		f.Add(uint8(i), s, uint8(i), uint8(i*7), uint8(i%3), i%2 == 0)
@@ -193,52 +203,39 @@ func FuzzRenderFile(f *testing.F) {
 			}
 		}
 		if want := len(diff.Lines(src)); n != want {
-			t.Fatalf("%d rows for a file of %d lines", n, want)
+			t.Fatalf("RenderFile gives %d rows, want %d", n, want)
 		}
 	})
 }
 
-func FuzzPlain(f *testing.F) {
-	for _, s := range hostile {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, s string) {
-		p := diff.Plain(s)
-		if strings.ContainsFunc(p, isUnsafeControl) {
-			t.Errorf("Plain(%q) = %q, has a control character", s, p)
-		}
-		if pp := diff.Plain(p); pp != p {
-			t.Errorf("Plain is not idempotent: %q, then %q", p, pp)
-		}
-		q := diff.Quote(s)
-		if strings.ContainsFunc(q, unicode.IsControl) || !utf8.ValidString(q) {
-			t.Errorf("Quote(%q) = %q, has a control character", s, q)
-		}
-	})
-}
-
+// FuzzCount checks that the counts of Count are in the range of the line
+// counts.
 func FuzzCount(f *testing.F) {
 	for _, s := range hostile {
 		f.Add(s, "a\n")
 	}
 	f.Fuzz(func(t *testing.T, a, b string) {
 		if added, deleted := diff.Count(a, a); added != 0 || deleted != 0 {
-			t.Errorf("Count(s, s) = %d, %d", added, deleted)
+			t.Errorf("Count(%q, %q) = %d, %d, want 0, 0", a, a, added, deleted)
 		}
 		na, nb := len(diff.Lines(a)), len(diff.Lines(b))
 		if added, deleted := diff.Count("", a); added != na || deleted != 0 {
-			t.Errorf("Count(\"\", %q) = %d, %d; want %d, 0", a, added, deleted, na)
+			t.Errorf("Count(\"\", %q) = %d, %d, want %d, 0",
+				a, added, deleted, na)
 		}
 		if added, deleted := diff.Count(a, ""); added != 0 || deleted != na {
-			t.Errorf("Count(%q, \"\") = %d, %d; want 0, %d", a, added, deleted, na)
+			t.Errorf("Count(%q, \"\") = %d, %d, want 0, %d",
+				a, added, deleted, na)
 		}
 		added, deleted := diff.Count(a, b)
 		if added < 0 || deleted < 0 || added > nb || deleted > na {
-			t.Errorf("Count(%q, %q) = %d, %d", a, b, added, deleted)
+			t.Errorf("Count(%q, %q) = %d, %d, want 0-%d, 0-%d",
+				a, b, added, deleted, nb, na)
 		}
 	})
 }
 
+// FuzzComments checks that the review text has no control characters.
 func FuzzComments(f *testing.F) {
 	for i, s := range hostile {
 		f.Add("a\nb\nc\n", s, "a.go", s, uint8(i), uint8(i%3))
@@ -259,27 +256,21 @@ func FuzzComments(f *testing.F) {
 		s := int(start) % len(lines)
 		e := min(s+int(size), len(lines)-1)
 		var cs diff.Comments
-		code := lines[s : e+1]
-		c := cs.Add(commentOn(path, diff.SideNew, before, s+1, e+1))
+		c := commentOn(path, diff.SideNew, before, s+1, e+1)
 		c.Text = text
+		if c.Start != s+1 || c.End != e+1 {
+			t.Errorf("commentOn lines %d-%d = %+v, want lines %d-%d",
+				s+1, e+1, c, s+1, e+1)
+		}
+		cs.Add(c)
 		cs.Add(comment(path, diff.SideOld, before, after, text))
-
-		cs.Relocate(path, before, after)
-		n := len(diff.Lines(after))
-		badRange := c.Start < 1 || c.Start > c.End
-		if badRange || (!c.Stale && c.End > n) {
-			t.Errorf("after Relocate: %+v, the file has %d lines", c, n)
-		}
-		if !c.Stale && !slices.Equal(diff.Lines(after)[c.Start-1:c.End], code) {
-			t.Errorf("after Relocate: lines %d-%d are not the code", c.Start, c.End)
-		}
 		r := cs.Review(text)
 		if strings.ContainsFunc(r, isUnsafeControl) {
-			t.Errorf("Review has a control character: %q", r)
+			t.Errorf("Review = %q, want no control characters", r)
 		}
 		for _, c := range cs.All() {
 			if l := c.Location(); strings.ContainsFunc(l, unicode.IsControl) {
-				t.Errorf("Location = %q, has a control character", l)
+				t.Errorf("Location = %q, want no control characters", l)
 			}
 		}
 	})
