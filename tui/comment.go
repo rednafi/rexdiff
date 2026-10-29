@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -12,24 +13,24 @@ import (
 	"github.com/rednafi/rexdiff/diff"
 )
 
-// targetLine is the source line that a comment on a row attaches to.
+// targetLine is the source line that a comment on a row is attached to.
 type targetLine struct {
 	side diff.Side
 	line int
 }
 
-// target returns the line that a comment on row i of the current pane
-// attaches to, or nil. If the row changes a line on side pref, target uses
-// that side. Else target uses the new side. Thus a comment on an unchanged
-// line is on the new side.
-func (m *model) target(i int, pref diff.Side) *targetLine {
-	p := m.cur()
+// targetAt returns the line that a comment on row i of the current pane
+// would attach to, or nil if there is none. If the row changes a line on
+// side prefer, targetAt uses that side. Otherwise it uses the new side when
+// the row has one.
+func (m *model) targetAt(i int, prefer diff.Side) *targetLine {
+	p := m.curPane()
 	if p.path == "" || i < 0 || i >= len(p.rows) {
 		return nil
 	}
 	r := p.rows[i]
 	switch {
-	case pref == diff.SideOld && r.Old > 0 && r.Kind != diff.KindEqual:
+	case prefer == diff.SideOld && r.Old > 0 && r.Kind != diff.KindEqual:
 		return &targetLine{diff.SideOld, r.Old}
 	case r.New > 0:
 		return &targetLine{diff.SideNew, r.New}
@@ -39,41 +40,42 @@ func (m *model) target(i int, pref diff.Side) *targetLine {
 	return nil
 }
 
-// selectedChange returns the selected file of the Changes tab, or nil.
-func (m *model) selectedChange() *changedFile {
-	if m.changeSel >= len(m.changeFiles) {
+// curChangedFile returns the selected file in the Changes tab, or nil.
+func (m *model) curChangedFile() *changedFile {
+	if m.changes.cur >= len(m.changes.files) {
 		return nil
 	}
-	return &m.changeFiles[m.changeSel]
+	return &m.changes.files[m.changes.cur]
 }
 
-// contentFor returns the text of side s of the file at path, as the pane
-// shows it. Thus a comment quotes the lines on the screen, and not a newer
-// version of the file. A file that the pane does not show gives "".
-func (m *model) contentFor(path string, s diff.Side) string {
-	if f := m.selectedChange(); m.tab == tabChanges && f != nil && f.Path == path {
-		if s == diff.SideOld {
-			return f.Old
+// contentFor returns the text of the given side of the file at path, as
+// the current tab shows it. It returns "" if the tab is not showing that
+// file.
+func (m *model) contentFor(path string, side diff.Side) string {
+	if f := m.curChangedFile(); m.tab == tabChanges && f != nil && f.Path == path {
+		if side == diff.SideOld {
+			return f.OldText
 		}
-		return f.New
+		return f.NewText
 	}
-	if m.tab == tabFiles && path == m.viewedPath {
-		return m.viewed
+	if m.tab == tabAllFiles && path == m.allFiles.shownPath {
+		return m.allFiles.shownText
 	}
 	return ""
 }
 
-// diffRev returns the revision of the diff in the Changes tab, for
-// [diff.Anchor]. That is the picked commits, or "" for the working tree.
+// diffRev returns the revision range of the diff in the Changes tab, for
+// use in a [diff.Anchor]. It returns "" when the diff is of the working
+// tree.
 func (m *model) diffRev() string {
 	if m.scope == scopeCommits {
-		return m.from + ".." + m.to
+		return m.oldest + ".." + m.newest
 	}
 	return ""
 }
 
-// anchorOf returns the anchor of a comment made in tab t. As in
-// herdr-reviewr, a comment on a file view is always on the working tree.
+// anchorOf returns the anchor for a comment made in tab t. A comment made
+// outside the Changes tab is always on the working tree.
 func (m *model) anchorOf(t tab) diff.Anchor {
 	if t == tabChanges {
 		return diff.Anchor{InDiff: true, Rev: m.diffRev()}
@@ -81,117 +83,170 @@ func (m *model) anchorOf(t tab) diff.Anchor {
 	return diff.Anchor{}
 }
 
-// anchor returns the anchor of a comment made in the current tab.
-func (m *model) anchor() diff.Anchor { return m.anchorOf(m.tab) }
+// curAnchor returns the anchor for a comment made in the current tab.
+func (m *model) curAnchor() diff.Anchor { return m.anchorOf(m.tab) }
 
-// revCurrent reports whether the scope shows the diff that c is made on.
-// Only then can the user edit c from the comment list.
-func (m *model) revCurrent(c *diff.Comment) bool {
+// commentOnCurRev reports whether the current scope shows the diff that c
+// was made on. The user can edit c from the comment list only if it does.
+func (m *model) commentOnCurRev(c *diff.Comment) bool {
 	return !c.Anchor.InDiff || c.Anchor.Rev == m.diffRev()
 }
 
-// stale reports whether the lines of c can have moved. A comment on a diff
-// is stale if its file leaves the changes. A comment on a file view is
-// stale if its file is gone.
-func (m *model) stale(c *diff.Comment) bool {
+// commentStale reports whether the lines of c may no longer hold the code
+// that c was made on. Comments do not follow moved code, so a comment is
+// stale when its lines now hold other code or are past the end of the
+// file, as [diff.Comment.Moved] reports. A comment on a diff is also stale
+// when its file is no longer among the changed files, and any other
+// comment when its file no longer exists. The code of a comment on a
+// different diff than the one shown is not checked.
+func (m *model) commentStale(c *diff.Comment) bool {
 	if c.Anchor.InDiff {
-		return !slices.ContainsFunc(m.changeFiles, func(f changedFile) bool { return f.Path == c.Path })
+		i := slices.IndexFunc(m.changes.files, func(f changedFile) bool { return f.Path == c.Path })
+		switch {
+		case i < 0:
+			return true
+		case c.Anchor.Rev != m.diffRev() || m.changes.files[i].Err != nil:
+			return false
+		case c.Side == diff.SideOld:
+			return c.Moved(m.changes.files[i].OldText)
+		}
+		return c.Moved(m.changes.files[i].NewText)
 	}
-	_, err := os.Lstat(filepath.Join(m.repo.Root(), c.Path))
-	return err != nil
+	// Check the file as it is now, not as the Files tab last showed it,
+	// so that the answer is right on every tab.
+	full := filepath.Join(m.repo.Root(), c.Path)
+	info, err := os.Stat(full)
+	if err != nil {
+		_, err := os.Lstat(full) // a broken symbolic link still exists
+		return err != nil
+	}
+	f, ok := m.commentFiles[c.Path]
+	if !ok || f.size != info.Size() || !f.modTime.Equal(info.ModTime()) {
+		text, err := m.repo.ReadFile(c.Path)
+		f = fileCopy{size: info.Size(), modTime: info.ModTime(), text: text, err: err}
+		if m.commentFiles == nil {
+			m.commentFiles = make(map[string]fileCopy)
+		}
+		m.commentFiles[c.Path] = f
+	}
+	// The code of a binary or unreadable file is not checked.
+	return f.err == nil && c.Moved(f.text)
 }
 
-// commentAtCursor returns the comment on the cursor line, or nil.
-func (m *model) commentAtCursor() *diff.Comment {
-	p := m.cur()
-	t := m.target(p.cur, diff.SideNew)
-	if t == nil {
+// fileCopy is the content of a file in the working tree, read when the
+// file had the given size and modification time. err is the error from
+// reading it.
+type fileCopy struct {
+	size    int64
+	modTime time.Time
+	text    string
+	err     error
+}
+
+// jumpToNearLine moves the cursor to the line nearest line Start of c if
+// the current pane shows the file of c but not that line, for example
+// because the file is now shorter.
+func (m *model) jumpToNearLine(c *diff.Comment) {
+	p := m.curPane()
+	hasSide := func(r diff.Row) bool { return r.Line(c.Side) > 0 }
+	if p.path != c.Path || p.rowOf(c.Side, c.Start) >= 0 || !slices.ContainsFunc(p.rows, hasSide) {
+		return
+	}
+	p.cur = p.lineStart(lineRow(p.rows, c.Side, c.Start))
+}
+
+// curComment returns the comment on the cursor line, or nil.
+func (m *model) curComment() *diff.Comment {
+	p := m.curPane()
+	target := m.targetAt(p.cur, diff.SideNew)
+	if target == nil {
 		return nil
 	}
-	return m.commentOn(p.cur, t)
+	return m.commentOn(p.cur, target)
 }
 
-// selection returns the first and the last row of the visual selection.
-// With no selection, it returns the rows of the cursor line.
-func (p *pane) selection() (lo, hi int) {
-	if p.anchor < 0 {
-		return p.cur, p.end(p.cur)
+// selRange returns the first and last rows of the visual selection. With
+// no selection, it returns the rows of the cursor line.
+func (p *pane) selRange() (lo, hi int) {
+	if p.selStart < 0 {
+		return p.cur, p.lineEnd(p.cur)
 	}
-	return p.span(p.anchor, p.cur)
+	return p.span(p.selStart, p.cur)
 }
 
-// selectedRows returns the source rows of the selection. In rendered
-// markdown, they are all the rows of the selected blocks, with the
+// selRows returns the source rows of the selection. In rendered Markdown,
+// these are all the source rows of the selected blocks, including any
 // deleted lines between them.
-func (p *pane) selectedRows() []diff.Row {
-	lo, hi := p.selection()
-	if p.src == nil {
+func (p *pane) selRows() []diff.Row {
+	lo, hi := p.selRange()
+	if p.srcRows == nil {
 		return p.rows[lo : hi+1]
 	}
-	first, last := p.rows[p.head(lo)].New, p.rows[hi].New
-	i := slices.IndexFunc(p.src, func(r diff.Row) bool { return r.New == first })
-	j := slices.IndexFunc(p.src, func(r diff.Row) bool { return r.New == last })
-	return p.src[i : j+1]
+	first, last := p.rows[p.lineStart(lo)].New, p.rows[hi].New
+	i := slices.IndexFunc(p.srcRows, func(r diff.Row) bool { return r.New == first })
+	j := slices.IndexFunc(p.srcRows, func(r diff.Row) bool { return r.New == last })
+	return p.srcRows[i : j+1]
 }
 
-// span returns the first and the last row of the lines between rows a and
-// b, in either order.
+// span returns the first and last rows of the lines from row a to row b.
+// a and b can be in either order.
 func (p *pane) span(a, b int) (lo, hi int) {
-	return min(a, b), p.end(max(a, b))
+	return min(a, b), p.lineEnd(max(a, b))
 }
 
-// startComment opens the comment box for a new comment on the selection,
-// or on the cursor line. A line can have more than one comment.
-func (m *model) startComment(pref diff.Side) tea.Cmd {
-	p := m.cur()
-	t := m.target(p.cur, pref)
-	if t == nil {
+// openComment opens the comment box for a new comment on the selection or,
+// with no selection, on the cursor line. A line can have more than one
+// comment.
+func (m *model) openComment(prefer diff.Side) tea.Cmd {
+	p := m.curPane()
+	target := m.targetAt(p.cur, prefer)
+	if target == nil {
 		return nil
 	}
 	c := diff.NewComment(
 		p.path,
-		t.side,
-		p.selectedRows(),
+		target.side,
+		p.selRows(),
 		m.contentFor(p.path, diff.SideOld),
 		m.contentFor(p.path, diff.SideNew),
 	)
-	c.Anchor = m.anchor()
-	m.draft = &draft{Comment: c, listRow: -1}
-	m.sizeEditor()
-	m.editor.SetValue("")
+	c.Anchor = m.curAnchor()
+	m.draft = &draft{Comment: c, itemRow: -1}
+	m.sizeCommentInput()
+	m.commentInput.SetValue("")
 	m.mode = modeComment
-	// Put the cursor on the last line of the range, so that the box opens
-	// below the range.
-	cursorToLine(p, c.Side, c.End)
-	return m.editor.Focus()
+	// The box opens below the cursor, so move the cursor to the last
+	// commented line.
+	jumpToLine(p, c.Side, c.End)
+	return m.commentInput.Focus()
 }
 
-// editComment opens the comment box with the text of c. After the edit,
-// the comment list opens at listRow, if listRow is 0 or more.
-func (m *model) editComment(c *diff.Comment, listRow int) tea.Cmd {
-	m.draft = &draft{Comment: *c, editID: c.ID, listRow: listRow}
-	m.sizeEditor()
-	m.editor.SetValue(c.Text)
+// editComment opens the comment box with the text of c. If itemRow is 0
+// or more, the comment list opens again at that row when the box closes.
+func (m *model) editComment(c *diff.Comment, itemRow int) tea.Cmd {
+	m.draft = &draft{Comment: *c, editID: c.ID, itemRow: itemRow}
+	m.sizeCommentInput()
+	m.commentInput.SetValue(c.Text)
 	m.mode = modeComment
-	cursorToLine(m.cur(), c.Side, c.End)
-	return m.editor.Focus()
+	jumpToLine(m.curPane(), c.Side, c.End)
+	return m.commentInput.Focus()
 }
 
-// showsLine reports whether the current pane shows the last line of c,
-// with the anchor of c.
-func (m *model) showsLine(c *diff.Comment) bool {
-	p := m.cur()
-	return m.anchor() == c.Anchor && p.path == c.Path && p.rowOf(c.Side, c.End) >= 0
+// commentShown reports whether the current pane shows the last line of c
+// in the same diff or file view that c was made on.
+func (m *model) commentShown(c *diff.Comment) bool {
+	p := m.curPane()
+	return m.curAnchor() == c.Anchor && p.path == c.Path && p.rowOf(c.Side, c.End) >= 0
 }
 
 // updateComment handles a key while the comment box is open.
 func (m *model) updateComment(msg tea.KeyPressMsg) tea.Cmd {
 	switch {
-	case key.Matches(msg, m.keys.Save):
-		// As in herdr-reviewr, blank text cancels. An edit keeps the
-		// comment, its ID, and its place in the list.
+	case key.Matches(msg, m.keys.SaveComment):
+		// Blank text cancels. Editing keeps the comment's ID and its place
+		// in the list.
 		d := m.draft
-		text := strings.TrimSpace(m.editor.Value())
+		text := strings.TrimSpace(m.commentInput.Value())
 		edited := m.comments.Find(d.editID)
 		switch {
 		case text == "":
@@ -211,34 +266,32 @@ func (m *model) updateComment(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	var cmd tea.Cmd
-	m.editor, cmd = m.editor.Update(msg)
-	m.ensureVisible()
+	m.commentInput, cmd = m.commentInput.Update(msg)
+	m.scrollToCursor()
 	return cmd
 }
 
-// closeComment closes the comment box and clears the selection. Then it
-// does the reload that waits for the box. After an edit from the comment
-// list, it opens the list again.
+// closeComment closes the comment box, clears the selection and runs any
+// reload that was put off while the box was open. If the edit started from
+// the comment list, it opens the list again.
 func (m *model) closeComment() {
-	row := m.draft.listRow
+	row := m.draft.itemRow
 	m.mode, m.draft = modeNormal, nil
-	m.cur().anchor = -1
-	m.editor.Blur()
-	m.reloadDue()
+	m.curPane().selStart = -1
+	m.commentInput.Blur()
+	m.reloadIfDue()
 	if row >= 0 && m.comments.Len() > 0 {
-		m.openCommentList()
+		m.openComments()
 		m.overlay.cur = min(row, len(m.overlay.shown)-1)
 	}
 }
 
-// nearNewLine returns the new line of row i. A row with no new line, such
-// as a deleted line, gives the next new line below it. If there is none, it
-// gives the last new line above it. If there is none, it gives 1.
-func nearNewLine(rows []diff.Row, i int) int {
-	for _, r := range rows[i:] {
-		if r.New > 0 {
-			return r.New
-		}
+// nearestNewLine returns the new-side line number of row i. For a row with
+// no new line, such as a deleted line, it returns the next new line below,
+// then the nearest one above, and 1 if there are none.
+func nearestNewLine(rows []diff.Row, i int) int {
+	if j := slices.IndexFunc(rows[i:], func(r diff.Row) bool { return r.New > 0 }); j >= 0 {
+		return rows[i+j].New
 	}
 	for _, r := range slices.Backward(rows[:i]) {
 		if r.New > 0 {
@@ -248,19 +301,19 @@ func nearNewLine(rows []diff.Row, i int) int {
 	return 1
 }
 
-// editOrOpen edits the comment at the cursor. If there is no comment, it
-// opens the file in an editor at the cursor line. As in herdr-reviewr, it
-// does nothing while a selection is active, so the selection stays.
-func (m *model) editOrOpen() tea.Cmd {
-	if m.cur().anchor >= 0 {
+// onEdit edits the comment on the cursor line or, if there is none, opens
+// the file in an editor at that line. It does nothing while a selection is
+// active.
+func (m *model) onEdit() tea.Cmd {
+	if m.curPane().selStart >= 0 {
 		return nil
 	}
-	if c := m.commentAtCursor(); c != nil {
+	if c := m.curComment(); c != nil {
 		return m.editComment(c, -1)
 	}
-	p := m.cur()
+	p := m.curPane()
 	if p.path == "" {
 		return nil
 	}
-	return m.openEditor(p.path, nearNewLine(p.rows, p.cur))
+	return m.launchEditor(p.path, nearestNewLine(p.rows, p.cur))
 }

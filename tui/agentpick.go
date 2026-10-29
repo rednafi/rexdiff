@@ -1,6 +1,6 @@
 package tui
 
-// The agent picker picks the agent that gets the review.
+// The agent picker lets the user choose which agent receives the review.
 
 import (
 	"fmt"
@@ -9,13 +9,14 @@ import (
 	"github.com/rednafi/rexdiff/rex"
 )
 
-// openAgentPicker lets the user pick the agent to send to. The cursor
-// starts on the agent of the last send, else the agent beside the pane.
+// openAgentPicker opens a list of agents for the user to send the review
+// to. The cursor starts on the agent that was used last or, failing that,
+// on the agent in the pane beside rexdiff.
 func (m *model) openAgentPicker(agents []rex.Agent) {
 	ov := newOverlay(overlayAgents, "send to which agent?")
 	ov.agents = agents
-	var items []pickItem
-	armed := 0
+	var items []overlayItem
+	crossing := 0
 	for i, a := range agents {
 		detail := a.Status.App + " · " + string(a.Status.State)
 		if a.Status.State == rex.StateBlocked {
@@ -27,14 +28,14 @@ func (m *model) openAgentPicker(agents []rex.Agent) {
 		tag := ""
 		switch a.Block {
 		case m.lastSent:
-			tag, armed = "last used", i
+			tag, crossing = "last used", i
 		case m.beside:
 			tag = "opened beside"
 			if m.lastSent == "" {
-				armed = i
+				crossing = i
 			}
 		}
-		items = append(items, pickItem{
+		items = append(items, overlayItem{
 			label:  fmt.Sprintf("%d  %s", i+1, a.Name),
 			detail: detail,
 			tag:    tag,
@@ -42,19 +43,19 @@ func (m *model) openAgentPicker(agents []rex.Agent) {
 		})
 	}
 	ov.setItems(items)
-	ov.cur = armed
-	m.open(ov)
+	ov.cur = crossing
+	m.openOverlay(ov)
 }
 
-// agent returns the agent of item it of the agent picker. If it is nil,
-// ok is false.
-func (o *overlay) agent(it *pickItem) (a rex.Agent, ok bool) {
+// agent returns the agent of the agent picker item it. ok is false if it
+// is nil or matches no agent.
+func (ov *overlay) agent(it *overlayItem) (a rex.Agent, ok bool) {
 	if it == nil {
 		return rex.Agent{}, false
 	}
-	i := slices.IndexFunc(o.agents, func(a rex.Agent) bool { return a.Block == it.id })
+	i := slices.IndexFunc(ov.agents, func(a rex.Agent) bool { return a.Block == it.id })
 	if i < 0 {
 		return rex.Agent{}, false
 	}
-	return o.agents[i], true
+	return ov.agents[i], true
 }

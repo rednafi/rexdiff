@@ -4,50 +4,50 @@ package diffview
 
 import (
 	"slices"
-
-	"github.com/aymanbagabas/go-udiff"
 )
 
-// splitLine is one row of the split layout. A nil side has no line.
+// splitLine is one row of the split layout. A nil field means that side
+// has no line.
 type splitLine struct {
-	before *udiff.Line
-	after  *udiff.Line
+	old *diffLine
+	new *diffLine
 }
 
-// hunkToSplit pairs the lines of h for the split layout. An equal line is on
-// both sides. A deleted line gets the next inserted line beside it, if no
-// equal line comes first.
-func hunkToSplit(h *udiff.Hunk) []splitLine {
+// hunkToSplit pairs the lines of h for the split layout. An equal line
+// appears on both sides. A deleted line is paired with the next unpaired
+// added line, unless an equal line comes first. Any other added line
+// appears alone on the new side, in its original position.
+func hunkToSplit(h *hunk) []splitLine {
 	lines := slices.Clone(h.Lines)
 	out := make([]splitLine, 0, len(lines))
-	for len(lines) > 0 {
-		ul := lines[0]
-		lines = lines[1:]
-		var sl splitLine
+	taken := make([]bool, len(lines)) // added lines already paired with a deleted line
+	// next is the index where the search for an added line to pair starts.
+	// Every line before it is either already paired or not an added line.
+	next := 0
+	for i := range lines {
+		ul := &lines[i]
+		var l splitLine
 		switch ul.Kind {
-		case udiff.Equal:
-			sl.before, sl.after = &ul, &ul
-		case udiff.Insert:
-			sl.after = &ul
-		case udiff.Delete:
-			sl.before = &ul
-			sl.after, lines = takeInsert(lines)
+		case KindEqual:
+			l.old, l.new = ul, ul
+		case KindAdded:
+			if taken[i] {
+				continue
+			}
+			l.new = ul
+		case KindDeleted:
+			l.old = ul
+			next = max(next, i+1)
+			for next < len(lines) && lines[next].Kind != KindEqual &&
+				(lines[next].Kind != KindAdded || taken[next]) {
+				next++
+			}
+			if next < len(lines) && lines[next].Kind == KindAdded {
+				l.new, taken[next] = &lines[next], true
+				next++
+			}
 		}
-		out = append(out, sl)
+		out = append(out, l)
 	}
 	return out
-}
-
-// takeInsert removes the first inserted line before the next equal line from
-// lines. It returns that line, or nil if there is none, and the other lines.
-func takeInsert(lines []udiff.Line) (*udiff.Line, []udiff.Line) {
-	for i, l := range lines {
-		switch l.Kind {
-		case udiff.Insert:
-			return &l, slices.Delete(lines, i, i+1)
-		case udiff.Equal:
-			return nil, lines
-		}
-	}
-	return nil, lines
 }

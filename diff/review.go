@@ -6,36 +6,44 @@ import (
 	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
-// Review returns the comments as herdr-reviewr text for a coding agent. It
-// writes the prefix, if not empty, then the comments in [Comments.All] order.
-// Blank lines separate them. The text has no control characters.
+// Review returns the comments as text for a coding agent. The text starts
+// with prefix, if it is not empty, followed by the comments in
+// [Comments.All] order, separated by blank lines. The text contains no
+// control characters.
 //
-// This is an example of a comment:
+// A comment looks like this:
 //
 //	a.go:3-4
 //	 x := 1
 //	+y := 2
 //	Merge these lines.
-func (cs *Comments) Review(prefix string) string {
+//
+// If stale is not nil and reports true for a comment, " (stale)" follows
+// its location, because its lines may no longer hold the code shown.
+func (cs *Comments) Review(prefix string, stale func(*Comment) bool) string {
 	var parts []string
 	if p := strings.TrimRight(termtext.Plain(prefix), " \n\t"); p != "" {
 		parts = append(parts, p)
 	}
 	for _, c := range cs.All() {
-		parts = append(parts, format(c))
+		parts = append(parts, formatComment(c, stale != nil && stale(c)))
 	}
 	return strings.Join(parts, "\n\n")
 }
 
-// format returns c as text for [Comments.Review].
-func format(c *Comment) string {
+// formatComment returns c as text for [Comments.Review], marked stale if
+// stale is true.
+func formatComment(c *Comment, stale bool) string {
 	var b strings.Builder
 	b.WriteString(termtext.Plain(c.Location()))
-	// Write the rows as the diff shows them, so that the agent reads a real
-	// diff.
+	if stale {
+		b.WriteString(" (stale)")
+	}
+	// Write the rows as unified diff lines, or the code lines if there are
+	// no rows.
 	if len(c.snippet) > 0 {
 		for _, l := range c.snippet {
-			b.WriteString("\n")
+			b.WriteByte('\n')
 			b.WriteString(termtext.Plain(l))
 		}
 	} else {
@@ -44,7 +52,7 @@ func format(c *Comment) string {
 			mark = "-"
 		}
 		for _, l := range c.code {
-			b.WriteString("\n")
+			b.WriteByte('\n')
 			b.WriteString(mark)
 			b.WriteString(termtext.Plain(l))
 		}
@@ -55,14 +63,14 @@ func format(c *Comment) string {
 			text = append(text, strings.TrimRight(l, " \t"))
 		}
 	}
-	b.WriteString("\n")
+	b.WriteByte('\n')
 	b.WriteString(strings.Join(text, "\n"))
 	return b.String()
 }
 
 // snippet returns rows as unified diff lines. See [NewComment].
-func snippet(rows []Row, before, after string) []string {
-	oldLines, newLines := Lines(before), Lines(after)
+func snippet(rows []Row, oldText, newText string) []string {
+	oldLines, newLines := SplitLines(oldText), SplitLines(newText)
 	line := func(ls []string, n int) string {
 		if n >= 1 && n-1 < len(ls) {
 			return ls[n-1]
@@ -82,11 +90,11 @@ func snippet(rows []Row, before, after string) []string {
 		case KindEqual:
 			flush()
 			out = append(out, " "+line(newLines, r.New))
-		case KindInsert:
+		case KindAdded:
 			plus = append(plus, "+"+line(newLines, r.New))
-		case KindDelete:
+		case KindDeleted:
 			minus = append(minus, "-"+line(oldLines, r.Old))
-		case KindChange:
+		case KindChanged:
 			minus = append(minus, "-"+line(oldLines, r.Old))
 			plus = append(plus, "+"+line(newLines, r.New))
 		}

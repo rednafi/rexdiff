@@ -1,128 +1,138 @@
-// Package diff renders the changes to a file as terminal lines, and keeps
-// review comments on the lines.
+// Package diff renders the changes to a file as lines for a terminal, and
+// stores review comments on those lines.
 //
-// [Render] and [RenderFile] return a [Diff]. Each line in [Diff.Lines] has a
-// [Row] that tells which source lines it shows. Use the rows to put a cursor
-// or a [Comment] on a source line. The colours come from the terminal
-// palette.
+// [Render] and [RenderFile] return a [Diff]. Each of its lines has a [Row]
+// that records which source lines it shows. The colours come from the
+// terminal's palette.
 package diff
 
 import (
+	"slices"
 	"strings"
-
-	"github.com/aymanbagabas/go-udiff"
 
 	"github.com/rednafi/rexdiff/internal/diffview"
 )
 
-// Kind is the type of a rendered row.
+// Kind is the kind of a rendered row.
 type Kind int
 
-// These are the kinds of a row.
+// The kinds of row.
 const (
-	KindHunk   Kind = iota // a hunk header, with no source line
-	KindEqual              // a line that is the same on the two sides
-	KindInsert             // a line that only the new side has
-	KindDelete             // a line that only the old side has
-	KindChange             // a deleted line beside an inserted line (split)
+	KindHunk    Kind = iota // a hunk header, with no source line
+	KindEqual               // a line that is the same on both sides
+	KindAdded               // a line that exists only on the new side
+	KindDeleted             // a line that exists only on the old side
+	KindChanged             // a deleted line next to an added line, in split view
 )
 
 // Side identifies one version of a file.
 type Side int
 
-// These are the two sides of a file.
+// The two sides of a file.
 const (
 	SideOld Side = iota // the version before the change
 	SideNew             // the version after the change
 )
 
-// Row tells which source lines one rendered line shows. Old and New are
-// line numbers that start at 1. A value of 0 means that the row has no line
-// on that side. Continued is true if the line continues the source lines of
-// the line above, because [Options.Wrap] wraps them.
-//
-// A long run of equal lines folds into the hunk header below it. For a
-// hunk header, Fold is that run.
+// Row describes the source lines that one rendered line shows.
 type Row struct {
-	Kind      Kind
-	Old, New  int
+	Kind Kind
+	// Old and New are 1-based line numbers, or 0 if the row has no line on
+	// that side.
+	Old, New int
+	// Continued is true if the row continues the line above it because of
+	// [Options.Wrap].
 	Continued bool
-	Fold      Fold
+	// Fold is the run of hidden equal lines above a hunk header.
+	Fold Fold
 }
 
-// Fold is a run of equal lines that the diff hides. Old and New are the
-// line numbers of its first line. Lines is the number of lines. Lines is 0
-// if the diff hides no line.
-type Fold struct {
-	Old, New, Lines int
-}
-
-// Line returns the line number of the row on side s.
-func (r Row) Line(s Side) int {
-	if s == SideOld {
+// Line returns the row's line number on side.
+func (r Row) Line(side Side) int {
+	if side == SideOld {
 		return r.Old
 	}
 	return r.New
 }
 
-// Options control how [Render] and [RenderFile] draw their output.
+// Fold is a run of equal lines that the diff hides. Old and New are the
+// line numbers of its first line, and Lines is the number of lines. Lines
+// is 0 if no lines are hidden.
+type Fold struct {
+	Old, New, Lines int
+}
+
+// Options controls how [Render] draws a diff.
 type Options struct {
 	// Split shows the old lines on the left and the new lines on the right.
-	// If it is false, the old and the new lines are in one column.
+	// If it is false, the old and new lines share one column.
 	Split bool
 	// Width is the maximum width of a line, in cells. Zero means no limit.
 	Width int
-	// Offset is the number of cells to scroll the code to the right.
-	Offset int
-	// Wrap continues a line that is wider than Width on the next lines,
-	// instead of cutting it. Then Offset does not apply.
+	// ScrollX is the number of cells to scroll the code to the right.
+	ScrollX int
+	// Wrap continues a line that is wider than Width on the following
+	// lines, instead of cutting it off. ScrollX is ignored when Wrap is set.
 	Wrap bool
-	// Expanded reports whether the lines of a fold show. If Expanded is
-	// nil, no fold shows. RenderFile does not use it.
+	// Expanded reports whether the hidden lines of a fold are shown. If
+	// Expanded is nil, all folds stay hidden.
 	Expanded func(Fold) bool
-	// Signs marks a changed line with + or -. Without Signs, a bar in the
-	// colour of the line marks it.
+	// Signs marks each changed line with + or -. Without Signs, a coloured
+	// bar marks it.
 	Signs bool
 	// Theme sets the colours.
 	Theme Theme
-	// Cache makes a new render of the same lines fast. If Cache is nil, the
-	// render keeps nothing.
+	// Cache stores results for reuse by later renders. If Cache is nil,
+	// nothing is reused.
 	Cache *Cache
 }
 
-// Cache keeps the syntax colours of the lines between renders, for example
-// for a sideways scroll. The zero value is an empty Cache. A Cache is not
-// safe for concurrent use.
+// Cache stores highlighted lines, the computed diff and the rows between
+// renders. The zero value is an empty Cache. A Cache is not safe for
+// concurrent use.
 type Cache struct {
-	lines diffview.Cache                  // the lines of Render
-	file  struct{ path, src, out string } // the last file of RenderFile
+	lines diffview.Cache // highlighted lines and the last diff, for Render
+	rows  struct {       // the last rows that Render converted
+		from []diffview.Row
+		to   []Row
+	}
+	file struct { // the last file passed to RenderFile
+		path, src string
+		raw       string // the original content, before shownFile converted it to src
+		h         *diffview.Highlighter
+	}
 }
 
-// Diff is the rendered output. Lines[i] is the screen line for Rows[i].
-// Lines is empty when there is nothing to show, for example when the two
-// versions are the same.
+// Diff is the rendered output. [Diff.Line] returns the screen line for
+// Rows[i], and renders it the first time it is requested. There are no
+// lines if the two versions are the same. Do not modify Rows, because
+// later renders with the same Cache may share them. A Diff uses its Cache
+// and is not safe for concurrent use.
 type Diff struct {
-	Lines []string
 	Rows  []Row
+	lines *diffview.Lines
 
 	split    bool
 	oldNum   int // width of the old line-number column
 	newNum   int // width of the new line-number column
 	newNumAt int // column where the new line numbers start
 
-	// The fields below are for [Diff.Cell].
-	src    [2]string // the content of each side
+	// The fields below are used by [Diff.Cell].
+	texts  [2]string // the content of each side
 	codeAt [2]int    // column where the code of each side starts
-	offset int       // the sideways scroll, or 0 with wrap
-	wrap   bool
+	// codeWidth is the width of the code of each side, or 0 if the lines
+	// have no width limit.
+	codeWidth [2]int
+	scrollX   int // the horizontal scroll, or 0 when wrapping
+	wrap      bool
 }
 
-// Render compares before, the old content of the file at path, with after,
-// its new content. The path selects the syntax highlighter.
-func Render(path, before, after string, o Options) *Diff {
-	dv := diffview.New(path, before, after).
+// Render returns the diff between oldText and newText, the old and new
+// content of the file at path. The path selects the syntax highlighting.
+func Render(path, oldText, newText string, o Options) *Diff {
+	dv := diffview.New(path, oldText, newText).
 		Width(o.Width).
-		XOffset(o.Offset).
+		ScrollX(o.ScrollX).
 		Split(o.Split).
 		Signs(o.Signs).
 		Wrap(o.Wrap).
@@ -132,54 +142,32 @@ func Render(path, before, after string, o Options) *Diff {
 		dv = dv.Cache(&o.Cache.lines)
 	}
 	if o.Expanded != nil {
-		dv = dv.Expand(func(f diffview.Fold) bool { return o.Expanded(foldOf(f)) })
+		dv = dv.Expanded(func(f diffview.Fold) bool { return o.Expanded(Fold(f)) })
 	}
-	out, rows, g := dv.Render()
-
-	d := &Diff{split: o.Split, src: [2]string{before, after}, wrap: o.Wrap}
+	ls, rows, g := dv.RenderLines()
+	d := &Diff{lines: ls, split: o.Split, texts: [2]string{oldText, newText}, wrap: o.Wrap}
 	if !o.Wrap {
-		d.offset = o.Offset
+		d.scrollX = o.ScrollX
 	}
-	for _, r := range rows {
-		d.Rows = append(d.Rows, Row{
-			Kind:      kindOf(r.Kind),
-			Old:       r.Before,
-			New:       r.After,
-			Continued: r.Continued,
-			Fold:      foldOf(r.Fold),
-		})
+	d.Rows = o.Cache.convert(rows)
+	d.oldNum, d.newNum, d.newNumAt = g.OldNum, g.NewNum, g.NewNumStart
+	d.codeAt = [2]int{g.OldCode, g.NewCode}
+	if o.Width > 0 {
+		d.codeWidth = [2]int{o.Width - g.OldCode, o.Width - g.NewCode}
+		if o.Split {
+			d.codeWidth[SideOld] = g.NewNumStart - g.OldCode
+		}
 	}
-	if len(d.Rows) > 0 {
-		d.Lines = strings.Split(out, "\n")
-	}
-	d.oldNum, d.newNum, d.newNumAt = g.BeforeNum, g.AfterNum, g.AfterNumStart
-	d.codeAt = [2]int{g.BeforeCode, g.AfterCode}
 	return d
 }
 
-// foldOf returns the Fold of the diffview fold f.
-func foldOf(f diffview.Fold) Fold {
-	return Fold{Old: f.Before, New: f.After, Lines: f.Lines}
-}
+// Line returns screen line i, which belongs to Rows[i].
+func (d *Diff) Line(i int) string { return d.lines.Line(i) }
 
-// kindOf returns the Kind of the diffview row kind k.
-func kindOf(k diffview.RowKind) Kind {
-	switch k {
-	case diffview.RowHunk:
-		return KindHunk
-	case diffview.RowInsert:
-		return KindInsert
-	case diffview.RowDelete:
-		return KindDelete
-	case diffview.RowChange:
-		return KindChange
-	}
-	return KindEqual // diffview.RowEqual
-}
-
-// SideAt tells which side column x of a line belongs to. Column 0 is the
-// first column of the line. If onNumber is true, x is on a line number.
-func (d *Diff) SideAt(x int) (s Side, onNumber bool) {
+// SideAt reports which side column x of a screen line belongs to, where
+// column 0 is the first column. onGutter is true if x is in a line-number
+// column.
+func (d *Diff) SideAt(x int) (side Side, onGutter bool) {
 	if d.split {
 		switch {
 		case x < d.oldNum:
@@ -197,33 +185,21 @@ func (d *Diff) SideAt(x int) (s Side, onNumber bool) {
 	return SideNew, x < d.oldNum+d.newNum
 }
 
-// Count returns the number of lines that a change from before to after adds
-// and deletes. As in herdr-reviewr, a change from a CRLF to an LF line
-// ending, or back, is a change of the line.
-func Count(before, after string) (added, deleted int) {
-	u, err := udiff.ToUnifiedDiff("", "", before, udiff.Lines(before, after), 0)
-	if err != nil {
-		return 0, 0
-	}
-	for _, h := range u.Hunks {
-		for _, l := range h.Lines {
-			switch l.Kind {
-			case udiff.Insert:
-				added++
-			case udiff.Delete:
-				deleted++
-			}
-		}
-	}
-	return added, deleted
+// CountLines returns the number of lines added and deleted by the change
+// from oldText to newText. A line whose ending changes between CRLF and LF
+// counts as changed.
+func CountLines(oldText, newText string) (added, deleted int) {
+	return diffview.CountLines(oldText, newText)
 }
 
-// Lines splits s into lines, without the LF or CRLF line endings. Line n of
-// s is Lines(s)[n-1]. The lines of a [Comment] count in this way.
-func Lines(s string) []string {
-	var lines []string
-	for l := range strings.Lines(s) {
-		lines = append(lines, trimEOL(l))
+// SplitLines splits s into lines and removes the LF or CRLF line endings.
+// Line n of s is SplitLines(s)[n-1]. [Comment] line numbers use the same
+// counting. Unlike [strings.Split], it returns no empty line after a final
+// line ending.
+func SplitLines(s string) []string {
+	lines := slices.Collect(strings.Lines(s))
+	for i, l := range lines {
+		lines[i] = trimEOL(l)
 	}
 	return lines
 }
@@ -233,8 +209,28 @@ func trimEOL(line string) string {
 	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 }
 
-// countLines returns the number of lines of s, as [Lines] counts them. A
-// last line without a newline counts as a line.
+// convert returns rows as the rows of a [Diff], or nil if there are none.
+// c keeps the result, because the next render often has the same rows. A
+// nil c keeps nothing.
+func (c *Cache) convert(rows []diffview.Row) []Row {
+	if len(rows) == 0 {
+		return nil
+	}
+	if c != nil && len(c.rows.from) == len(rows) && &c.rows.from[0] == &rows[0] {
+		return c.rows.to
+	}
+	out := make([]Row, len(rows))
+	for i, r := range rows {
+		out[i] = Row{Kind: Kind(r.Kind), Old: r.Old, New: r.New, Continued: r.Continued, Fold: Fold(r.Fold)}
+	}
+	if c != nil {
+		c.rows.from, c.rows.to = rows, out
+	}
+	return out
+}
+
+// countLines returns the number of lines in s, counted as [SplitLines] counts
+// them. A final line without a newline counts as a line.
 func countLines(s string) int {
 	n := strings.Count(s, "\n")
 	if s != "" && !strings.HasSuffix(s, "\n") {

@@ -9,44 +9,45 @@ import (
 	"github.com/rednafi/rexdiff/diff"
 )
 
-// searchShare is the percent of the space of the search that the results
-// take. The preview takes the rest. The value comes from herdr-reviewr.
-const searchShare = 50
+// searchPct is the percentage of the search height used for the results.
+// The preview gets the rest.
+const searchPct = 50
 
-// preview is the file of the selected result of the search.
+// preview shows the file of the selected search result.
 type preview struct {
 	path  string
-	line  int // the line of the code match, or 0 for a file
+	line  int // the line of the code match, or 0 for a file name match
 	width int
-	lines []string // the file with line numbers, or one note
-	hit   int      // the index in lines of the line of the match, or -1
-	top   int      // the first line that shows
-	// center is true until the first draw. That draw puts the match in
-	// the middle.
+	lines []string   // a single note, or nil
+	file  *diff.Diff // the file rendered with line numbers, or nil
+	hit   int        // the index of the matching line, or -1
+	top   int        // the first visible line
+	// center is true until the first draw, which puts the match in the
+	// middle.
 	center bool
 }
 
-// searchLines renders the search, inner columns wide, as herdr-reviewr
-// lays it out. The first line has the input and the chips. Below it are
-// the results, a rule with the name of the file, and the preview of the
-// file. Row i of the list shows at line listY+i of the box.
-func (m *model) searchLines(inner int) (lines []string, listY int) {
+// searchLines renders the search, inner columns wide. The first line holds
+// the input and the mode chips. Below it come the results, a rule with the
+// file name, and the preview of the file. Row i of the list is at line
+// itemsY+i of the box.
+func (m *model) searchLines(inner int) (lines []string, itemsY int) {
 	ov := m.overlay
 	lines = []string{ov.searchBand(inner)}
-	// avail is the height of the results and the preview. It leaves out
-	// the box, the band, and the rule of the preview.
+	// avail is the height left for the results and the preview, after the
+	// box border, the input line and the preview rule.
 	avail := max(m.h-4, 6) - 2
-	results := splitAxis(avail, searchShare)
+	results := shareOf(avail, searchPct)
 	lines = append(lines, paneRule("results", inner))
-	rows, start := m.overlayRows(inner, results-1)
-	listY = len(lines) + 1 - start // 1 for the border
+	rows, start := m.overlayItems(inner, results-1)
+	itemsY = len(lines) + 1 - start // + 1 for the top border
 	lines = append(lines, rows[:min(len(rows), results-1)]...)
 	for len(lines) < results+1 {
 		lines = append(lines, "")
 	}
 	pv := m.searchPreview(inner)
 	h := avail - results
-	ov.search.previewY = len(lines) + 1 // 1 for the border
+	ov.search.previewY = len(lines) + 1 // + 1 for the top border
 	if pv == nil {
 		lines = append(lines, paneRule("preview", inner), dimStyle.Render("  no preview"))
 	} else {
@@ -56,41 +57,41 @@ func (m *model) searchLines(inner int) (lines []string, listY int) {
 	for len(lines) < avail+2 {
 		lines = append(lines, "")
 	}
-	return lines, listY
+	return lines, itemsY
 }
 
-// splitAxis returns the part of n that pct percent takes, as
-// herdr-reviewr splits a pane. Each part gets at least 3 if n has room.
-func splitAxis(n, pct int) int {
+// shareOf returns pct percent of n. If n is 6 or more, both the share and
+// the rest are at least 3.
+func shareOf(n, pct int) int {
 	if n < 6 {
 		return n / 2
 	}
 	return min(max(n*pct/100, 3), n-3)
 }
 
-// paneRule returns a rule "─ label ───" with label, w columns wide.
+// paneRule returns a rule "─ label ───" containing label, w columns wide.
 func paneRule(label string, w int) string {
 	label = " " + label + " "
 	rest := max(w-lipgloss.Width(label)-1, 0)
 	return truncate(dimStyle.Render("─")+label+dimStyle.Render(strings.Repeat("─", rest)), w)
 }
 
-// searchBand returns the first line of the search, inner columns wide.
-// It has the input, and the chips at the right end.
-func (o *overlay) searchBand(inner int) string {
-	chips := o.chips()
-	o.input.SetWidth(max(inner-lipgloss.Width(chips)-4, 1))
-	in := o.input.View()
+// searchBand returns the first line of the search, inner columns wide: the
+// input, with the mode chips at the right end.
+func (ov *overlay) searchBand(inner int) string {
+	chips := ov.chips()
+	ov.input.SetWidth(max(inner-lipgloss.Width(chips)-4, 1))
+	in := ov.input.View()
 	pad := max(inner-lipgloss.Width(in)-lipgloss.Width(chips), 1)
 	return truncate(in+strings.Repeat(" ", pad)+chips, inner)
 }
 
-// searchPreview returns the preview of the selected result of the search,
-// width columns wide, or nil if no result is selected. It reads the file
-// again only for another result or another width.
+// searchPreview returns the preview of the selected search result, width
+// columns wide, or nil if no result is selected. It reads the file again
+// only when the result or the width changes.
 func (m *model) searchPreview(width int) *preview {
 	s := &m.overlay.search
-	it := m.overlay.selected()
+	it := m.overlay.curItem()
 	if it == nil || it.id == "" {
 		s.preview = nil
 		return nil
@@ -107,10 +108,9 @@ func (m *model) searchPreview(width int) *preview {
 	case err != nil || content == "":
 		pv.lines = []string{dimStyle.Render("  no preview")}
 	default:
-		o := m.diffOptions(0)
-		o.Width, o.Wrap = width-2, false // 2 for the mark of the match
+		o := diff.FileOptions{Width: width - 2, Cache: &m.cache} // - 2 for the match marker
 		d := diff.RenderFile(it.id, content, o)
-		pv.lines = d.Lines
+		pv.file = d
 		if it.line > 0 {
 			pv.hit = slices.IndexFunc(d.Rows, func(r diff.Row) bool {
 				return r.New == it.line && !r.Continued
@@ -121,25 +121,33 @@ func (m *model) searchPreview(width int) *preview {
 	return pv
 }
 
-// show returns the h lines of pv that show. The line of the match has a
-// mark. At the first draw, the match is in the middle.
+// show returns the h visible lines of pv, with a marker on the matching
+// line. On the first draw, the match is centred.
 func (pv *preview) show(h int) []string {
 	if pv.center {
 		pv.top, pv.center = max(pv.hit-h/2, 0), false
 	}
-	pv.top = max(min(pv.top, len(pv.lines)-h), 0)
+	n := len(pv.lines)
+	if pv.file != nil {
+		n = len(pv.file.Rows)
+	}
+	pv.top = clampTop(pv.top, n, h)
 	var out []string
-	for i := pv.top; i < len(pv.lines) && len(out) < h; i++ {
+	for i := pv.top; i < n && len(out) < h; i++ {
 		mark := "  "
 		if i == pv.hit {
-			mark = cursorStyle.Render("▶ ")
+			mark = accentStyle.Render("▶ ")
 		}
-		out = append(out, mark+pv.lines[i])
+		if pv.file != nil {
+			out = append(out, mark+pv.file.Line(i))
+		} else {
+			out = append(out, mark+pv.lines[i])
+		}
 	}
 	return out
 }
 
-// scroll moves the preview of the search by d lines.
+// scroll scrolls the search preview by d lines.
 func (pv *preview) scroll(d int) {
 	pv.center = false
 	pv.top = max(pv.top+d, 0)
