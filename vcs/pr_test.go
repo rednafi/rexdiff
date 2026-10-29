@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,9 +13,9 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// fakeTool writes a script called name in dir. If the arguments of the
-// script are a key of calls, it prints the value. Else it fails with
-// "unexpected call".
+// fakeTool writes a fake command called name to dir. When its arguments
+// match a key of calls, it prints the corresponding value. Otherwise it
+// fails with "unexpected call".
 func fakeTool(t *testing.T, dir, name string, calls map[string]string) {
 	t.Helper()
 	var script strings.Builder
@@ -26,27 +27,29 @@ func fakeTool(t *testing.T, dir, name string, calls map[string]string) {
 	testgit.Script(t, dir, name, script.String())
 }
 
-// repoAt returns the test repository with the environment env, on the
-// branch feat, with origin at the URL remote.
+// repoAt returns a copy of the test repository, on the branch feat, that
+// uses the environment env and has origin set to the URL remote.
 func repoAt(t *testing.T, env []string, remote string) (*vcs.Repo, string) {
 	t.Helper()
-	r, dir := newRepoEnv(t, env)
+	r, dir := openTestRepoEnv(t, env)
 	testgit.Git(t, dir, "remote", "add", "origin", remote)
 	return r, dir
 }
 
-// ghArgs are the arguments of the gh call that gets a pull request.
+// ghArgs are the arguments that PR passes to gh to fetch a pull request.
 const ghArgs = "pr view --json number,title,state,isDraft,url,body,author," +
 	"headRefName,baseRefName,comments,statusCheckRollup"
 
-// azArgs returns the arguments of the az call that gets the pull request of
-// branch.
+// azArgs returns the arguments that PR passes to az to fetch the pull
+// request for branch.
 func azArgs(branch string) string {
 	return "repos pr list --source-branch " + branch + " --status all --top 1 --output json"
 }
 
-// TestPullRequest checks the pull request that each forge tool gives.
-func TestPullRequest(t *testing.T) {
+// TestPR checks that PR converts the output of gh, glab and az into a
+// [vcs.PR], including states, check results and comments, and that it
+// recognises a self-hosted GitLab host regardless of case.
+func TestPR(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	env := testgit.ToolEnv(t, dir)
@@ -69,7 +72,7 @@ func TestPullRequest(t *testing.T) {
 		"mr view --output json": `{"iid": 3, "title": "Fix y", "state": "opened",
 		"web_url": "https://gitlab.com/o/r/-/merge_requests/3", "description": "D",
 		"source_branch": "fix", "target_branch": "main", "author": {"username": "cy"}}`,
-		// A list of discussions, as glab gives it. Each has its notes.
+		// glab returns a list of discussions, each with its own notes.
 		"mr note list --output json": `[
 		{"id": "d1", "notes": [
 			{"body": "added 1 commit", "system": true, "author": {"username": "cy"}}]},
@@ -89,9 +92,9 @@ func TestPullRequest(t *testing.T) {
 		name   string
 		remote string
 		hosts  vcs.Hosts
-		want   *vcs.PullRequest
+		want   *vcs.PR
 	}{
-		{"github ssh", "git@github.com:o/r.git", vcs.Hosts{}, &vcs.PullRequest{
+		{"github ssh", "git@github.com:o/r.git", vcs.Hosts{}, &vcs.PR{
 			Forge:  vcs.ForgeGitHub,
 			Number: 7,
 			Title:  "Add x",
@@ -109,11 +112,12 @@ func TestPullRequest(t *testing.T) {
 				{Name: "docs", Result: vcs.ResultSkip},
 				{Name: "e2e", Result: vcs.ResultPending},
 			},
+			Tally: vcs.Tally{Pass: 1, Fail: 2, Pending: 2, Skip: 1},
 			Comments: []vcs.PRComment{
 				{Author: "bob", When: "2026-01-02T03:04:05Z", Body: "LGTM"},
 			},
 		}},
-		{"gitlab custom host", "https://Git.Corp/o/r", vcs.Hosts{GitLab: "git.CORP"}, &vcs.PullRequest{
+		{"gitlab custom host", "https://Git.Corp/o/r", vcs.Hosts{GitLab: "git.CORP"}, &vcs.PR{
 			Forge:  vcs.ForgeGitLab,
 			Number: 3,
 			Title:  "Fix y",
@@ -128,7 +132,7 @@ func TestPullRequest(t *testing.T) {
 				{Author: "cy", When: "2026-01-03T03:04:05Z", Body: "Speed."},
 			},
 		}},
-		{"azure", "https://dev.azure.com/o/p/_git/r", vcs.Hosts{}, &vcs.PullRequest{
+		{"azure", "https://dev.azure.com/o/p/_git/r", vcs.Hosts{}, &vcs.PR{
 			Forge:  vcs.ForgeAzure,
 			Number: 9,
 			Title:  "Z",
@@ -143,20 +147,21 @@ func TestPullRequest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			r, _ := repoAt(t, env, tt.remote)
-			pr, err := r.PullRequest(t.Context(), tt.hosts)
+			pr, err := r.PR(t.Context(), tt.hosts)
 			if err != nil {
-				t.Fatalf("PullRequest = %v, want no error", err)
+				t.Fatalf("PR = %v, want no error", err)
 			}
 			if !reflect.DeepEqual(pr, tt.want) {
-				t.Errorf("PullRequest = \n%+v\nwant:\n%+v", pr, tt.want)
+				t.Errorf("PR = \n%+v\nwant:\n%+v", pr, tt.want)
 			}
 		})
 	}
 }
 
-// TestPullRequestErrors checks the error for a missing remote, an unknown
-// forge, a missing pull request, and a missing tool.
-func TestPullRequestErrors(t *testing.T) {
+// TestPRErrors checks the errors that PR returns for a missing remote, an
+// unsupported host, a branch with no pull request and a missing forge
+// tool.
+func TestPRErrors(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()
 	env := testgit.ToolEnv(t, bin)
@@ -169,9 +174,9 @@ func TestPullRequestErrors(t *testing.T) {
 		remote, branch string
 		hosts          vcs.Hosts
 		wantErr        error  // if not nil, err must wrap it
-		errText        string // if not empty, a part of the text of err
+		errText        string // if not empty, text that err must contain
 	}{
-		// The host selects the forge, not a name in the path.
+		// Only the host chooses the forge, not a forge name in the path.
 		{
 			name:    "github in the path",
 			remote:  "https://example.com/github.com/r.git",
@@ -211,7 +216,7 @@ func TestPullRequestErrors(t *testing.T) {
 			errText: "unexpected call: " + azArgs("other"),
 		},
 		{name: "no remote", branch: "feat", errText: "no git remote"},
-		{name: "azure no pull request", remote: azure, branch: "none", wantErr: vcs.ErrNoPullRequest},
+		{name: "azure no pull request", remote: azure, branch: "none", wantErr: vcs.ErrNoPR},
 		{
 			name:    "azure other branch",
 			remote:  azure,
@@ -228,29 +233,29 @@ func TestPullRequestErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			r, dir := newRepoEnv(t, env)
+			r, dir := openTestRepoEnv(t, env)
 			if tt.remote != "" {
 				testgit.Git(t, dir, "remote", "add", "origin", tt.remote)
 			}
 			if tt.branch != "feat" {
 				testgit.Git(t, dir, "checkout", "-qb", tt.branch)
 			}
-			_, err := r.PullRequest(t.Context(), tt.hosts)
+			_, err := r.PR(t.Context(), tt.hosts)
 			switch {
 			case err == nil:
-				t.Error("PullRequest: no error, want an error")
+				t.Error("PR: no error, want an error")
 			case tt.wantErr != nil && !errors.Is(err, tt.wantErr):
-				t.Errorf("PullRequest: err = %v, want %v", err, tt.wantErr)
+				t.Errorf("PR: err = %v, want %v", err, tt.wantErr)
 			case tt.errText != "" && !strings.Contains(err.Error(), tt.errText):
-				t.Errorf("PullRequest: err = %q, want %q in it", err, tt.errText)
+				t.Errorf("PR: err = %q, want %q in it", err, tt.errText)
 			}
 		})
 	}
 }
 
-// TestPullRequestHostile checks that the text of a pull request has no
-// control characters.
-func TestPullRequestHostile(t *testing.T) {
+// TestPRHostile checks that PR removes control characters, such as an
+// escape sequence that sets the terminal title, from every text field.
+func TestPRHostile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	const osc = `\u001b]0;owned\u0007`
@@ -260,46 +265,84 @@ func TestPullRequestHostile(t *testing.T) {
 		"comments": [{"author": {"login": "bob"}, "body": "x` + osc + `"}],
 		"statusCheckRollup": [{"name": "t` + osc + `", "conclusion": "SUCCESS"}]}`})
 	r, _ := repoAt(t, testgit.ToolEnv(t, dir), "https://github.com/o/r")
-	pr, err := r.PullRequest(t.Context(), vcs.Hosts{})
+	pr, err := r.PR(t.Context(), vcs.Hosts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(pr.Comments) != 1 || len(pr.Checks) != 1 {
-		t.Fatalf("PullRequest has %d comments and %d checks, want 1 and 1",
+		t.Fatalf("PR has %d comments and %d checks, want 1 and 1",
 			len(pr.Comments), len(pr.Checks))
 	}
 	got := []string{pr.Title, pr.Body, pr.Author, pr.Comments[0].Body, pr.Checks[0].Name}
 	want := []string{"Add]0;owned", "a]0;owned\nb", "ann]0;owned", "x]0;owned", "t]0;owned"}
 	if !slices.Equal(got, want) {
-		t.Errorf("PullRequest texts = %q, want %q", got, want)
+		t.Errorf("PR texts = %q, want %q", got, want)
 	}
 }
 
-// TestPullRequestCheckLimit checks that a pull request has at most 100
-// checks, the first that gh gives, as in herdr-reviewr.
-func TestPullRequestCheckLimit(t *testing.T) {
+// TestPRCheckLimit checks that PR counts every check that gh returns but
+// keeps only 100, the failed ones first, in the order gh gives them.
+func TestPRCheckLimit(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	checks := make([]string, 101)
-	for i := range checks {
-		checks[i] = fmt.Sprintf(`{"name": "c%d", "conclusion": "SUCCESS"}`, i)
+	tests := []struct {
+		name       string
+		pass, fail int
+		wantTally  vcs.Tally
+		wantFailed int // the number of failed checks kept
+		wantLast   string
+	}{
+		{"101 passing", 101, 0, vcs.Tally{Pass: 101}, 0, "c99"},
+		{"100 passing then 50 failing", 100, 50, vcs.Tally{Pass: 100, Fail: 50}, 50, "c149"},
+		{"10 passing then 150 failing", 10, 150, vcs.Tally{Pass: 10, Fail: 150}, 100, "c109"},
 	}
-	fakeTool(t, dir, "gh", map[string]string{ghArgs: `{"number": 7, "title": "T",
-		"statusCheckRollup": [` + strings.Join(checks, ",") + `]}`})
-	r, _ := repoAt(t, testgit.ToolEnv(t, dir), "https://github.com/o/r")
-	pr, err := r.PullRequest(t.Context(), vcs.Hosts{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := len(pr.Checks); n != 100 || pr.Checks[99].Name != "c99" {
-		t.Errorf("PullRequest has %d checks %+v, want 100, the last c99",
-			n, pr.Checks[max(n-3, 0):])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			var checks []string
+			for i := range tt.pass + tt.fail {
+				conclusion := "SUCCESS"
+				if i >= tt.pass {
+					conclusion = "FAILURE"
+				}
+				checks = append(checks, fmt.Sprintf(`{"name": "c%d", "conclusion": %q}`, i, conclusion))
+			}
+			fakeTool(t, dir, "gh", map[string]string{ghArgs: `{"number": 7, "title": "T",
+				"statusCheckRollup": [` + strings.Join(checks, ",") + `]}`})
+			r, _ := repoAt(t, testgit.ToolEnv(t, dir), "https://github.com/o/r")
+			pr, err := r.PR(t.Context(), vcs.Hosts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pr.Tally != tt.wantTally {
+				t.Errorf("Tally = %+v, want %+v", pr.Tally, tt.wantTally)
+			}
+			n := len(pr.Checks)
+			if n != 100 || pr.Checks[n-1].Name != tt.wantLast {
+				t.Fatalf("PR has %d checks %+v, want 100, the last %s",
+					n, pr.Checks[max(n-3, 0):], tt.wantLast)
+			}
+			failed, prev := 0, -1
+			for _, c := range pr.Checks {
+				if c.Result == vcs.ResultFail {
+					failed++
+				}
+				cur, _ := strconv.Atoi(strings.TrimPrefix(c.Name, "c"))
+				if cur <= prev {
+					t.Fatalf("check c%d comes after c%d, want the order gh gives", cur, prev)
+				}
+				prev = cur
+			}
+			if failed != tt.wantFailed {
+				t.Errorf("PR keeps %d failed checks, want %d", failed, tt.wantFailed)
+			}
+		})
 	}
 }
 
-// TestNoPullRequest checks that a gh or a glab that finds no pull request
-// gives ErrNoPullRequest. Both exit with 1 and say so.
-func TestNoPullRequest(t *testing.T) {
+// TestNoPR checks that PR returns ErrNoPR when gh or glab exits with
+// status 1 and says that the branch has no pull request.
+func TestNoPR(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	env := testgit.ToolEnv(t, dir)
@@ -307,8 +350,8 @@ func TestNoPullRequest(t *testing.T) {
 	testgit.Script(t, dir, "glab", "echo 'no open merge request available for \"feat\"' >&2\nexit 1\n")
 	for _, remote := range []string{"https://github.com/o/r", "https://gitlab.com/o/r"} {
 		r, _ := repoAt(t, env, remote)
-		if _, err := r.PullRequest(t.Context(), vcs.Hosts{}); !errors.Is(err, vcs.ErrNoPullRequest) {
-			t.Errorf("PullRequest(%s) = %v, want ErrNoPullRequest", remote, err)
+		if _, err := r.PR(t.Context(), vcs.Hosts{}); !errors.Is(err, vcs.ErrNoPR) {
+			t.Errorf("PR(%s) = %v, want ErrNoPR", remote, err)
 		}
 	}
 }

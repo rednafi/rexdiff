@@ -12,49 +12,45 @@ import (
 )
 
 // Comment is a review note on a range of lines on one side of a file. Use
-// [NewComment] to make one. A comment keeps the text of its lines and its
-// diff rows, for [Comments.Review]. As in herdr-reviewr, a comment does not
-// move when its file changes. It stays on its line numbers.
+// [NewComment] to create one. A comment stores the text of its lines and
+// its diff rows for [Comments.Review]. When the file changes, the comment
+// keeps its line numbers and does not follow its code; [Comment.Moved]
+// reports whether its lines still hold that code.
 type Comment struct {
 	ID   int // [Comments.Add] sets it
 	Path string
 	Side Side
-	// Start and End are the first and the last line of the range. They
-	// start at 1.
+	// Start and End are the 1-based first and last lines of the range.
 	Start, End int
 	Text       string
-	// Anchor tells the view that the comment shows in.
+	// Anchor identifies the view that shows the comment.
 	Anchor Anchor
 
 	code    []string // the text of the lines Start to End
-	snippet []string // the rows as unified diff lines, or empty to use code
-	// noAnchor is true for a comment from a file with no anchors.
+	snippet []string // the rows as unified diff lines, or empty to use code instead
+	// noAnchor is true for a comment loaded from a file without anchors.
 	noAnchor bool
 }
 
-// Anchor is the view that a comment is made in. A comment shows only in a
-// view with the same anchor.
+// Anchor identifies the view in which a comment was written. A comment is
+// shown only in a view with the same anchor.
 type Anchor struct {
-	// InDiff is true for a comment on a diff, and false for a comment on
-	// a file view.
+	// InDiff is true for a comment on a diff, and false for a comment in
+	// the file view.
 	InDiff bool
-	// Rev names the commits of the diff, or is "" for the working tree.
+	// Rev names the commits being compared, or is "" for the working tree.
 	Rev string
 }
 
-// NewComment returns a comment with no text on side s of the file at path.
-// Rows are rows of the [Diff] of before and after. Start and End are the
-// first and the last line of the rows on side s. They are 0 if no row has
-// a line on s.
-//
-// In the diff rows of the comment, equal, deleted, and inserted lines start
-// with " ", "-", and "+". The text comes from before and after, so tabs
-// stay. In each block of changes, deleted lines come before inserted
-// lines, also in the split layout. Continued rows add nothing.
-func NewComment(path string, s Side, rows []Row, before, after string) Comment {
-	c := Comment{Path: path, Side: s, snippet: snippet(rows, before, after)}
+// NewComment returns an empty comment on side of the file at path, for
+// rows of the [Diff] between oldText and newText. Start and End are the
+// first and last lines of the rows on that side, or 0 if there are none.
+// The comment keeps the rows as unified diff lines taken from oldText and
+// newText, with deleted lines before added ones.
+func NewComment(path string, side Side, rows []Row, oldText, newText string) Comment {
+	c := Comment{Path: path, Side: side, snippet: snippet(rows, oldText, newText)}
 	for _, r := range rows {
-		n := r.Line(s)
+		n := r.Line(side)
 		if n == 0 {
 			continue
 		}
@@ -66,14 +62,14 @@ func NewComment(path string, s Side, rows []Row, before, after string) Comment {
 	if c.Start == 0 {
 		return c
 	}
-	lines := Lines(version(s, before, after))
+	lines := SplitLines(versionText(side, oldText, newText))
 	c.code = slices.Clone(lines[min(c.Start-1, len(lines)):min(c.End, len(lines))])
 	return c
 }
 
-// Location returns the path and the lines of c, for example "a.go:3-4".
-// A comment on the old side has " (removed)" at the end. [termtext.Quote]
-// quotes the path.
+// Location returns the path and line range of c, for example "a.go:3-4".
+// For a comment on the old side, it appends " (removed)". The path is
+// quoted with [termtext.Quote].
 func (c *Comment) Location() string {
 	loc := fmt.Sprintf("%s:%d", termtext.Quote(c.Path), c.Start)
 	if c.End != c.Start {
@@ -85,8 +81,29 @@ func (c *Comment) Location() string {
 	return loc
 }
 
-// Comments is the set of comments of a review. The zero value is an empty
-// set that is ready to use.
+// Moved reports whether text, the version of the file on the side of c,
+// no longer holds the code of c on lines Start to End: the lines hold
+// other code, or text has fewer lines. It reports false for a comment
+// with no code to compare, such as one read from an older file.
+func (c *Comment) Moved(text string) bool {
+	if c.Start == 0 || len(c.code) != c.End-c.Start+1 {
+		return false
+	}
+	n := 0
+	for l := range strings.Lines(text) {
+		n++
+		if n > c.End {
+			break
+		}
+		if n >= c.Start && trimEOL(l) != c.code[n-c.Start] {
+			return true
+		}
+	}
+	return n < c.End
+}
+
+// Comments is the set of comments in a review. The zero value is an empty
+// set ready to use.
 type Comments struct {
 	last  int
 	items []*Comment
@@ -95,15 +112,15 @@ type Comments struct {
 // Len returns the number of comments.
 func (cs *Comments) Len() int { return len(cs.items) }
 
-// Add adds c with a new ID.
+// Add adds c and gives it a new ID.
 func (cs *Comments) Add(c Comment) {
 	cs.last++
 	c.ID = cs.last
 	cs.items = append(cs.items, &c)
 }
 
-// Remove removes the comment with the given ID, if there is one.
-func (cs *Comments) Remove(id int) {
+// Delete removes the comment with the given ID, if there is one.
+func (cs *Comments) Delete(id int) {
 	cs.items = slices.DeleteFunc(cs.items, func(c *Comment) bool { return c.ID == id })
 }
 
@@ -114,10 +131,9 @@ func (cs *Comments) All() []*Comment {
 	})
 }
 
-// SetOldRev sets the Rev of each comment that [Comments.UnmarshalJSON]
-// reads from the file of an older rexdiff. Such a file has no anchors, and
-// its comments are on the diff of the scope that the file saves.
-func (cs *Comments) SetOldRev(rev string) {
+// SetRev sets the Rev of each comment that [Comments.UnmarshalJSON] read
+// from a file without anchors.
+func (cs *Comments) SetRev(rev string) {
 	for _, c := range cs.items {
 		if c.noAnchor {
 			c.Anchor.Rev, c.noAnchor = rev, false
@@ -133,23 +149,24 @@ func (cs *Comments) Find(id int) *Comment {
 	return nil
 }
 
-// At returns the first comment with anchor a whose range includes line, or
-// nil.
-func (cs *Comments) At(a Anchor, path string, s Side, line int) *Comment {
-	for _, c := range cs.items {
-		if c.Anchor == a && c.Path == path && c.Side == s &&
-			line >= c.Start && line <= c.End {
-			return c
-		}
+// At returns the first comment with anchor a whose range includes line,
+// or nil if there is none.
+func (cs *Comments) At(a Anchor, path string, side Side, line int) *Comment {
+	i := slices.IndexFunc(cs.items, func(c *Comment) bool {
+		return c.Anchor == a && c.Path == path && c.Side == side &&
+			line >= c.Start && line <= c.End
+	})
+	if i < 0 {
+		return nil
 	}
-	return nil
+	return cs.items[i]
 }
 
 // EndingAt returns the comments with anchor a whose range ends on line.
-func (cs *Comments) EndingAt(a Anchor, path string, s Side, line int) []*Comment {
+func (cs *Comments) EndingAt(a Anchor, path string, side Side, line int) []*Comment {
 	var ending []*Comment
 	for _, c := range cs.items {
-		if c.Anchor == a && c.Path == path && c.Side == s && c.End == line {
+		if c.Anchor == a && c.Path == path && c.Side == side && c.End == line {
 			ending = append(ending, c)
 		}
 	}
@@ -167,16 +184,16 @@ func (cs *Comments) Count(a Anchor, path string) int {
 	return n
 }
 
-// version returns before for the [SideOld] side, and after for the
-// [SideNew] side.
-func version(s Side, before, after string) string {
-	if s == SideOld {
-		return before
+// versionText returns oldText for [SideOld] and newText for [SideNew].
+func versionText(side Side, oldText, newText string) string {
+	if side == SideOld {
+		return oldText
 	}
-	return after
+	return newText
 }
 
-// savedComment is a [Comment] with its private fields, for MarshalJSON.
+// savedComment is the JSON form of a [Comment], including its unexported
+// fields.
 type savedComment struct {
 	ID    int    `json:"id"`
 	Path  string `json:"path"`
@@ -184,24 +201,24 @@ type savedComment struct {
 	Start int    `json:"start"`
 	End   int    `json:"end"`
 	Text  string `json:"text"`
-	// InDiff is nil in a file of an older rexdiff. Most comments of
-	// such a file are on a diff.
+	// InDiff is nil in files from older versions, and such a comment is
+	// read as a comment on a diff.
 	InDiff  *bool    `json:"in_diff"`
 	Rev     string   `json:"rev"`
 	Code    []string `json:"code"`
 	Snippet []string `json:"snippet"`
 }
 
-// savedComments is a [Comments] with its private fields.
+// savedComments is the JSON form of [Comments], including its unexported
+// fields.
 type savedComments struct {
 	Last  int            `json:"last"`
 	Items []savedComment `json:"items"`
 }
 
-// MarshalJSON encodes the comments with their code and their diff rows,
-// so that UnmarshalJSON restores the same comments, for example after a
-// restart. Bytes that are not UTF-8, for example in a Latin-1 file,
-// become U+FFFD.
+// MarshalJSON encodes the comments with their code and diff rows, so that
+// [Comments.UnmarshalJSON] restores the same comments. Invalid UTF-8 bytes
+// are replaced with U+FFFD.
 func (cs *Comments) MarshalJSON() ([]byte, error) {
 	saved := savedComments{Last: cs.last}
 	for _, c := range cs.items {
@@ -214,7 +231,7 @@ func (cs *Comments) MarshalJSON() ([]byte, error) {
 	return json.Marshal(saved, jsontext.AllowInvalidUTF8(true))
 }
 
-// UnmarshalJSON reads comments that MarshalJSON wrote.
+// UnmarshalJSON decodes comments encoded by [Comments.MarshalJSON].
 func (cs *Comments) UnmarshalJSON(b []byte) error {
 	var saved savedComments
 	if err := json.Unmarshal(b, &saved); err != nil {

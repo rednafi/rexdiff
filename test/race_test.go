@@ -2,5 +2,5 @@
 
 package test
 
-// raceOn is true in a run with the race detector.
+// raceOn reports whether the tests run with the race detector.
 const raceOn = true

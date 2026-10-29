@@ -1,9 +1,11 @@
 package vcs_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,8 +13,9 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// newWatcher returns a Watcher of r after its first call. Its clock does
-// not move, so no call waits for the pause.
+// newWatcher returns a Watcher for r on which Changed has already been
+// called once. Its clock never moves, so no call is skipped by the pause
+// between checks.
 func newWatcher(t *testing.T, r *vcs.Repo) *vcs.Watcher {
 	t.Helper()
 	w, err := r.Watch(t.Context())
@@ -21,12 +24,13 @@ func newWatcher(t *testing.T, r *vcs.Repo) *vcs.Watcher {
 	}
 	w.SetClock(func() time.Time { return time.Time{} })
 	if ch := changed(t, w); ch != (vcs.Change{Files: true, Refs: true}) {
-		t.Fatalf("first call: %+v, want both", ch)
+		t.Fatalf("first Changed call = %+v, want both", ch)
 	}
 	return w
 }
 
-// changed returns the change that w sees.
+// changed calls w.Changed and returns the result, failing the test on
+// error.
 func changed(t *testing.T, w *vcs.Watcher) vcs.Change {
 	t.Helper()
 	ch, err := w.Changed(t.Context())
@@ -36,8 +40,20 @@ func changed(t *testing.T, w *vcs.Watcher) vcs.Change {
 	return ch
 }
 
-// TestWatcher checks the changes that a Watcher sees and does not see. A
-// change must have each part of want. No change must be none.
+// covers reports whether got sets every field that want sets, and, if
+// want is empty, whether got is empty too.
+func covers(got, want vcs.Change) bool {
+	if want == (vcs.Change{}) {
+		return got == want
+	}
+	filesOK := !want.Files || got.Files
+	refsOK := !want.Refs || got.Refs
+	return filesOK && refsOK
+}
+
+// TestWatcher checks which edits a Watcher reports and which it ignores.
+// For each edit, Changed must set every field that want sets, must report
+// nothing when want is empty, and must report nothing on the next call.
 func TestWatcher(t *testing.T) {
 	t.Parallel()
 	files := vcs.Change{Files: true}
@@ -49,7 +65,7 @@ func TestWatcher(t *testing.T) {
 		{"nothing", func(*testing.T, string) {}, vcs.Change{}},
 		{"same size, new time", func(t *testing.T, dir string) {
 			t.Helper()
-			testgit.WriteFile(t, dir, "a.txt", "one\nxyz\n") // the same size
+			testgit.WriteFile(t, dir, "a.txt", "one\nxyz\n") // same size as before
 			p := filepath.Join(dir, "a.txt")
 			later := time.Now().Add(time.Hour)
 			if err := os.Chtimes(p, later, later); err != nil {
@@ -86,35 +102,33 @@ func TestWatcher(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			r, dir := newRepo(t)
+			r, dir := openTestRepo(t)
 			w := newWatcher(t, r)
 			tt.edit(t, dir)
 			got := changed(t, w)
-			if tt.want.Files && !got.Files || tt.want.Refs && !got.Refs ||
-				tt.want == (vcs.Change{}) && got != tt.want {
-				t.Errorf("after the edit: %+v, want %+v", got, tt.want)
+			if !covers(got, tt.want) {
+				t.Errorf("Changed after the edit = %+v, want %+v", got, tt.want)
 			}
 			if got := changed(t, w); got != (vcs.Change{}) {
-				t.Errorf("second call: %+v, want none", got)
+				t.Errorf("second Changed call = %+v, want none", got)
 			}
 		})
 	}
 }
 
-// TestWatcherLastWrite checks that LastWrite sees a new file after the
-// start of the watch, but not after its limit, and that the change still
-// shows in Changed.
+// TestWatcherLastWrite checks that LastWrite returns the time of a file
+// written after the watch started, ignores times after until, and does
+// not stop Changed from reporting the new file.
 func TestWatcherLastWrite(t *testing.T) {
 	t.Parallel()
-	r, dir := newRepo(t)
+	r, dir := openTestRepo(t)
 	w := newWatcher(t, r)
 	if got := w.LastWrite(time.Now()); !got.IsZero() {
 		t.Errorf("LastWrite before a write = %v, want zero", got)
 	}
 	testgit.WriteFile(t, dir, "c.txt", "c\n")
-	// The clock of the file system can be behind time.Now. So the test sets
-	// the times of the new file and of its directory to an hour after now.
-	// This is clearly after the start of the watch.
+	// The file system clock can lag behind time.Now, so set the times of
+	// the new file and its directory to one hour from now.
 	later := time.Now().Add(time.Hour)
 	for _, p := range []string{filepath.Join(dir, "c.txt"), dir} {
 		if err := os.Chtimes(p, later, later); err != nil {
@@ -128,99 +142,103 @@ func TestWatcherLastWrite(t *testing.T) {
 		t.Errorf("LastWrite before the write = %v, want zero", got)
 	}
 	if got := changed(t, w); !got.Files {
-		t.Errorf("Changed after LastWrite: %+v, want Files", got)
+		t.Errorf("Changed after LastWrite = %+v, want Files", got)
 	}
 }
 
-// TestWatcherNewDirectory checks that an edit in a new untracked directory
-// is a change.
+// TestWatcherNewDirectory checks that Changed reports an edit to a file in
+// a new untracked directory.
 func TestWatcherNewDirectory(t *testing.T) {
 	t.Parallel()
-	r, dir := newRepo(t)
+	r, dir := openTestRepo(t)
 	w := newWatcher(t, r)
 	testgit.WriteFile(t, dir, "x/c.txt", "c\n")
 	changed(t, w)
 	testgit.WriteFile(t, dir, "x/c.txt", "c\nd\n")
 	if got := changed(t, w); !got.Files {
-		t.Errorf("after an edit in x: %+v, want Files", got)
+		t.Errorf("Changed after an edit in x = %+v, want Files", got)
 	}
 }
 
-// TestWatcherUnignore checks that a file shows after a .gitignore edit
-// stops git from ignoring it.
+// TestWatcherUnignore checks that Changed reports a .gitignore edit that
+// stops git from ignoring a file, and then reports edits to that file.
 func TestWatcherUnignore(t *testing.T) {
 	t.Parallel()
-	r, dir := newRepo(t)
+	r, dir := openTestRepo(t)
 	w := newWatcher(t, r)
 	testgit.WriteFile(t, dir, "ignored.txt", "xx\n")
 	if got := changed(t, w); got.Files {
-		t.Errorf("after an edit of an ignored file: %+v, want no Files", got)
+		t.Errorf("Changed after an edit of an ignored file = %+v, want no Files", got)
 	}
 	testgit.WriteFile(t, dir, ".gitignore", "build/\n")
 	if got := changed(t, w); !got.Files {
-		t.Errorf("after the .gitignore edit: %+v, want Files", got)
+		t.Errorf("Changed after the .gitignore edit = %+v, want Files", got)
 	}
 	testgit.WriteFile(t, dir, "ignored.txt", "xxx\n")
 	if got := changed(t, w); !got.Files {
-		t.Errorf("after an edit of the file: %+v, want Files", got)
+		t.Errorf("Changed after an edit of the file = %+v, want Files", got)
 	}
 }
 
-// TestWatcherShown checks that a file that an expanded ignored directory
-// gets or loses is a change. An edit of a shown ignored file is also a
-// change, as in herdr-reviewr.
-func TestWatcherShown(t *testing.T) {
+// TestWatcherIncluded checks that, after Include, Changed reports files
+// added to or removed from an ignored directory, and edits to an ignored
+// file or to the target of a symbolic link. Include itself is not a
+// change.
+func TestWatcherIncluded(t *testing.T) {
 	t.Parallel()
-	r, dir := newRepo(t)
+	r, dir := openTestRepo(t)
 	w := newWatcher(t, r)
 	testgit.WriteFile(t, dir, "build/new", "x\n")
 	if got := changed(t, w); got.Files {
-		t.Errorf("a new file in a hidden build: %+v, want no Files", got)
+		t.Errorf("Changed after a new file in a hidden build = %+v, want no Files", got)
 	}
-	w.Show([]string{"build"})
+	w.Include([]string{"build"})
 	if got := changed(t, w); got.Files {
-		t.Errorf("after Show: %+v, want no Files", got)
+		t.Errorf("Changed after Include = %+v, want no Files", got)
 	}
 	testgit.WriteFile(t, dir, "build/more", "x\n")
 	if got := changed(t, w); !got.Files {
-		t.Errorf("a new file in a shown build: %+v, want Files", got)
+		t.Errorf("Changed after a new file in a shown build = %+v, want Files", got)
 	}
 	if err := os.Remove(filepath.Join(dir, "build", "more")); err != nil {
 		t.Fatal(err)
 	}
 	if got := changed(t, w); !got.Files {
-		t.Errorf("a removed file in a shown build: %+v, want Files", got)
+		t.Errorf("Changed after a removed file in a shown build = %+v, want Files", got)
 	}
-	w.Show(nil)
+	w.Include(nil)
 	testgit.WriteFile(t, dir, "build/more", "x\n")
 	if got := changed(t, w); got.Files {
-		t.Errorf("a new file after Show(nil): %+v, want no Files", got)
+		t.Errorf("Changed after a new file after Include(nil) = %+v, want no Files", got)
 	}
-	w.Show([]string{"ignored.txt"})
+	w.Include([]string{"ignored.txt"})
 	testgit.WriteFile(t, dir, "ignored.txt", "an edit\n")
 	if got := changed(t, w); !got.Files {
-		t.Errorf("an edit of a shown file: %+v, want Files", got)
+		t.Errorf("Changed after an edit of a shown file = %+v, want Files", got)
 	}
 	if err := os.Symlink("ignored.txt", filepath.Join(dir, "link")); err != nil {
 		t.Fatal(err)
 	}
-	w.Show([]string{"link"})
+	w.Include([]string{"link"})
 	changed(t, w)
 	testgit.WriteFile(t, dir, "ignored.txt", "one more edit\n")
 	if got := changed(t, w); !got.Files {
-		t.Errorf("an edit of the target of a shown link: %+v, want Files", got)
+		t.Errorf("Changed after an edit of the target of a shown link = %+v, want Files", got)
 	}
 }
 
-// TestWatcherNested checks that a commit in a nested repository or in a
-// submodule is a change.
+// TestWatcherNested checks that Changed reports a commit in a nested
+// repository or in a submodule.
 func TestWatcherNested(t *testing.T) {
 	t.Parallel()
 	for _, sub := range []bool{false, true} {
-		name := map[bool]string{false: "nested", true: "submodule"}[sub]
+		name := "nested"
+		if sub {
+			name = "submodule"
+		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			r, dir := newRepo(t)
+			r, dir := openTestRepo(t)
 			other := t.TempDir()
 			testgit.InitRepo(t, other)
 			testgit.WriteFile(t, other, "f", "1\n")
@@ -237,7 +255,7 @@ func TestWatcherNested(t *testing.T) {
 			testgit.WriteFile(t, inner, "f", "2\n")
 			testgit.Git(t, inner, "commit", "-qam", "2")
 			if got := changed(t, w); !got.Files {
-				t.Errorf("after a commit in %s: %+v, want Files", name, got)
+				t.Errorf("Changed after a commit in %s = %+v, want Files", name, got)
 			}
 		})
 	}
@@ -248,28 +266,28 @@ func TestWatcherNested(t *testing.T) {
 func TestWatcherRunsNoGit(t *testing.T) {
 	t.Parallel()
 	env, link := gitLink(t)
-	r, _ := newRepoEnv(t, env)
+	r, _ := openTestRepoEnv(t, env)
 	w := newWatcher(t, r)
 	removeGit(t, link)
 	for range 3 {
 		ch, err := w.Changed(t.Context())
 		if err != nil || ch != (vcs.Change{}) {
-			t.Fatalf("idle call: %+v, %v, want none, nil", ch, err)
+			t.Fatalf("idle Changed call = %+v, %v, want none, nil", ch, err)
 		}
 	}
 }
 
-// TestWatcherBudget checks that a call waits 20 times as long as the last
-// call took.
+// TestWatcherBudget checks that after a call, Changed reports nothing for
+// 100 times as long as that call took, and reports the change after that.
 func TestWatcherBudget(t *testing.T) {
 	t.Parallel()
-	r, dir := newRepo(t)
+	r, dir := openTestRepo(t)
 	w, err := r.Watch(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Each reading of the clock moves it by 10 ms, so each call takes 10
-	// ms and the next call waits 200 ms.
+	// Each read of the clock advances it by 10 ms, so each call takes
+	// 10 ms and the next check waits 1 s.
 	now := time.Now()
 	w.SetClock(func() time.Time {
 		now = now.Add(10 * time.Millisecond)
@@ -278,17 +296,31 @@ func TestWatcherBudget(t *testing.T) {
 	changed(t, w)
 	testgit.WriteFile(t, dir, "c.txt", "c\n")
 	if got := changed(t, w); got != (vcs.Change{}) {
-		t.Errorf("call in the pause: %+v, want none", got)
+		t.Errorf("Changed in the pause = %+v, want none", got)
 	}
-	now = now.Add(200 * time.Millisecond)
+	now = now.Add(time.Second)
 	if got := changed(t, w); !got.Files {
-		t.Errorf("call after the pause: %+v, want Files", got)
+		t.Errorf("Changed after the pause = %+v, want Files", got)
+	}
+	// A call that takes 1 s would make the next one wait 100 s, but the
+	// pause is at most 30 s.
+	step := time.Second
+	w.SetClock(func() time.Time {
+		now = now.Add(step)
+		return now
+	})
+	changed(t, w)
+	step = 0
+	testgit.WriteFile(t, dir, "d.txt", "d\n")
+	now = now.Add(30 * time.Second)
+	if got := changed(t, w); !got.Files {
+		t.Errorf("Changed after 30 s = %+v, want Files", got)
 	}
 }
 
-// TestWatcherUntrackedDir checks that a new file in an untracked directory
-// that git lists no file in is a change. A new file in an ignored
-// directory in it is not.
+// TestWatcherUntrackedDir checks that Changed reports a new file in an
+// untracked directory that git lists no files for, but not a new file in
+// an ignored directory inside it. Names that start with ":" must work too.
 func TestWatcherUntrackedDir(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -299,14 +331,14 @@ func TestWatcherUntrackedDir(t *testing.T) {
 		{"only ignored files", "g/ignored.txt", "g/c.txt", true},
 		{"empty below empty", "d/e/", "d/e/c.txt", true},
 		{"ignored below untracked", "u/build/", "u/build/c.txt", false},
-		// A path that starts with ":" is pathspec magic to git.
+		// git treats a path that starts with ":" as pathspec magic.
 		{"colon in the name", ":(x/e/", ":(x/e/c.txt", true},
 		{"colon and exclude", ":!x/e/", ":!x/e/c.txt", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			r, dir := newRepo(t)
+			r, dir := openTestRepo(t)
 			if d, ok := strings.CutSuffix(tt.setup, "/"); ok {
 				if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 					t.Fatal(err)
@@ -317,8 +349,51 @@ func TestWatcherUntrackedDir(t *testing.T) {
 			w := newWatcher(t, r)
 			testgit.WriteFile(t, dir, tt.edit, "c\n")
 			if got := changed(t, w); got.Files != tt.want {
-				t.Errorf("after a new %s: %+v, want Files %v", tt.edit, got, tt.want)
+				t.Errorf("Changed after a new %s = %+v, want Files %v", tt.edit, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestWatcherConcurrent checks that Include and LastWrite can run while
+// another goroutine calls Changed, and that Changed then still reports an
+// edit to one of many files. Run it with -race.
+func TestWatcherConcurrent(t *testing.T) {
+	t.Parallel()
+	r, dir := openTestRepo(t)
+	for i := range 50 {
+		testgit.WriteFile(t, dir, fmt.Sprintf("many/f%02d.txt", i), "x\n")
+	}
+	testgit.Git(t, dir, "add", ".")
+	testgit.Git(t, dir, "commit", "-qm", "many")
+	w := newWatcher(t, r)
+	if err := os.Mkdir(filepath.Join(dir, "new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for i := range 20 {
+			// Each new file makes Changed list the files again.
+			p := filepath.Join(dir, "new", fmt.Sprintf("n%02d.txt", i))
+			if err := os.WriteFile(p, []byte("n\n"), 0o644); err != nil {
+				t.Error(err)
+				return
+			}
+			if _, err := w.Changed(t.Context()); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	})
+	for range 20 {
+		w.Include([]string{"build"})
+		w.LastWrite(time.Now())
+		w.Include(nil)
+	}
+	wg.Wait()
+	changed(t, w)
+	testgit.WriteFile(t, dir, "many/f37.txt", "an edit\n")
+	if got := changed(t, w); !got.Files {
+		t.Errorf("Changed after an edit of many/f37.txt = %+v, want Files", got)
 	}
 }

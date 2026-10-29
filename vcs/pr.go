@@ -12,29 +12,28 @@ import (
 )
 
 var (
-	// ErrNoPullRequest means that the branch has no pull request.
-	ErrNoPullRequest = errors.New("no pull request for this branch")
+	// ErrNoPR means that the current branch has no pull request.
+	ErrNoPR = errors.New("no pull request for this branch")
 
 	errNoRemote    = errors.New("no git remote")
 	errUnsupported = errors.New("the remote is not on GitHub, GitLab, or Azure DevOps")
 )
 
-// maxComments is the number of the most recent comments that
-// [Repo.PullRequest] gets. maxChecks is the number of the checks that it
-// gets. The two limits are the same as in herdr-reviewr.
+// Limits for [Repo.PR]: it keeps at most maxComments of the most recent
+// comments and at most maxChecks checks, though it counts every check.
 const (
 	maxComments = 100
 	maxChecks   = 100
 )
 
-// Hosts are the hosts of self-hosted forges. An empty value means only the
-// public host.
+// Hosts holds the host names of self-hosted forges. An empty field means
+// that only the public host of that forge is recognised.
 type Hosts struct {
 	GitHub, GitLab, Azure string
 }
 
-// PullRequest is a pull request, or a merge request on GitLab.
-type PullRequest struct {
+// PR is a pull request, or a merge request on GitLab.
+type PR struct {
 	Forge  Forge
 	Number int
 	Title  string
@@ -44,8 +43,13 @@ type PullRequest struct {
 	Head   string // the source branch
 	Base   string // the target branch
 	Body   string // Markdown
+	// Checks holds at most 100 of the CI checks, in the forge's order. If
+	// there are more, it keeps the failed checks before the others, so
+	// that every failure it can hold is named. Tally counts all of them.
 	Checks []Check
-	// Comments are the most recent comments, the oldest first.
+	Tally  Tally
+	// Comments holds at most 100 of the most recent comments, oldest
+	// first.
 	Comments []PRComment
 }
 
@@ -55,18 +59,43 @@ type Check struct {
 	Result Result
 }
 
-// Forge is the service that hosts a pull request. Its value is the name of
-// the service.
+// Tally counts the CI checks of a pull request by result.
+type Tally struct {
+	Pass, Fail, Pending, Skip int
+}
+
+// Total returns the number of checks.
+func (t *Tally) Total() int {
+	return t.Pass + t.Fail + t.Pending + t.Skip
+}
+
+// add counts a check with the result res.
+func (t *Tally) add(res Result) {
+	switch res {
+	case ResultPass:
+		t.Pass++
+	case ResultFail:
+		t.Fail++
+	case ResultSkip:
+		t.Skip++
+	default:
+		t.Pending++
+	}
+}
+
+// Forge is the service that hosts a pull request. Its value is the
+// service's display name.
 type Forge string
 
-// The forges that [Repo.PullRequest] supports.
+// The forges that [Repo.PR] supports.
 const (
 	ForgeGitHub Forge = "GitHub"
 	ForgeGitLab Forge = "GitLab"
 	ForgeAzure  Forge = "Azure DevOps"
 )
 
-// PRState is the state of a pull request. It is the same for each forge.
+// PRState is the state of a pull request, using the same values for every
+// forge.
 type PRState string
 
 // The values of PRState.
@@ -74,41 +103,42 @@ const (
 	PROpen   PRState = "open"
 	PRDraft  PRState = "draft" // open, but not ready for review
 	PRMerged PRState = "merged"
-	PRClosed PRState = "closed" // closed without a merge
+	PRClosed PRState = "closed" // closed without being merged
 )
 
-// Result is the result of a CI check. It is the same for each forge.
+// Result is the result of a CI check, using the same values for every
+// forge.
 type Result string
 
 // The values of Result.
 const (
 	ResultPass    Result = "pass"
-	ResultFail    Result = "fail"    // also an error, a cancel, or a timeout
-	ResultPending Result = "pending" // in the queue, or not finished
+	ResultFail    Result = "fail"    // also an error, a cancellation or a timeout
+	ResultPending Result = "pending" // queued or still running
 	ResultSkip    Result = "skip"    // skipped, or neutral
 )
 
 // PRComment is a comment on a pull request.
 type PRComment struct {
 	Author string
-	When   string // the time, as the forge gives it
+	When   string // the creation time, as the forge formats it
 	Body   string // Markdown
 }
 
-// PullRequest returns the pull request of the current branch. It selects the
-// forge from the host of the remote "upstream", or else "origin". Then it runs
-// the command-line tool of the forge: gh, glab, or az. The tool must be
-// installed and signed in. The text of the pull request has no control
-// characters. If the branch has no pull request, PullRequest returns
-// [ErrNoPullRequest].
-func (r *Repo) PullRequest(ctx context.Context, h Hosts) (*PullRequest, error) {
+// PR returns the pull request for the current branch. It chooses the forge
+// from the host of the remote "upstream", or of "origin" if there is no
+// upstream, and runs that forge's command-line tool: gh, glab or az. The
+// tool must be installed and signed in. PR removes control characters
+// from all text fields. If the branch has no pull request, PR returns
+// [ErrNoPR].
+func (r *Repo) PR(ctx context.Context, h Hosts) (*PR, error) {
 	remote := r.remoteURL(ctx)
 	if remote == "" {
 		return nil, errNoRemote
 	}
 	host := remoteHost(remote)
 	is := func(name string) bool { return name != "" && strings.EqualFold(host, name) }
-	var pr *PullRequest
+	var pr *PR
 	var err error
 	switch {
 	case is("github.com") || is(h.GitHub):
@@ -125,15 +155,15 @@ func (r *Repo) PullRequest(ctx context.Context, h Hosts) (*PullRequest, error) {
 		return nil, err
 	}
 	if pr.Title == "" {
-		return nil, ErrNoPullRequest
+		return nil, ErrNoPR
 	}
-	cleanPR(pr)
+	sanitizePR(pr)
 	return pr, nil
 }
 
-// remoteHost returns the host of the remote URL u, in lower case. u is a
-// URL such as "ssh://git@host:22/path", or has the scp form
-// "git@host:path", as herdr-reviewr reads it. A local path has no host.
+// remoteHost returns the host name in the remote URL u, in lower case. u
+// is either a URL such as "ssh://git@host:22/path" or in the scp-like form
+// "git@host:path". For a local path, it returns "".
 func remoteHost(u string) string {
 	var auth string // [user@]host[:port]
 	if _, rest, ok := strings.Cut(u, "://"); ok {
@@ -148,9 +178,9 @@ func remoteHost(u string) string {
 	return strings.ToLower(host)
 }
 
-// cleanPR removes the control characters from the text of pr, because the
-// text comes from other users.
-func cleanPR(pr *PullRequest) {
+// sanitizePR removes control characters from the text fields of pr,
+// because other users write that text.
+func sanitizePR(pr *PR) {
 	texts := []*string{&pr.Title, &pr.URL, &pr.Author, &pr.Head, &pr.Base, &pr.Body}
 	for i := range pr.Checks {
 		texts = append(texts, &pr.Checks[i].Name)
@@ -165,8 +195,8 @@ func cleanPR(pr *PullRequest) {
 }
 
 // runJSON runs a forge tool in the root directory and decodes its JSON
-// output into v. env adds to the environment. The error names the tool
-// and its subcommand, for example "gh pr".
+// output into v. env holds extra environment variables. The error names
+// the tool and its subcommand, for example "gh pr".
 func (r *Repo) runJSON(ctx context.Context, env []string, v any, name string, args ...string) error {
 	cmd, stderr := r.command(ctx, env, name, args...)
 	out, err := output(ctx, cmd, stderr)
@@ -179,10 +209,12 @@ func (r *Repo) runJSON(ctx context.Context, env []string, v any, name string, ar
 	return nil
 }
 
-// noPR reports whether err is the error of a tool that finds no pull
-// request. Such a tool exits with 1 and says so with the text msg.
-func noPR(err error, msg string) bool {
-	return exitedOne(err) && strings.Contains(strings.ToLower(err.Error()), msg)
+// isNoPR reports whether err means that the forge tool found no pull
+// request: the tool exited with status 1 and its message contains msg.
+func isNoPR(err error, msg string) bool {
+	// gh and glab exit with status 1 for every kind of failure and have no
+	// error code for "no pull request", so the message text is the only sign.
+	return isExitOne(err) && strings.Contains(strings.ToLower(err.Error()), msg)
 }
 
 // lastN returns the last n elements of xs, or all of them if there are
@@ -220,9 +252,9 @@ type gitHubPR struct {
 	} `json:"statusCheckRollup"`
 }
 
-// gitHub gets the pull request with gh. A host that is not empty is the
-// host of a self-hosted GitHub.
-func (r *Repo) gitHub(ctx context.Context, host string) (*PullRequest, error) {
+// gitHub fetches the pull request with gh. A non-empty host is the host
+// name of a self-hosted GitHub.
+func (r *Repo) gitHub(ctx context.Context, host string) (*PR, error) {
 	var env []string
 	if host != "" {
 		env = []string{"GH_HOST=" + host}
@@ -231,13 +263,13 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PullRequest, error) {
 		"headRefName,baseRefName,comments,statusCheckRollup"
 	var v gitHubPR
 	err := r.runJSON(ctx, env, &v, "gh", "pr", "view", "--json", fields)
-	if noPR(err, "no pull requests found") {
-		return nil, ErrNoPullRequest
+	if isNoPR(err, "no pull requests found") {
+		return nil, ErrNoPR
 	}
 	if err != nil {
 		return nil, err
 	}
-	pr := &PullRequest{
+	pr := &PR{
 		Forge:  ForgeGitHub,
 		Number: v.Number,
 		Title:  v.Title,
@@ -248,14 +280,16 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PullRequest, error) {
 		Base:   v.BaseRefName,
 		Body:   v.Body,
 	}
-	// A check run has a conclusion when it is done. A status has a state.
-	// As in herdr-reviewr, the checks are the first that gh gives.
-	for _, c := range v.StatusCheckRollup[:min(len(v.StatusCheckRollup), maxChecks)] {
-		pr.Checks = append(pr.Checks, Check{
+	// A finished check run has a conclusion, and a commit status has a
+	// state.
+	var checks []Check
+	for _, c := range v.StatusCheckRollup {
+		checks = append(checks, Check{
 			Name:   cmp.Or(c.Name, c.Context),
 			Result: gitHubResult(cmp.Or(c.Conclusion, c.State)),
 		})
 	}
+	pr.Checks, pr.Tally = keepChecks(checks, maxChecks)
 	for _, c := range lastN(v.Comments, maxComments) {
 		pr.Comments = append(pr.Comments, PRComment{
 			Author: c.Author.Login,
@@ -266,8 +300,36 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PullRequest, error) {
 	return pr, nil
 }
 
+// keepChecks counts all the checks and returns at most n of them, in their
+// original order. If there are more than n, it keeps the failed checks
+// first and fills the rest with the earliest of the others.
+func keepChecks(checks []Check, n int) ([]Check, Tally) {
+	var t Tally
+	for _, c := range checks {
+		t.add(c.Result)
+	}
+	if len(checks) <= n {
+		return checks, t
+	}
+	// Room left for checks that did not fail, after the failed ones.
+	others := max(n-t.Fail, 0)
+	kept := make([]Check, 0, n)
+	for _, c := range checks {
+		if len(kept) == n {
+			break
+		}
+		if c.Result == ResultFail {
+			kept = append(kept, c)
+		} else if others > 0 {
+			kept = append(kept, c)
+			others--
+		}
+	}
+	return kept, t
+}
+
 // gitHubState returns the state of a GitHub pull request from its state
-// and its draft flag.
+// and draft flag.
 func gitHubState(s string, draft bool) PRState {
 	switch {
 	case s == "MERGED":
@@ -280,8 +342,8 @@ func gitHubState(s string, draft bool) PRState {
 	return PROpen
 }
 
-// gitLabState returns the state of a GitLab merge request. A locked merge
-// request is closed.
+// gitLabState returns the state of a GitLab merge request. It treats a
+// locked merge request as closed.
 func gitLabState(s string) PRState {
 	switch s {
 	case "opened":
@@ -293,7 +355,7 @@ func gitLabState(s string) PRState {
 }
 
 // azureState returns the state of an Azure DevOps pull request from its
-// status. An abandoned pull request is closed.
+// status. It treats an abandoned pull request as closed.
 func azureState(s string) PRState {
 	switch s {
 	case "active":
@@ -347,17 +409,17 @@ type gitLabDiscussion struct {
 	} `json:"notes"`
 }
 
-// gitLab gets the merge request with glab.
-func (r *Repo) gitLab(ctx context.Context) (*PullRequest, error) {
+// gitLab fetches the merge request with glab.
+func (r *Repo) gitLab(ctx context.Context) (*PR, error) {
 	var v gitLabMR
 	err := r.runJSON(ctx, nil, &v, "glab", "mr", "view", "--output", "json")
-	if noPR(err, "no open merge request") {
-		return nil, ErrNoPullRequest
+	if isNoPR(err, "no open merge request") {
+		return nil, ErrNoPR
 	}
 	if err != nil {
 		return nil, err
 	}
-	pr := &PullRequest{
+	pr := &PR{
 		Forge:  ForgeGitLab,
 		Number: v.IID,
 		Title:  v.Title,
@@ -368,8 +430,7 @@ func (r *Repo) gitLab(ctx context.Context) (*PullRequest, error) {
 		Base:   v.Target,
 		Body:   v.Description,
 	}
-	// The comments are optional. If glab cannot get them, return the merge
-	// request without them.
+	// The comments are optional. If glab cannot list them, leave them out.
 	var ds []gitLabDiscussion
 	args := []string{"mr", "note", "list", "--output", "json"}
 	if err := r.runJSON(ctx, nil, &ds, "glab", args...); err == nil {
@@ -378,9 +439,8 @@ func (r *Repo) gitLab(ctx context.Context) (*PullRequest, error) {
 	return pr, nil
 }
 
-// gitLabComments returns the most recent notes of the discussions, the
-// oldest first. It skips the notes that GitLab writes, for example "added
-// 1 commit".
+// gitLabComments returns the most recent notes in the discussions, oldest
+// first. It skips system notes, such as "added 1 commit".
 func gitLabComments(ds []gitLabDiscussion) []PRComment {
 	var cs []PRComment
 	for _, d := range ds {
@@ -414,8 +474,8 @@ type azurePR struct {
 	} `json:"repository"`
 }
 
-// azure gets the pull request of the current branch with az.
-func (r *Repo) azure(ctx context.Context) (*PullRequest, error) {
+// azure fetches the pull request for the current branch with az.
+func (r *Repo) azure(ctx context.Context) (*PR, error) {
 	branch, err := r.Branch(ctx)
 	if err != nil {
 		return nil, err
@@ -427,10 +487,10 @@ func (r *Repo) azure(ctx context.Context) (*PullRequest, error) {
 		return nil, err
 	}
 	if len(v) == 0 {
-		return nil, ErrNoPullRequest
+		return nil, ErrNoPR
 	}
 	p := v[0]
-	return &PullRequest{
+	return &PR{
 		Forge:  ForgeAzure,
 		Number: p.PullRequestID,
 		Title:  p.Title,

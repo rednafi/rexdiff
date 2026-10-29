@@ -14,60 +14,80 @@ import (
 	"github.com/rednafi/rexdiff/internal/search"
 )
 
-// This file has the find band of herdr-reviewr. The band opens at the
-// bottom of the screen and stays open. Enter or down goes to the next hit,
-// up goes to the previous hit, and esc closes the band.
+// The find bar opens at the bottom of the screen and stays open. Enter or
+// Down moves to the next match, Up moves to the previous match, and Esc
+// closes the bar.
 
-// findState is the query of the find band. The band is open in modeFind.
+// maxFindQuery is the most characters that the find query can hold. The
+// input stops taking characters there.
+const maxFindQuery = 256
+
+// findState is the state of the find bar, which is open in modeFind. hits
+// caches the matches of the last search, because View needs them on every
+// frame.
 type findState struct {
 	input textinput.Model
+	hits  findCache
 }
 
-// findHit is a line that matches the query. row is its first row in the
-// pane. A line in a fold that hides it has the row of the fold, and its
-// new line in line. Else line is 0.
+// findCache holds the matches of a search together with what they
+// depend on: the query, the tab, which selects the pane, and the pane's
+// render count. The rows, lines, path and file texts of a pane change
+// only when it is rendered again, which increments the count.
+type findCache struct {
+	ok      bool
+	q       string
+	tab     tab
+	renders int
+	hits    []findHit
+}
+
+// findHit is a line that matches the query. row is the first pane row of
+// the line. For a line inside a fold, row is the fold row and line is the
+// new-side line number. Otherwise line is 0.
 type findHit struct {
 	row, line int
 }
 
-// findable reports whether the find band can open: on a file tab, with
-// a row that shows text.
-func (m *model) findable() bool {
+// canFind reports whether the current view has text to find, which needs
+// a file tab with at least one row of searchable text.
+func (m *model) canFind() bool {
 	if m.tab == tabPR {
 		return false
 	}
-	p := m.cur()
+	p := m.curPane()
 	for i := range p.rows {
-		if p.hasContent(i) {
+		if p.canFindRow(i) {
 			return true
 		}
 	}
 	return false
 }
 
-// hasContent reports whether row i of p shows text that a find can match.
-// A note has no such text. The text of a row of rendered markdown is the
-// rendered line.
-func (p *pane) hasContent(i int) bool {
+// canFindRow reports whether row i of p has text that find can match.
+// Rows that only show a note have no such text. For rendered Markdown,
+// the text is the rendered line.
+func (p *pane) canFindRow(i int) bool {
 	r := p.rows[i]
-	return r.Old > 0 || r.New > 0 || r.Fold.Lines > 0 || (p.path == "" && i < len(p.lines))
+	return r.Old > 0 || r.New > 0 || r.Fold.Lines > 0 || (p.path == "" && i < p.count())
 }
 
-// openFind opens the find band with an empty query.
+// openFind opens the find bar with an empty query. The bar opens even
+// when there is nothing to find, such as for a binary file, so that the
+// keys typed next go into the query and do not run commands.
 func (m *model) openFind() tea.Cmd {
-	if !m.findable() {
-		return nil
-	}
 	ti := textinput.New()
+	ti.CharLimit = maxFindQuery
 	ti.Prompt = "find "
 	ti.Placeholder = "Find in file…"
 	m.find = findState{input: ti}
-	m.mode, m.focusList = modeFind, false
-	m.cur().anchor = -1
+	m.mode, m.navigatorFocused = modeFind, false
+	m.curPane().selStart = -1
 	return m.find.input.Focus()
 }
 
-// closeFind closes the find band and drops the query. The cursor stays.
+// closeFind closes the find bar and clears the query. The cursor does not
+// move.
 func (m *model) closeFind() {
 	if m.mode == modeFind {
 		m.mode = modeNormal
@@ -75,8 +95,8 @@ func (m *model) closeFind() {
 	m.find = findState{}
 }
 
-// updateFind handles a key while the find band is open. As in
-// herdr-reviewr, the other keys edit the query.
+// updateFind handles a key press while the find bar is open. Keys other
+// than Esc, Enter, Up and Down edit the query.
 func (m *model) updateFind(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.Code {
 	case tea.KeyEscape:
@@ -84,9 +104,11 @@ func (m *model) updateFind(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case tea.KeyEnter, tea.KeyDown:
 		m.stepFind(1)
+		m.scrollToCursor() // otherwise the view only catches up on the next tick
 		return nil
 	case tea.KeyUp:
 		m.stepFind(-1)
+		m.scrollToCursor()
 		return nil
 	}
 	var cmd tea.Cmd
@@ -94,44 +116,60 @@ func (m *model) updateFind(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
-// paneSource returns the lines of the two sides of the file in the
-// current pane.
-func (m *model) paneSource() (before, after []string) {
+// findSource returns the lines of both sides of the file in the current
+// pane.
+func (m *model) findSource() (oldLines, newLines []string) {
 	switch m.tab {
 	case tabChanges:
-		if f := m.selectedChange(); f != nil {
-			return m.findLines.of(f.Old, f.New)
+		if f := m.curChangedFile(); f != nil {
+			return m.findSides.of(f.OldText, f.NewText)
 		}
-	case tabFiles:
-		return m.findLines.of("", m.viewed)
+	case tabAllFiles:
+		return m.findSides.of("", m.allFiles.shownText)
 	}
 	return nil, nil
 }
 
-// splitLines keeps the lines of the last two sides, so a find does not
-// split the file again on each frame.
-type splitLines struct {
+// sideLines caches the split lines of the most recent pair of sides, so
+// that find does not split the file again on every frame.
+type sideLines struct {
 	old, new           string
 	oldLines, newLines []string
 }
 
-// of returns the lines of before and after.
-func (s *splitLines) of(before, after string) ([]string, []string) {
-	if before != s.old || after != s.new {
-		*s = splitLines{before, after, diff.Lines(before), diff.Lines(after)}
+// of returns the lines of oldText and newText, splitting them only if they
+// differ from the cached texts.
+func (s *sideLines) of(oldText, newText string) ([]string, []string) {
+	if oldText != s.old || newText != s.new {
+		*s = sideLines{oldText, newText, diff.SplitLines(oldText), diff.SplitLines(newText)}
 	}
 	return s.oldLines, s.newLines
 }
 
-// findHits returns the lines of the pane that match q, in order. It
-// matches the source text of a line, and not the line numbers. A line on
-// both sides, as in the split layout, is one hit.
+// findHits returns the lines of the current pane that match q, in order.
+// It matches the source text, not the line numbers. A line present on
+// both sides counts as one match. It searches again only when the query,
+// tab, pane or lines have changed.
 func (m *model) findHits(q string) []findHit {
-	if q == "" {
+	if q == "" || !m.canFind() {
 		return nil
 	}
-	p := m.cur()
-	before, after := m.paneSource()
+	p := m.curPane()
+	next := findCache{ok: true, q: q, tab: m.tab, renders: p.renders}
+	c := &m.find.hits
+	if c.ok && c.q == next.q && c.tab == next.tab && c.renders == next.renders {
+		return c.hits
+	}
+	oldLines, newLines := m.findSource()
+	next.hits = p.findHits(q, oldLines, newLines)
+	*c = next
+	return next.hits
+}
+
+// findHits returns the lines of p that match q, as [model.findHits]
+// describes. oldLines and newLines are the lines of the two sides of the
+// file.
+func (p *pane) findHits(q string, oldLines, newLines []string) []findHit {
 	line := func(ls []string, n int) string {
 		if n >= 1 && n <= len(ls) {
 			return ls[n-1]
@@ -141,27 +179,27 @@ func (m *model) findHits(q string) []findHit {
 	var hits []findHit
 	for i, r := range p.rows {
 		switch {
-		case p.src != nil:
-			// A hit in rendered markdown is on its block, as the cursor is.
-			if !r.Continued && slices.ContainsFunc(p.lines[i:p.end(i)+1], func(l string) bool {
-				return search.Match(ansi.Strip(l), q)
-			}) {
+		case p.srcRows != nil:
+			// In rendered Markdown, a match points at the start of its
+			// block, just as the cursor does.
+			if !r.Continued && p.blockMatches(i, q) {
 				hits = append(hits, findHit{i, 0})
 			}
 		case r.Continued:
 		case r.Fold.Lines > 0:
 			for n := r.Fold.New; n < r.Fold.New+r.Fold.Lines; n++ {
-				if search.Match(line(after, n), q) {
+				if search.Matches(line(newLines, n), q) {
 					hits = append(hits, findHit{i, n})
 				}
 			}
 		case r.Old > 0 || r.New > 0:
-			if (r.New > 0 && search.Match(line(after, r.New), q)) ||
-				(r.Old > 0 && search.Match(line(before, r.Old), q)) {
+			newHit := r.New > 0 && search.Matches(line(newLines, r.New), q)
+			oldHit := r.Old > 0 && search.Matches(line(oldLines, r.Old), q)
+			if newHit || oldHit {
 				hits = append(hits, findHit{i, 0})
 			}
-		case p.hasContent(i):
-			if search.Match(ansi.Strip(p.lines[i]), q) {
+		case p.canFindRow(i):
+			if search.Matches(ansi.Strip(p.line(i)), q) {
 				hits = append(hits, findHit{i, 0})
 			}
 		}
@@ -169,49 +207,104 @@ func (m *model) findHits(q string) []findHit {
 	return hits
 }
 
-// findPlace returns the number of hits before the cursor, and if the
-// cursor is on a hit.
-func (m *model) findPlace(hits []findHit) (before int, on bool) {
-	cur := m.cur().head(m.cur().cur)
+// blockMatches reports whether any line of the rendered Markdown block at
+// row i matches q.
+func (p *pane) blockMatches(i int, q string) bool {
+	return slices.ContainsFunc(p.lines[i:p.lineEnd(i)+1], func(l string) bool {
+		return search.Matches(ansi.Strip(l), q)
+	})
+}
+
+// findPlace returns the number of matches before the cursor, and whether
+// the cursor is on a match.
+func (m *model) findPlace(hits []findHit) (hitsBefore int, on bool) {
+	cur := m.curPane().lineStart(m.curPane().cur)
 	for _, h := range hits {
 		switch {
 		case h.row < cur:
-			before++
+			hitsBefore++
 		case h.row == cur && h.line == 0:
-			return before, true
+			return hitsBefore, true
 		}
 	}
-	return before, false
+	return hitsBefore, false
 }
 
-// stepFind moves the cursor to the next (d = 1) or the previous (d = -1)
-// hit. It wraps around. Forward skips the hit at the cursor. A hit in a
-// fold opens the fold.
+// stepFind moves the cursor to the next (d = 1) or previous (d = -1)
+// match, wrapping around at the ends. Moving forward skips the match under
+// the cursor. Moving to a match inside a fold expands the fold.
 func (m *model) stepFind(d int) {
 	hits := m.findHits(m.find.input.Value())
 	if len(hits) == 0 {
 		return
 	}
-	before, on := m.findPlace(hits)
+	hitsBefore, on := m.findPlace(hits)
 	n := len(hits)
-	i := (before + n - 1) % n
+	i := (hitsBefore + n - 1) % n
 	if d > 0 {
-		i = before % n
+		i = hitsBefore % n
 		if on {
-			i = (before + 1) % n
+			i = (hitsBefore + 1) % n
 		}
 	}
-	h, p := hits[i], m.cur()
+	h, p := hits[i], m.curPane()
 	if h.line == 0 {
 		p.cur = h.row
-		return
+	} else {
+		m.expandFold(p.rows[h.row].Fold)
+		jumpToLine(p, diff.SideNew, h.line)
 	}
-	m.expandFold(p.rows[h.row].Fold)
-	cursorToLine(p, diff.SideNew, h.line)
+	m.showMatch(m.find.input.Value())
 }
 
-// shownHits returns the hits of the query in the find band, or nil if
-// the band is closed.
+// showMatch brings the first match of q in the source line at the cursor
+// into view. If lines wrap and the line is taller than the screen, it
+// scrolls the view down to the screen line that holds the match, as
+// moveCur scrolls through such a line. If lines do not wrap, it scrolls
+// the view sideways. It does nothing in rendered Markdown.
+func (m *model) showMatch(q string) {
+	p := m.curPane()
+	if p.diff == nil || p.srcRows != nil {
+		return
+	}
+	row := p.lineStart(p.cur)
+	if row >= len(p.rows) {
+		return
+	}
+	r := p.rows[row]
+	oldLines, newLines := m.findSource()
+	side, at := diff.SideNew, -1
+	if r.New >= 1 && r.New <= len(newLines) {
+		at = search.Index(newLines[r.New-1], q)
+	}
+	if at < 0 && r.Old >= 1 && r.Old <= len(oldLines) {
+		side, at = diff.SideOld, search.Index(oldLines[r.Old-1], q)
+	}
+	if at < 0 {
+		return
+	}
+	line, col := p.diff.Locate(row, side, at)
+	if m.wrap {
+		m.scrollToCursor()
+		if h := max(m.mainHeight(), 1); line >= p.top+h {
+			// Show the match a third of the way down, but no further than
+			// the end of the line.
+			p.top = min(max(line-h/3, row), max(p.lineEnd(row)-h+1, row))
+			p.following = false
+		}
+		return
+	}
+	w, qw := p.diff.CodeWidth(side), ansi.StringWidth(q)
+	if w == 0 || (col >= p.scrollX && col+qw <= p.scrollX+w) {
+		return
+	}
+	// Put the match a third of the way into the code.
+	p.scrollX = max(col-w/3, 0)
+	m.rerender()
+}
+
+// shownHits returns the matches for the query in the find bar, or nil if
+// the bar is closed.
 func (m *model) shownHits() []findHit {
 	if m.mode != modeFind {
 		return nil
@@ -219,25 +312,30 @@ func (m *model) shownHits() []findHit {
 	return m.findHits(m.find.input.Value())
 }
 
-// findBand renders the find band: the query, and the count at the right.
-// The count is "i/n" on a hit, n off a hit, or "no matches". hits are the
-// hits of the query.
+// findBand renders the find bar: the query, with the match count on the
+// right. The count is "i/n" when the cursor is on a match, "n" when it is
+// not, and "no matches" when nothing matches. In a view with no text to
+// search, a note takes the place of the count.
 func (m *model) findBand(hits []findHit) string {
 	count := ""
-	if m.find.input.Value() != "" {
-		before, on := m.findPlace(hits)
+	switch {
+	case !m.canFind():
+		count = "nothing to find here"
+	case m.find.input.Value() != "":
+		hitsBefore, on := m.findPlace(hits)
 		switch {
 		case len(hits) == 0:
 			count = "no matches"
 		case on:
-			count = fmt.Sprintf("%d/%d", before+1, len(hits))
+			count = fmt.Sprintf("%d/%d", hitsBefore+1, len(hits))
 		default:
 			count = strconv.Itoa(len(hits))
 		}
 	}
-	w := max(m.w-ansi.StringWidth(count)-1, 1)
+	fw := m.footerWidth()
+	w := max(fw-ansi.StringWidth(count)-1, 1)
 	m.find.input.SetWidth(max(w-ansi.StringWidth(m.find.input.Prompt)-1, 1))
 	band := truncate(m.find.input.View(), w)
-	pad := strings.Repeat(" ", max(m.w-ansi.StringWidth(band)-ansi.StringWidth(count), 0))
+	pad := strings.Repeat(" ", max(fw-ansi.StringWidth(band)-ansi.StringWidth(count), 0))
 	return band + pad + dimStyle.Render(count)
 }

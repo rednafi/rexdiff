@@ -1,9 +1,8 @@
-// Rexdiff shows the changes that a coding agent makes, beside the agent in
-// Rex. You can comment on the changed lines, then paste the comments into the
-// agent. "rexdiff install" adds a "Toggle rexdiff" action and a key to the Rex
-// configuration, in two files beside Rex's init.lua. rexdiff.lua has the
-// settings of rexdiff, and rexdiff_toggle.lua has the code of the action. The
-// action gives the settings to rexdiff in the --config flag.
+// Command rexdiff shows the changes that a coding agent makes, in a Rex
+// pane next to the agent. You can comment on changed lines and paste the
+// comments into the agent. "rexdiff install" adds a "Toggle rexdiff" action and a
+// key binding to the Rex configuration. The action passes the settings
+// from rexdiff.lua to rexdiff with the --config flag.
 //
 //	rexdiff [flags] [repo]
 //	rexdiff install
@@ -32,34 +31,39 @@ import (
 )
 
 func main() {
-	// A closed pane sends SIGHUP. The stop of ctx lets rexdiff remove its
-	// files before it exits.
+	// Closing the pane sends SIGHUP. Cancel ctx on these signals so rexdiff
+	// can remove its temporary files before it exits.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	// rexdiff reads the environment once, here. The packages get it as a
+	// Read the environment only here, and pass it to the packages as a
 	// value.
 	err := run(ctx, os.Environ(), os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil && ctx.Err() != nil {
-		// The error of a stopped program tells only "context canceled".
-		// The cause names the signal.
+		// The error says only "context canceled", but the cause names the
+		// signal.
 		err = context.Cause(ctx)
 	}
 	stop()
 	switch {
 	case errors.Is(err, flag.ErrHelp):
+		// -h printed the usage, which is a success.
 	case errors.Is(err, errUsage):
-		os.Exit(2) // stderr already has the error
+		os.Exit(exitUsage) // the error is already printed on stderr
 	case err != nil:
 		fmt.Fprintln(os.Stderr, "rexdiff:", err)
 		os.Exit(1)
 	}
 }
 
-// errUsage is the error of a bad flag or argument. stderr already has the
-// error and the usage.
+// exitUsage is the exit status for an invalid flag or argument, as with
+// the flag package.
+const exitUsage = 2
+
+// errUsage is the error for an invalid flag or argument. By the time it is
+// returned, the error message and the usage are already printed on
+// stderr.
 var errUsage = errors.New("bad usage")
 
-// usageError returns err of flag parsing for -h, and errUsage for the
-// other errors.
+// usageError returns err for -h, and errUsage for other flag errors.
 func usageError(err error) error {
 	if errors.Is(err, flag.ErrHelp) {
 		return err
@@ -67,7 +71,8 @@ func usageError(err error) error {
 	return errUsage
 }
 
-// usage is the text above the flags in the help of the diff viewer.
+// usage is the help text printed before the list of the diff viewer's
+// flags.
 const usage = `usage: rexdiff [flags] [repo]
        rexdiff install
        rexdiff uninstall
@@ -75,13 +80,13 @@ const usage = `usage: rexdiff [flags] [repo]
 flags:
 `
 
-// run runs the subcommand in args, or else the diff viewer. env is the
-// environment of rexdiff, as "key=value" pairs.
+// run runs the subcommand named in args, or the diff viewer if there is
+// none. env is the environment of rexdiff, as "key=value" pairs.
 func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "install":
-			bin, err := executable()
+			bin, err := executablePath()
 			if err != nil {
 				return err
 			}
@@ -98,15 +103,15 @@ func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) erro
 		fmt.Fprintln(stdout, cmp.Or(update.Version(version), "(devel)"))
 		return nil
 	}
-	if f.check {
-		return tui.CheckConfig(f.config)
-	}
-	if err := tui.CheckFlags(tui.Layout(f.layout), tui.Scope(f.scope)); err != nil {
+	if err := tui.ValidateFlags(tui.Layout(f.layout), tui.Scope(f.scope)); err != nil {
 		return err
 	}
+	if f.check {
+		return tui.ValidateConfig(f.config)
+	}
 
-	// The programs that rexdiff starts, such as an editor, do not get the
-	// variable of the resume file.
+	// Remove the resume variable, so programs that rexdiff starts, such as
+	// an editor, do not inherit it.
 	resumePath, env := takeResume(env)
 	dir := cmp.Or(f.repo, ".")
 	repo, err := vcs.Open(ctx, env, dir)
@@ -120,68 +125,70 @@ func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) erro
 	}
 	defer closeLog()
 
-	// In Rex, upgrade writes rexdiff_toggle.lua if it differs from the code
-	// of this rexdiff.
-	client := rex.New(env)
+	// When running in Rex, update rexdiff_toggle.lua if it differs from
+	// the code that this rexdiff would write.
+	client, inRex := rex.New(env)
 	var notice string
-	bin, binErr := executable()
-	if binErr == nil && client != nil {
-		notice = upgrade(ctx, env, bin)
+	bin, binErr := executablePath()
+	if binErr == nil && inRex {
+		notice = migrateLua(ctx, env, bin)
 	}
+	installer, _ := update.NewInstaller(env, bin, version) // nil if rexdiff cannot update itself
 	resume, err := tui.Run(ctx, tui.Options{
-		Repo:    repo,
-		Rex:     client,
-		Notice:  notice,
-		Updater: update.Detect(env, bin, version),
-		Resume:  resumePath,
-		Env:     env,
-		Config:  f.config,
-		Layout:  tui.Layout(f.layout),
-		Scope:   tui.Scope(f.scope),
-		Agent:   f.agent,
-		Base:    f.base,
-		Wrap:    f.wrap,
-		Log:     log,
+		Repo:      repo,
+		Rex:       client,
+		Notice:    notice,
+		Installer: installer,
+		Resume:    resumePath,
+		Env:       env,
+		Config:    f.config,
+		Layout:    tui.Layout(f.layout),
+		Scope:     tui.Scope(f.scope),
+		Agent:     f.agent,
+		Base:      f.base,
+		Wrap:      f.wrap,
+		Log:       log,
 	})
 	if err != nil || resume == "" {
 		return err
 	}
-	// After an update, the new rexdiff runs in this process.
+	// After an update, the new rexdiff replaces this process.
 	closeLog()
-	_ = repo.Close() // the new process does not run the deferred calls
-	return restart(bin, args, env, resume, stdout)
+	_ = repo.Close() // the deferred calls never run once the process is replaced
+	return restart(env, bin, args, resume, stdout)
 }
 
-// restart runs the new rexdiff at bin in this process after an update,
-// with the same args and env. resumeEnv gives it the saved state in the
-// file resume. restart returns only if it fails.
-func restart(bin string, args, env []string, resume string, stdout io.Writer) error {
+// restart replaces this process with the new rexdiff at bin after an
+// update. The new rexdiff gets the same env and args, plus the path of the
+// file resume, which holds the saved state. restart returns only if it
+// fails.
+func restart(env []string, bin string, args []string, resume string, stdout io.Writer) error {
 	env = slices.Concat(env, []string{resumeEnv + "=" + resume})
-	err := update.Restart(bin, args, env) // returns only if it fails
-	// Run keeps the alternate screen for the restart. Leave that screen and
-	// show the cursor.
+	err := update.Restart(env, bin, args) // returns only if it fails
+	// tui.Run leaves the terminal on the alternate screen for the new
+	// process. Since the restart failed, switch back and show the cursor.
 	fmt.Fprint(stdout, "\x1b[?1049l\x1b[?25h")
 	return fmt.Errorf("start the new rexdiff (your comments are saved in %s): %w", resume, err)
 }
 
-// resumeEnv is the variable that gives a restarted rexdiff the path of the
-// file with the state from before the update. rexdiff uses a variable, not a
-// flag, so that the arguments of the user do not change.
+// resumeEnv is the environment variable that tells a restarted rexdiff
+// where to find the state saved before the update. It is an environment
+// variable, not a flag, so the user's arguments stay the same.
 const resumeEnv = "REXDIFF_RESUME"
 
-// takeResume returns the file in the variable resumeEnv of env, or "". It
-// also returns a copy of env without the variable.
+// takeResume returns the value of resumeEnv in env, or "" if it is not
+// set, and a copy of env without that variable.
 func takeResume(env []string) (path string, rest []string) {
 	path = proc.Getenv(env, resumeEnv)
 	isResume := func(kv string) bool { return strings.HasPrefix(kv, resumeEnv+"=") }
 	return path, slices.DeleteFunc(slices.Clone(env), isResume)
 }
 
-// version is the version of rexdiff that GoReleaser sets, for example
-// "0.2.0". It is "" in other builds.
+// version is the rexdiff version that GoReleaser sets at build time, for
+// example "0.2.0". It is "" in other builds.
 var version string
 
-// flags are the command-line arguments of the diff viewer.
+// flags holds the command-line arguments of the diff viewer.
 type flags struct {
 	layout  string
 	scope   string
@@ -190,23 +197,24 @@ type flags struct {
 	agent   string
 	logPath string
 	config  string // the settings as JSON, or ""
-	check   bool   // check the settings and exit
+	check   bool   // validate the settings and exit
 	version bool   // print the version and exit
-	repo    string // the repo argument, or ""
+	repo    string // the repository argument, or ""
 }
 
-// parseFlags parses the arguments of the diff viewer. The defaults of
-// -agent and -log come from env. It writes the usage and the errors of the
-// flags to stderr. For -h, it returns [flag.ErrHelp], and for a bad flag
-// or argument errUsage.
+// parseFlags parses the arguments of the diff viewer. The defaults for
+// -agent and -log come from env. It prints the usage and flag errors on
+// stderr. For -h it returns [flag.ErrHelp]. For an invalid flag or an
+// extra argument it returns errUsage.
 func parseFlags(args, env []string, stderr io.Writer) (flags, error) {
 	var f flags
 	fs := flag.NewFlagSet("rexdiff", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	// tui.Run checks the layout and the scope, as in the settings.
+	// The caller validates the layout and scope values.
 	fs.StringVar(&f.layout, "layout", "", "diff layout: unified (top to bottom) or split (side by side)")
 	fs.StringVar(&f.scope, "scope", "", "start scope: uncommitted, branch, or last-turn")
-	// As in herdr-reviewr, -wrap takes on or off, so "-wrap off" works.
+	// -wrap is a string flag that takes on or off, so that "-wrap off"
+	// works. A boolean flag would need "-wrap=false".
 	wrap := fs.String("wrap", "on", "wrap of long lines: on or off (the key w toggles it)")
 	fs.StringVar(&f.base, "base", "", "base for the branch scope (default: the picked base, else the repo's default branch)")
 	fs.StringVar(&f.agent, "agent", proc.Getenv(env, "REXDIFF_AGENT"), "Rex block (ID or label) of the agent beside this pane")
@@ -222,7 +230,7 @@ func parseFlags(args, env []string, stderr io.Writer) (flags, error) {
 		return flags{}, usageError(err)
 	}
 	if fs.NArg() > 1 {
-		// Show the usage, as the flag package does for a bad flag.
+		// Print the usage, as the flag package does for an unknown flag.
 		fmt.Fprintf(stderr, "unknown argument %q (flags go before the repo)\n", fs.Arg(1))
 		fs.Usage()
 		return flags{}, errUsage
@@ -235,15 +243,25 @@ func parseFlags(args, env []string, stderr io.Writer) (flags, error) {
 }
 
 // openLog returns a logger that appends to the file at path, and a function
-// that closes the file. If path is empty, the logger discards everything.
-// The log is only for debugging, so the close ignores errors.
+// that closes the file, ignoring any error. If path is empty, the logger
+// discards all output. A new file is readable only by the user, because
+// the log names files and agents. The path may also be a terminal or a
+// FIFO, but opening a FIFO with no reader fails at once instead of
+// waiting for one.
 func openLog(path string) (*slog.Logger, func(), error) {
 	if path == "" {
 		return slog.New(slog.DiscardHandler), func() {}, nil
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	flags := os.O_APPEND | os.O_CREATE | os.O_WRONLY | syscall.O_NONBLOCK
+	f, err := os.OpenFile(path, flags, 0o600)
+	if pe, ok := errors.AsType[*os.PathError](err); ok {
+		err = pe.Err // the path is in the message already
+	}
+	if errors.Is(err, syscall.ENXIO) {
+		err = errors.New("the FIFO has no reader, start one first")
+	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("open log %s: %w", path, err)
 	}
 	h := slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug})
 	return slog.New(h), func() { _ = f.Close() }, nil

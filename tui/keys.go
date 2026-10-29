@@ -8,15 +8,16 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// keyMap uses the action names and the default keys of herdr-reviewr.
-// The fields have the names of the actions in the keybindings setting.
-// Focus and Update are actions of rexdiff only. The settings do not change
-// the keys of the comment box and of the find.
+// keyMap holds the key binding for each action. Each field is named after
+// the action in the keybindings setting, such as NextHunk for next-hunk
+// (see [keyActions]). The settings cannot change the keys of the comment
+// box or the find bar.
 type keyMap struct {
-	// Move.
+	// Movement.
 	Down, Up, PageDown, PageUp, HalfDown, HalfUp, Collapse, Expand key.Binding
 	NextHunk, PrevHunk, NextFile, PrevFile, Focus                  key.Binding
 
@@ -32,188 +33,475 @@ type keyMap struct {
 	Search, Find, GotoLine, Rendered, Split, Wrap                    key.Binding
 	NavigatorPosition, NavigatorHide, NavigatorGrow, NavigatorShrink key.Binding
 	OpenPR, Refresh, Keys, Quit, QuitDiscard                         key.Binding
-	// Update installs a newer release. It works only while the footer
-	// tells about a newer release.
+	// Update installs a newer release. It works only while the footer is
+	// announcing one.
 	Update key.Binding
 
-	// The comment box. Cancel also clears the selection.
-	Save, Newline, Cancel key.Binding
+	// Keys of the comment box. Cancel also clears the selection.
+	SaveComment, InsertNewline, Cancel key.Binding
 }
 
-// bind returns a binding of keys, with helpKey and desc in the help.
+// bind returns a binding for keys, with helpKey and desc as its help text.
 func bind(keys []string, helpKey, desc string) key.Binding {
 	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(helpKey, desc))
 }
 
-// hint returns a copy of b with other help text. The copy keeps the keys
-// of b, because the help does not show a binding that has no keys.
+// hint returns a copy of b with different help text. The copy keeps the
+// keys of b, because the help view hides bindings that have no keys.
 func hint(b key.Binding, helpKey, desc string) key.Binding {
 	b.SetHelp(helpKey, desc)
 	return b
 }
 
-// defaultKeys returns the keys of herdr-reviewr, with the help text of
-// each action. Some actions share one help label, for example "j/k move".
-// Then the label is on the first action of the pair.
-func defaultKeys() keyMap {
-	return keyMap{
-		Down:     bind([]string{"j", "down"}, "j/k", "move"),
-		Up:       bind([]string{"k", "up"}, "k", "up"),
-		PageDown: bind([]string{"pgdown"}, "pgdn", "page down"),
-		PageUp:   bind([]string{"pgup"}, "pgup", "page up"),
-		HalfDown: bind([]string{"ctrl+d"}, "ctrl+d/u", "half page"),
-		HalfUp:   bind([]string{"ctrl+u"}, "ctrl+u", "half page up"),
-		NextHunk: bind([]string{"]"}, "]/[", "next/prev change"),
-		PrevHunk: bind([]string{"["}, "[", "prev change"),
-		NextFile: bind([]string{"f"}, "f/F", "next/prev file"),
-		PrevFile: bind([]string{"F"}, "F", "prev file"),
-		Focus:    bind([]string{"tab"}, "tab", "switch pane"),
-		Collapse: bind([]string{"left"}, "←/→", "scroll sideways"),
-		Expand:   bind([]string{"right"}, "→", "scroll right"),
-
-		ScopeUncommitted: bind([]string{"u"}, "u", "uncommitted"),
-		ScopeBranch:      bind([]string{"b"}, "b", "branch"),
-		ScopeLastTurn:    bind([]string{"t"}, "t", "last turn"),
-		ScopeCommits:     bind([]string{"g"}, "g", "commits"),
-		BasePick:         bind([]string{"B"}, "B", "pick base branch"),
-		CommitPick:       bind([]string{"G"}, "G", "pick commits"),
-		TabChanges:       bind([]string{"1"}, "1/2/3", "changes/files/PR"),
-		TabAllFiles:      bind([]string{"2"}, "2", "all files"),
-		TabPR:            bind([]string{"3"}, "3", "PR"),
-
-		Select:      bind([]string{"v"}, "v", "select lines"),
-		Comment:     bind([]string{"c"}, "c", "comment"),
-		Edit:        bind([]string{"e"}, "e", "edit comment/open editor"),
-		Delete:      bind([]string{"d"}, "d", "delete comment"),
-		NextComment: bind([]string{"n"}, "n/N", "next/prev comment"),
-		PrevComment: bind([]string{"N"}, "N", "prev comment"),
-		Comments:    bind([]string{"l"}, "l", "list comments"),
-		Send:        bind([]string{"s", "S"}, "s", "send to agent"),
-		Copy:        bind([]string{"y", "Y"}, "y", "copy comments"),
-
-		Search:            bind([]string{"/"}, "/", "search files and code"),
-		Find:              bind([]string{"ctrl+f"}, "ctrl+f", "find in file"),
-		GotoLine:          bind([]string{":"}, ":", "go to line"),
-		Rendered:          bind([]string{"m"}, "m", "rendered markdown"),
-		Split:             bind([]string{"|"}, "|", "side by side"),
-		Wrap:              bind([]string{"w"}, "w", "wrap lines"),
-		NavigatorPosition: bind([]string{"p"}, "p", "move list"),
-		NavigatorHide:     bind([]string{"z"}, "z", "hide list"),
-		NavigatorGrow:     bind([]string{"<"}, "</>", "resize list"),
-		NavigatorShrink:   bind([]string{">"}, ">", "narrow list"),
-		OpenPR:            bind([]string{"o"}, "o", "open PR in browser"),
-		Refresh:           bind([]string{"r"}, "r", "refresh"),
-		Update:            bind([]string{"U"}, "U", "update rexdiff"),
-		Keys:              bind([]string{"?"}, "?", "all keys"),
-		Quit:              bind([]string{"q"}, "q", "quit"),
-		QuitDiscard:       bind([]string{"Q"}, "Q", "quit, drop comments"),
-
-		Save: bind([]string{"enter"}, "enter", "save"),
-		Newline: bind(
-			[]string{"shift+enter", "alt+enter", "ctrl+j"},
-			"shift+enter",
-			"new line",
-		),
-		Cancel: bind([]string{"esc"}, "esc", "cancel"),
-	}
+// keyAction describes an action that can be bound to keys.
+type keyAction struct {
+	// name is the action name in the keybindings setting, or "" for a
+	// key of the comment box.
+	name          string
+	keys          []string // the default keys
+	helpKey, help string
+	field         func(*keyMap) *key.Binding
+	// setting returns the keys that the keybindings setting assigns to
+	// the action. It is nil if the setting cannot change them.
+	setting func(*keybindings) []string
+	// handle runs the action when no box is open. It is nil if the key
+	// does nothing in that state. The QuitDiscard key only answers the
+	// quit prompt.
+	handle func(*model) tea.Cmd
+	// keepView reports whether the view stays put, rather than scrolling
+	// to the cursor, after the action runs.
+	keepView bool
 }
 
-// overlayKeyMap has the keys of the overlays. The settings do not change
-// them.
+// keyActions lists every key action, in the order that keybinding errors
+// name them. The update action, whose key is fixed, follows the
+// configurable actions, and the comment box keys come last. A help label
+// shared by a group, such as "j/k move", belongs to its first action (see
+// [keyMap.pairs]).
+var keyActions = []keyAction{
+	{
+		name: "down",
+		keys: []string{"j", "down"}, helpKey: "j/k", help: "move",
+		field:   func(k *keyMap) *key.Binding { return &k.Down },
+		setting: func(c *keybindings) []string { return c.Down },
+		handle:  (*model).onDown,
+	},
+	{
+		name: "up",
+		keys: []string{"k", "up"}, helpKey: "k", help: "up",
+		field:   func(k *keyMap) *key.Binding { return &k.Up },
+		setting: func(c *keybindings) []string { return c.Up },
+		handle:  (*model).onUp,
+	},
+	{
+		name: "next-hunk",
+		keys: []string{"]"}, helpKey: "]/[", help: "next/prev change",
+		field:   func(k *keyMap) *key.Binding { return &k.NextHunk },
+		setting: func(c *keybindings) []string { return c.NextHunk },
+		handle:  (*model).onNextHunk,
+	},
+	{
+		name: "prev-hunk",
+		keys: []string{"["}, helpKey: "[", help: "prev change",
+		field:   func(k *keyMap) *key.Binding { return &k.PrevHunk },
+		setting: func(c *keybindings) []string { return c.PrevHunk },
+		handle:  (*model).onPrevHunk,
+	},
+	{
+		name: "next-file",
+		keys: []string{"f"}, helpKey: "f/F", help: "next/prev file",
+		field:   func(k *keyMap) *key.Binding { return &k.NextFile },
+		setting: func(c *keybindings) []string { return c.NextFile },
+		handle:  (*model).onNextFile,
+	},
+	{
+		name: "prev-file",
+		keys: []string{"F"}, helpKey: "F", help: "prev file",
+		field:   func(k *keyMap) *key.Binding { return &k.PrevFile },
+		setting: func(c *keybindings) []string { return c.PrevFile },
+		handle:  (*model).onPrevFile,
+	},
+	{
+		name: "collapse",
+		keys: []string{"left"}, helpKey: "←/→", help: "scroll sideways",
+		field:   func(k *keyMap) *key.Binding { return &k.Collapse },
+		setting: func(c *keybindings) []string { return c.Collapse },
+		handle:  (*model).onCollapse,
+	},
+	{
+		name: "expand",
+		keys: []string{"right"}, helpKey: "→", help: "scroll right",
+		field:   func(k *keyMap) *key.Binding { return &k.Expand },
+		setting: func(c *keybindings) []string { return c.Expand },
+		handle:  (*model).onExpand,
+	},
+	{
+		name: "page-up",
+		keys: []string{"pgup"}, helpKey: "pgup", help: "page up",
+		field:   func(k *keyMap) *key.Binding { return &k.PageUp },
+		setting: func(c *keybindings) []string { return c.PageUp },
+		handle:  (*model).onPageUp,
+	},
+	{
+		name: "page-down",
+		keys: []string{"pgdown"}, helpKey: "pgdn", help: "page down",
+		field:   func(k *keyMap) *key.Binding { return &k.PageDown },
+		setting: func(c *keybindings) []string { return c.PageDown },
+		handle:  (*model).onPageDown,
+	},
+	{
+		name: "half-up",
+		keys: []string{"ctrl+u"}, helpKey: "ctrl+u", help: "half page up",
+		field:   func(k *keyMap) *key.Binding { return &k.HalfUp },
+		setting: func(c *keybindings) []string { return c.HalfUp },
+		handle:  (*model).onHalfUp,
+	},
+	{
+		name: "half-down",
+		keys: []string{"ctrl+d"}, helpKey: "ctrl+d/u", help: "half page",
+		field:   func(k *keyMap) *key.Binding { return &k.HalfDown },
+		setting: func(c *keybindings) []string { return c.HalfDown },
+		handle:  (*model).onHalfDown,
+	},
+	{
+		name: "focus",
+		keys: []string{"tab"}, helpKey: "tab", help: "switch pane",
+		field:   func(k *keyMap) *key.Binding { return &k.Focus },
+		setting: func(c *keybindings) []string { return c.Focus },
+		handle:  (*model).onFocus,
+	},
+	{
+		name: "scope-uncommitted",
+		keys: []string{"u"}, helpKey: "u", help: "uncommitted",
+		field:   func(k *keyMap) *key.Binding { return &k.ScopeUncommitted },
+		setting: func(c *keybindings) []string { return c.ScopeUncommitted },
+		handle:  (*model).onScopeUncommitted,
+	},
+	{
+		name: "scope-branch",
+		keys: []string{"b"}, helpKey: "b", help: "branch",
+		field:   func(k *keyMap) *key.Binding { return &k.ScopeBranch },
+		setting: func(c *keybindings) []string { return c.ScopeBranch },
+		handle:  (*model).onScopeBranch,
+	},
+	{
+		name: "scope-last-turn",
+		keys: []string{"t"}, helpKey: "t", help: "last turn",
+		field:   func(k *keyMap) *key.Binding { return &k.ScopeLastTurn },
+		setting: func(c *keybindings) []string { return c.ScopeLastTurn },
+		handle:  (*model).onScopeLastTurn,
+	},
+	{
+		name: "scope-commits",
+		keys: []string{"g"}, helpKey: "g", help: "commits",
+		field:   func(k *keyMap) *key.Binding { return &k.ScopeCommits },
+		setting: func(c *keybindings) []string { return c.ScopeCommits },
+		handle:  (*model).onScopeCommits,
+	},
+	{
+		name: "base-pick",
+		keys: []string{"B"}, helpKey: "B", help: "pick base branch",
+		field:   func(k *keyMap) *key.Binding { return &k.BasePick },
+		setting: func(c *keybindings) []string { return c.BasePick },
+		handle:  (*model).onBasePick,
+	},
+	{
+		name: "commit-pick",
+		keys: []string{"G"}, helpKey: "G", help: "pick commits",
+		field:   func(k *keyMap) *key.Binding { return &k.CommitPick },
+		setting: func(c *keybindings) []string { return c.CommitPick },
+		handle:  (*model).onCommitPick,
+	},
+	{
+		name: "tab-changes",
+		keys: []string{"1"}, helpKey: "1/2/3", help: "changes/files/PR",
+		field:   func(k *keyMap) *key.Binding { return &k.TabChanges },
+		setting: func(c *keybindings) []string { return c.TabChanges },
+		handle:  (*model).onTabChanges,
+	},
+	{
+		name: "tab-all-files",
+		keys: []string{"2"}, helpKey: "2", help: "all files",
+		field:   func(k *keyMap) *key.Binding { return &k.TabAllFiles },
+		setting: func(c *keybindings) []string { return c.TabAllFiles },
+		handle:  (*model).onTabAllFiles,
+	},
+	{
+		name: "tab-pr",
+		keys: []string{"3"}, helpKey: "3", help: "PR",
+		field:   func(k *keyMap) *key.Binding { return &k.TabPR },
+		setting: func(c *keybindings) []string { return c.TabPR },
+		handle:  (*model).onTabPR,
+	},
+	{
+		name: "wrap",
+		keys: []string{"w"}, helpKey: "w", help: "wrap lines",
+		field:   func(k *keyMap) *key.Binding { return &k.Wrap },
+		setting: func(c *keybindings) []string { return c.Wrap },
+		handle:  (*model).onWrap,
+	},
+	{
+		name: "rendered",
+		keys: []string{"m"}, helpKey: "m", help: "rendered markdown",
+		field:   func(k *keyMap) *key.Binding { return &k.Rendered },
+		setting: func(c *keybindings) []string { return c.Rendered },
+		handle:  (*model).onRendered,
+	},
+	{
+		name: "split",
+		keys: []string{"|"}, helpKey: "|", help: "side by side",
+		field:   func(k *keyMap) *key.Binding { return &k.Split },
+		setting: func(c *keybindings) []string { return c.Split },
+		handle:  (*model).onSplit,
+	},
+	{
+		name: "navigator-position",
+		keys: []string{"p"}, helpKey: "p", help: "move list",
+		field:   func(k *keyMap) *key.Binding { return &k.NavigatorPosition },
+		setting: func(c *keybindings) []string { return c.NavigatorPosition },
+		handle:  (*model).onNavigatorPosition,
+	},
+	{
+		name: "navigator-hide",
+		keys: []string{"z"}, helpKey: "z", help: "hide list",
+		field:   func(k *keyMap) *key.Binding { return &k.NavigatorHide },
+		setting: func(c *keybindings) []string { return c.NavigatorHide },
+		handle:  (*model).onNavigatorHide,
+	},
+	{
+		name: "navigator-grow",
+		keys: []string{"<"}, helpKey: "</>", help: "resize list",
+		field:   func(k *keyMap) *key.Binding { return &k.NavigatorGrow },
+		setting: func(c *keybindings) []string { return c.NavigatorGrow },
+		handle:  (*model).onNavigatorGrow,
+	},
+	{
+		name: "navigator-shrink",
+		keys: []string{">"}, helpKey: ">", help: "narrow list",
+		field:   func(k *keyMap) *key.Binding { return &k.NavigatorShrink },
+		setting: func(c *keybindings) []string { return c.NavigatorShrink },
+		handle:  (*model).onNavigatorShrink,
+	},
+	{
+		name: "select",
+		keys: []string{"v"}, helpKey: "v", help: "select lines",
+		field:   func(k *keyMap) *key.Binding { return &k.Select },
+		setting: func(c *keybindings) []string { return c.Select },
+		handle:  (*model).onSelect,
+	},
+	{
+		name: "comment",
+		keys: []string{"c"}, helpKey: "c", help: "comment",
+		field:   func(k *keyMap) *key.Binding { return &k.Comment },
+		setting: func(c *keybindings) []string { return c.Comment },
+		handle:  (*model).onComment,
+	},
+	{
+		name: "edit",
+		keys: []string{"e"}, helpKey: "e", help: "edit comment/open editor",
+		field:   func(k *keyMap) *key.Binding { return &k.Edit },
+		setting: func(c *keybindings) []string { return c.Edit },
+		handle:  (*model).onEdit,
+	},
+	{
+		name: "delete",
+		keys: []string{"d"}, helpKey: "d", help: "delete comment",
+		field:   func(k *keyMap) *key.Binding { return &k.Delete },
+		setting: func(c *keybindings) []string { return c.Delete },
+		handle:  (*model).onDelete,
+	},
+	{
+		name: "next-comment",
+		keys: []string{"n"}, helpKey: "n/N", help: "next/prev comment",
+		field:   func(k *keyMap) *key.Binding { return &k.NextComment },
+		setting: func(c *keybindings) []string { return c.NextComment },
+		handle:  (*model).onNextComment,
+	},
+	{
+		name: "prev-comment",
+		keys: []string{"N"}, helpKey: "N", help: "prev comment",
+		field:   func(k *keyMap) *key.Binding { return &k.PrevComment },
+		setting: func(c *keybindings) []string { return c.PrevComment },
+		handle:  (*model).onPrevComment,
+	},
+	{
+		name: "comments",
+		keys: []string{"l"}, helpKey: "l", help: "list comments",
+		field:   func(k *keyMap) *key.Binding { return &k.Comments },
+		setting: func(c *keybindings) []string { return c.Comments },
+		handle:  (*model).onComments,
+	},
+	{
+		name: "search",
+		keys: []string{"/"}, helpKey: "/", help: "search files and code",
+		field:   func(k *keyMap) *key.Binding { return &k.Search },
+		setting: func(c *keybindings) []string { return c.Search },
+		handle:  (*model).onSearch,
+	},
+	{
+		name: "find",
+		keys: []string{"ctrl+f"}, helpKey: "ctrl+f", help: "find in file",
+		field:   func(k *keyMap) *key.Binding { return &k.Find },
+		setting: func(c *keybindings) []string { return c.Find },
+		handle:  (*model).onFind,
+	},
+	{
+		name: "goto-line",
+		keys: []string{":"}, helpKey: ":", help: "go to line",
+		field:   func(k *keyMap) *key.Binding { return &k.GotoLine },
+		setting: func(c *keybindings) []string { return c.GotoLine },
+		handle:  (*model).onGotoLine,
+	},
+	{
+		name: "keys",
+		keys: []string{"?"}, helpKey: "?", help: "all keys",
+		field:   func(k *keyMap) *key.Binding { return &k.Keys },
+		setting: func(c *keybindings) []string { return c.Keys },
+		handle:  (*model).onKeys,
+	},
+	{
+		name: "send",
+		keys: []string{"s", "S"}, helpKey: "s", help: "send to agent",
+		field:   func(k *keyMap) *key.Binding { return &k.Send },
+		setting: func(c *keybindings) []string { return c.Send },
+		handle:  (*model).onSend,
+	},
+	{
+		name: "copy",
+		keys: []string{"y", "Y"}, helpKey: "y", help: "copy comments",
+		field:   func(k *keyMap) *key.Binding { return &k.Copy },
+		setting: func(c *keybindings) []string { return c.Copy },
+		handle:  (*model).onCopy,
+	},
+	{
+		name: "open-pr",
+		keys: []string{"o"}, helpKey: "o", help: "open PR in browser",
+		field:   func(k *keyMap) *key.Binding { return &k.OpenPR },
+		setting: func(c *keybindings) []string { return c.OpenPR },
+		handle:  (*model).onOpenPR,
+	},
+	{
+		name: "refresh",
+		keys: []string{"r"}, helpKey: "r", help: "refresh",
+		field:   func(k *keyMap) *key.Binding { return &k.Refresh },
+		setting: func(c *keybindings) []string { return c.Refresh },
+		handle:  (*model).onRefresh,
+	},
+	{
+		name: "quit",
+		keys: []string{"q"}, helpKey: "q", help: "quit",
+		field:    func(k *keyMap) *key.Binding { return &k.Quit },
+		setting:  func(c *keybindings) []string { return c.Quit },
+		handle:   (*model).onQuit,
+		keepView: true,
+	},
+	{
+		name: "quit-discard",
+		keys: []string{"Q"}, helpKey: "Q", help: "quit, drop comments",
+		field:   func(k *keyMap) *key.Binding { return &k.QuitDiscard },
+		setting: func(c *keybindings) []string { return c.QuitDiscard },
+	},
+	{
+		name: "update",
+		keys: []string{"U"}, helpKey: "U", help: "update rexdiff",
+		field:  func(k *keyMap) *key.Binding { return &k.Update },
+		handle: (*model).onUpdate,
+	},
+	{
+		keys: []string{"enter"}, helpKey: "enter", help: "save",
+		field: func(k *keyMap) *key.Binding { return &k.SaveComment },
+	},
+	{
+		keys: []string{"shift+enter", "alt+enter", "ctrl+j"}, helpKey: "shift+enter", help: "new line",
+		field: func(k *keyMap) *key.Binding { return &k.InsertNewline },
+	},
+	{
+		keys: []string{"esc"}, helpKey: "esc", help: "cancel",
+		field:  func(k *keyMap) *key.Binding { return &k.Cancel },
+		handle: (*model).onCancel,
+	},
+}
+
+// defaultKeys returns the default key bindings, with the help text for
+// each action.
+func defaultKeys() keyMap {
+	var k keyMap
+	for _, a := range keyActions {
+		*a.field(&k) = bind(a.keys, a.helpKey, a.help)
+	}
+	return k
+}
+
+// action returns the action that msg triggers when no box is open, or
+// nil. The order of the actions does not matter, because checking the
+// keybindings setting ensures that each key has at most one action.
+func (k *keyMap) action(msg tea.KeyPressMsg) *keyAction {
+	for i, a := range keyActions {
+		if a.handle != nil && key.Matches(msg, *a.field(k)) {
+			return &keyActions[i]
+		}
+	}
+	return nil
+}
+
+// overlayKeyMap holds the keys used in overlays. The settings cannot
+// change them.
 type overlayKeyMap struct {
+	// Up and Down move the cursor through the items. Their letter keys, k
+	// and j, move the cursor only in an overlay without a text input, such
+	// as the agent picker. A text input types them instead (see
+	// [overlay.isCursorKey]).
 	Choose, Close, Up, Down key.Binding
 
-	// ListDown and ListUp work in the agent picker.
-	ListDown, ListUp key.Binding
-	// Flip switches the mode of the search. PreviewUp and PreviewDown
-	// scroll the preview of the search.
-	Flip, PreviewUp, PreviewDown key.Binding
+	// ToggleSearchMode switches the search mode. ScrollPreviewUp and
+	// ScrollPreviewDown scroll the search preview.
+	ToggleSearchMode, ScrollPreviewUp, ScrollPreviewDown key.Binding
 }
 
-// overlayKeys has the keys of the overlays. The settings do not change
-// these keys.
+// overlayKeys holds the keys used in overlays.
 var overlayKeys = overlayKeyMap{
-	Choose: key.NewBinding(key.WithKeys("enter")),
-	Close:  key.NewBinding(key.WithKeys("esc")),
-	Up:     key.NewBinding(key.WithKeys("up", "ctrl+p", "ctrl+k")),
-	Down:   key.NewBinding(key.WithKeys("down", "ctrl+n", "ctrl+j")),
-	Flip:   key.NewBinding(key.WithKeys("tab")),
-	// The keys of the search are the same as in herdr-reviewr.
-	PreviewUp:   key.NewBinding(key.WithKeys("pgup")),
-	PreviewDown: key.NewBinding(key.WithKeys("pgdown")),
-	ListDown:    key.NewBinding(key.WithKeys("j")),
-	ListUp:      key.NewBinding(key.WithKeys("k")),
+	Choose:            key.NewBinding(key.WithKeys("enter")),
+	Close:             key.NewBinding(key.WithKeys("esc")),
+	Up:                key.NewBinding(key.WithKeys("up", "ctrl+p", "ctrl+k", "k")),
+	Down:              key.NewBinding(key.WithKeys("down", "ctrl+n", "ctrl+j", "j")),
+	ToggleSearchMode:  key.NewBinding(key.WithKeys("tab")),
+	ScrollPreviewUp:   key.NewBinding(key.WithKeys("pgup")),
+	ScrollPreviewDown: key.NewBinding(key.WithKeys("pgdown")),
 }
 
-// binding is an action of the keybindings setting and the key binding that
-// it changes.
+// letterMoveKeys are the keys of overlayKeys.Up and Down that are also
+// letters.
+var letterMoveKeys = []string{"j", "k"}
+
+// binding pairs an action from the keybindings setting with the key
+// binding that it changes.
 type binding struct {
-	name string // the name in the keybindings setting
+	name string // the action name in the keybindings setting
 	keys []string
 	key  *key.Binding
 }
 
-// bindings returns each action of c with its key binding in k, in the
-// order of the table of herdr-reviewr. The check of the keybindings
-// setting uses this order to name the actions of a key that two actions
-// use. herdr-reviewr has no focus action. The update is last. Its key is
-// fixed, and the check keeps it free.
+// bindings returns each configurable action with the keys that c sets for
+// it and its binding in k, in the order of keyActions.
 func (k *keyMap) bindings(c keybindings) []binding {
-	return []binding{
-		{"down", c.Down, &k.Down},
-		{"up", c.Up, &k.Up},
-		{"next-hunk", c.NextHunk, &k.NextHunk},
-		{"prev-hunk", c.PrevHunk, &k.PrevHunk},
-		{"next-file", c.NextFile, &k.NextFile},
-		{"prev-file", c.PrevFile, &k.PrevFile},
-		{"collapse", c.Collapse, &k.Collapse},
-		{"expand", c.Expand, &k.Expand},
-		{"page-up", c.PageUp, &k.PageUp},
-		{"page-down", c.PageDown, &k.PageDown},
-		{"half-up", c.HalfUp, &k.HalfUp},
-		{"half-down", c.HalfDown, &k.HalfDown},
-		{"focus", c.Focus, &k.Focus},
-		{"scope-uncommitted", c.ScopeUncommitted, &k.ScopeUncommitted},
-		{"scope-branch", c.ScopeBranch, &k.ScopeBranch},
-		{"scope-last-turn", c.ScopeLastTurn, &k.ScopeLastTurn},
-		{"scope-commits", c.ScopeCommits, &k.ScopeCommits},
-		{"base-pick", c.BasePick, &k.BasePick},
-		{"commit-pick", c.CommitPick, &k.CommitPick},
-		{"tab-changes", c.TabChanges, &k.TabChanges},
-		{"tab-all-files", c.TabAllFiles, &k.TabAllFiles},
-		{"tab-pr", c.TabPR, &k.TabPR},
-		{"wrap", c.Wrap, &k.Wrap},
-		{"rendered", c.Rendered, &k.Rendered},
-		{"split", c.Split, &k.Split},
-		{"navigator-position", c.NavigatorPosition, &k.NavigatorPosition},
-		{"navigator-hide", c.NavigatorHide, &k.NavigatorHide},
-		{"navigator-grow", c.NavigatorGrow, &k.NavigatorGrow},
-		{"navigator-shrink", c.NavigatorShrink, &k.NavigatorShrink},
-		{"select", c.Select, &k.Select},
-		{"comment", c.Comment, &k.Comment},
-		{"edit", c.Edit, &k.Edit},
-		{"delete", c.Delete, &k.Delete},
-		{"next-comment", c.NextComment, &k.NextComment},
-		{"prev-comment", c.PrevComment, &k.PrevComment},
-		{"comments", c.Comments, &k.Comments},
-		{"search", c.Search, &k.Search},
-		{"find", c.Find, &k.Find},
-		{"goto-line", c.GotoLine, &k.GotoLine},
-		{"keys", c.Keys, &k.Keys},
-		{"send", c.Send, &k.Send},
-		{"copy", c.Copy, &k.Copy},
-		{"open-pr", c.OpenPR, &k.OpenPR},
-		{"refresh", c.Refresh, &k.Refresh},
-		{"quit", c.Quit, &k.Quit},
-		{"quit-discard", c.QuitDiscard, &k.QuitDiscard},
-		{"update", nil, &k.Update},
+	var bs []binding
+	for _, a := range keyActions {
+		if a.name == "" {
+			continue
+		}
+		var keys []string
+		if a.setting != nil {
+			keys = a.setting(&c)
+		}
+		bs = append(bs, binding{a.name, keys, a.field(k)})
 	}
+	return bs
 }
 
-// applyConfig sets the keys of each action that c sets. The check of the
-// setting accepts each key, so keyName does not fail. The help shows the
-// first key of a changed action, as herdr-reviewr spells it. A label of a
-// pair, for example "j/k move", shows the first key of each action.
+// applyConfig sets the keys of each action that c configures. c must
+// already have passed validation. The help for a changed action shows its
+// first key, and a shared label such as "j/k move" shows the first key of
+// each action in the group.
 func (k *keyMap) applyConfig(c keybindings) {
 	changed := map[*key.Binding]bool{}
 	for _, b := range k.bindings(c) {
@@ -222,7 +510,7 @@ func (k *keyMap) applyConfig(c keybindings) {
 		}
 		keys := make([]string, len(b.keys))
 		for i, s := range b.keys {
-			keys[i], _ = keyName(s)
+			keys[i], _ = keyName(s) // cannot fail: c has passed validation
 		}
 		b.key.SetKeys(keys...)
 		b.key.SetHelp(firstKey(*b.key), b.key.Help().Desc)
@@ -240,8 +528,8 @@ func (k *keyMap) applyConfig(c keybindings) {
 	}
 }
 
-// pairs returns the groups of actions that share one help label, for
-// example "j/k move". The label is on the first action of each group.
+// pairs returns the groups of actions that share one help label, such as
+// "j/k move". The label belongs to the first action of each group.
 func (k *keyMap) pairs() [][]*key.Binding {
 	return [][]*key.Binding{
 		{&k.Down, &k.Up},
@@ -255,9 +543,9 @@ func (k *keyMap) pairs() [][]*key.Binding {
 	}
 }
 
-// namedKeys are the keys that are not one character. Each has its name as
-// herdr-reviewr spells it, its bubbletea name, and its label on the
-// screen.
+// namedKeys are the keys that are not a single character. Each has its
+// name in the keybindings setting, its bubbletea name and its on-screen
+// label.
 var namedKeys = []namedKey{
 	{"left", "left", "←"},
 	{"right", "right", "→"},
@@ -267,25 +555,25 @@ var namedKeys = []namedKey{
 	{"pagedown", "pgdown", "PageDown"},
 }
 
-// namedKey is a key that is not one character.
+// namedKey is a key that is not a single character.
 type namedKey struct{ name, tea, label string }
 
-// teaKey returns the named key whose bubbletea name is name without its
-// modifier, and the modifier. ok is false if no named key has this name.
+// teaKey splits the bubbletea key name into its modifier and the named
+// key it refers to. ok is false if no named key matches.
 func teaKey(name string) (mod string, k namedKey, ok bool) {
 	mod, rest := cutModifier(name)
-	i := slices.IndexFunc(namedKeys, func(k namedKey) bool { return k.tea == rest })
+	i := slices.IndexFunc(namedKeys, func(nk namedKey) bool { return nk.tea == rest })
 	if i < 0 {
 		return mod, namedKey{}, false
 	}
 	return mod, namedKeys[i], true
 }
 
-// keyName returns the bubbletea name of the key s of the keybindings
-// setting. It is the inverse of [herdrReviewrKeyName]. s is one character
-// or a named key, alone or after "ctrl+" or "alt+", as in herdr-reviewr.
-// The bubbletea names "pgup" and "pgdown" are also valid. ok is false if s
-// is not a valid key.
+// keyName converts the key s from the keybindings setting to its
+// bubbletea name. It is the inverse of [settingKeyName]. s is a
+// single character or a named key, optionally after "ctrl+" or "alt+".
+// The bubbletea names "pgup" and "pgdown" are also accepted. ok is false
+// if s is not a valid key.
 func keyName(s string) (name string, ok bool) {
 	mod, rest := cutModifier(s)
 	named := func(k namedKey) bool { return rest == k.name || rest == k.tea }
@@ -293,25 +581,25 @@ func keyName(s string) (name string, ok bool) {
 		return mod + namedKeys[i].tea, true
 	}
 	r, size := utf8.DecodeRuneInString(rest)
-	if size == 0 || size != len(rest) || r == utf8.RuneError || unicode.IsSpace(r) ||
-		ansi.StringWidth(rest) == 0 {
+	oneRune := size > 0 && size == len(rest) && r != utf8.RuneError
+	if !oneRune || unicode.IsSpace(r) || ansi.StringWidth(rest) == 0 {
 		return "", false
 	}
 	return s, true
 }
 
-// herdrReviewrKeyName returns the bubbletea key name as herdr-reviewr
-// spells it, for example "pageup" for "pgup". It is the inverse of
+// settingKeyName converts a bubbletea key name to its name in the
+// keybindings setting, such as "pageup" for "pgup". It is the inverse of
 // [keyName].
-func herdrReviewrKeyName(name string) string {
+func settingKeyName(name string) string {
 	if mod, k, ok := teaKey(name); ok {
 		return mod + k.name
 	}
 	return name
 }
 
-// cutModifier returns the "ctrl+" or "alt+" at the start of s, if any, and
-// the rest of s.
+// cutModifier splits a leading "ctrl+" or "alt+" from s. mod is "" if s
+// has neither.
 func cutModifier(s string) (mod, rest string) {
 	for _, m := range []string{"ctrl+", "alt+"} {
 		if r, ok := strings.CutPrefix(s, m); ok {
@@ -321,7 +609,8 @@ func cutModifier(s string) (mod, rest string) {
 	return "", s
 }
 
-// keyNames lists the named keys for an error message.
+// keyNames returns a comma-separated list of the named keys, for use in
+// error messages.
 func keyNames() string {
 	names := make([]string, len(namedKeys))
 	for i, k := range namedKeys {
@@ -330,37 +619,34 @@ func keyNames() string {
 	return strings.Join(names, ", ")
 }
 
-// helpKeys implements help.KeyMap for the mode and the tab of the program.
+// helpKeys implements [help.KeyMap] for the current mode and tab.
 type helpKeys struct {
-	k      keyMap
-	mode   mode
-	tab    tab
-	split  bool
-	visual bool
-	atFold bool // the cursor is on a fold
-	armed  int  // the direction of an armed crossing, or 0
+	keys                 keyMap
+	mode                 mode
+	tab                  tab
+	split                bool
+	selecting            bool
+	cursorOnFold         bool // the cursor is on a fold
+	cursorInExpandedFold bool // the collapse key would collapse the expanded fold under the cursor
+	crossStep            int  // the direction of a pending jump to another file, or 0
 }
 
-// ShortHelp returns the keys of the footer.
+// ShortHelp returns the keys shown in the footer.
 func (h helpKeys) ShortHelp() []key.Binding {
-	k := h.k
+	k := h.keys
 	if h.split {
 		k.Split.SetHelp(k.Split.Help().Key, "top to bottom")
 	}
 	switch {
 	case h.mode == modeComment:
-		return []key.Binding{k.Save, k.Newline, k.Cancel}
-	case h.armed > 0:
-		return []key.Binding{
-			hint(k.NextHunk, firstKey(k.NextHunk), "next file"),
-			k.Comment, k.Send, k.Keys, k.Quit,
+		return []key.Binding{k.SaveComment, k.InsertNewline, k.Cancel}
+	case h.crossStep != 0:
+		b, label := k.NextHunk, "next file"
+		if h.crossStep < 0 {
+			b, label = k.PrevHunk, "prev file"
 		}
-	case h.armed < 0:
-		return []key.Binding{
-			hint(k.PrevHunk, firstKey(k.PrevHunk), "prev file"),
-			k.Comment, k.Send, k.Keys, k.Quit,
-		}
-	case h.visual:
+		return []key.Binding{hint(b, firstKey(b), label), k.Comment, k.Send, k.Keys, k.Quit}
+	case h.selecting:
 		return []key.Binding{
 			k.Comment,
 			hint(k.Down, k.Down.Help().Key, "extend"),
@@ -368,18 +654,22 @@ func (h helpKeys) ShortHelp() []key.Binding {
 		}
 	case h.tab == tabPR:
 		return []key.Binding{k.Down, k.OpenPR, k.Refresh, k.TabChanges, k.Keys, k.Quit}
-	case h.atFold:
+	case h.cursorOnFold || h.cursorInExpandedFold:
+		b, label := k.Expand, "expand fold"
+		if !h.cursorOnFold {
+			b, label = k.Collapse, "collapse fold"
+		}
 		return []key.Binding{
-			hint(k.Expand, firstKey(k.Expand), "expand fold"),
+			hint(b, firstKey(b), label),
 			k.Comment, k.Send, k.NextHunk, k.Keys, k.Quit,
 		}
 	}
 	return []key.Binding{k.Comment, k.Send, k.NextHunk, k.NextFile, k.Split, k.Keys, k.Quit}
 }
 
-// FullHelp returns the columns of keys that ? shows.
+// FullHelp returns the columns of keys shown by the ? key.
 func (h helpKeys) FullHelp() [][]key.Binding {
-	k := h.k
+	k := h.keys
 	move := []key.Binding{
 		k.Down, k.HalfDown, k.NextHunk, k.NextFile, k.Focus, k.Collapse, k.GotoLine,
 	}
@@ -397,19 +687,23 @@ func (h helpKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{move, scopes, comments, view, other}
 }
 
-// newHelp styles the footer with the terminal palette.
+// helpGap separates the keys in the short help. The header uses the same
+// gap between scopes.
+const helpGap = "  "
+
+// newHelp returns the footer help, styled with the terminal palette.
 func newHelp() help.Model {
 	h := help.New()
 	h.Styles.ShortKey, h.Styles.FullKey = boldStyle, boldStyle
 	h.Styles.ShortDesc, h.Styles.FullDesc = dimStyle, dimStyle
 	h.Styles.ShortSeparator, h.Styles.FullSeparator = dimStyle, dimStyle
 	h.Styles.Ellipsis = dimStyle
-	h.ShortSeparator, h.FullSeparator = "    ", "    "
+	h.ShortSeparator, h.FullSeparator = helpGap, "    "
 	return h
 }
 
-// firstKey returns the label of the first key of b, as herdr-reviewr
-// shows it, or "".
+// firstKey returns the on-screen label of the first key of b, or "" if b
+// has no keys.
 func firstKey(b key.Binding) string {
 	ks := b.Keys()
 	if len(ks) == 0 {

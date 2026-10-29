@@ -8,11 +8,12 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// TestSavedBase checks that SaveBase keeps a base, and that the default
-// branch deletes it.
+// TestSavedBase checks that SavedBase returns the base that SaveBase
+// saved, that saving the default branch clears it, and that values that
+// are not valid ref names cannot be saved or read back.
 func TestSavedBase(t *testing.T) {
 	t.Parallel()
-	r, dir := newRepo(t)
+	r, dir := openTestRepo(t)
 	ctx := t.Context()
 	if got := r.SavedBase(ctx); got != "" {
 		t.Errorf("SavedBase before a save = %q, want \"\"", got)
@@ -29,7 +30,7 @@ func TestSavedBase(t *testing.T) {
 	if got := r.SavedBase(ctx); got != "" {
 		t.Errorf("SavedBase after a save of the default = %q, want \"\"", got)
 	}
-	// A value that is not a base is not read.
+	// A value that is not a valid ref name can be neither saved nor read.
 	for _, bad := range []string{"-x", "a b", "a\x7f"} {
 		if err := r.SaveBase(ctx, bad); err == nil {
 			t.Errorf("SaveBase(%q): no error, want an error", bad)
@@ -42,7 +43,8 @@ func TestSavedBase(t *testing.T) {
 	}
 }
 
-// hashObject writes s as a blob in the repository dir and returns its ID.
+// hashObject stores s as a blob in the repository at dir and returns the
+// blob's ID.
 func hashObject(t *testing.T, dir, s string) string {
 	t.Helper()
 	tmp := t.TempDir()
@@ -51,13 +53,13 @@ func hashObject(t *testing.T, dir, s string) string {
 	return strings.TrimSpace(out)
 }
 
-// TestSavedTurn checks that SaveTurn keeps a tree, also after git gc, and
-// that "" deletes it.
+// TestSavedTurn checks that a tree saved with SaveTurn survives git gc,
+// and that saving "" deletes it, also when it is already deleted.
 func TestSavedTurn(t *testing.T) {
 	t.Parallel()
-	r, dir := newRepo(t)
+	r, dir := openTestRepo(t)
 	ctx := t.Context()
-	tree := snapshot(t, r) // a tree that no commit has
+	tree := snapshot(t, r) // a tree that no commit refers to
 	if err := r.SaveTurn(ctx, tree); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func TestSavedTurn(t *testing.T) {
 	if _, err := r.Diff(ctx, tree, head(t, r)); err != nil {
 		t.Errorf("the tree after gc: %v", err)
 	}
-	for range 2 { // a second delete is no error
+	for range 2 { // deleting twice is not an error
 		if err := r.SaveTurn(ctx, ""); err != nil {
 			t.Fatal(err)
 		}
@@ -78,11 +80,11 @@ func TestSavedTurn(t *testing.T) {
 	}
 }
 
-// TestSavedPerWorktree checks that each worktree has its own saved base
-// and turn.
+// TestSavedPerWorktree checks that the base and turn saved in one
+// worktree are not visible in another worktree of the same repository.
 func TestSavedPerWorktree(t *testing.T) {
 	t.Parallel()
-	r, dir := newRepo(t)
+	r, dir := openTestRepo(t)
 	ctx := t.Context()
 	other := filepath.Join(t.TempDir(), "wt")
 	testgit.Git(t, dir, "worktree", "add", "-q", other, "main")

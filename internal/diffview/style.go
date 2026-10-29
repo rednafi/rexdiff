@@ -9,23 +9,23 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// lineStyle is the style of the parts of one type of line.
+// lineStyle holds the styles of the parts of one kind of line.
 type lineStyle struct {
-	lineNumber lipgloss.Style
-	symbol     lipgloss.Style
-	code       lipgloss.Style
+	num  lipgloss.Style
+	mark lipgloss.Style
+	code lipgloss.Style
 }
 
-// style is the style of each type of line.
+// style holds the style of each kind of line.
 type style struct {
 	dividerLine lineStyle
 	missingLine lineStyle
 	equalLine   lineStyle
-	insertLine  lineStyle
-	deleteLine  lineStyle
+	addedLine   lineStyle
+	deletedLine lineStyle
 }
 
-// The colours of the ANSI palette of the terminal, as Lip Gloss colours.
+// Colours from the terminal's ANSI palette, as Lip Gloss colours.
 const (
 	ansiRed     = "1"
 	ansiGreen   = "2"
@@ -36,22 +36,24 @@ const (
 	ansiGrey    = "8" // bright black
 )
 
-// The amounts that terminalStyle mixes into the background.
+// The amounts of colour that terminalStyle mixes into the background.
 const (
-	tintDark     = 0.16 // inserted and deleted lines on a dark background
-	tintLight    = 0.13 // inserted and deleted lines on a light background
-	tintNumber   = 1.7  // multiplies the tint for the numbers of those lines
-	shadeDivider = 0.07 // the hunk headers, toward the foreground
-	shadeMissing = 0.03 // the empty side of a split row, toward the foreground
+	tintDark     = 0.16 // added and deleted lines on a dark background
+	tintLight    = 0.13 // added and deleted lines on a light background
+	tintNum      = 1.7  // multiplies the tint for the line numbers of those lines
+	shadeDivider = 0.07 // hunk headers, towards the foreground
+	shadeMissing = 0.03 // the empty side of a split row, towards the foreground
 )
 
-// The tint colours when the terminal does not report its green or red.
+// The tint colours used when the terminal does not report its green or
+// red.
 const (
 	fallbackGreen = "#2ea043"
 	fallbackRed   = "#f85149"
 )
 
-// terminalStyle makes the style of [View.Theme] from the terminal colours.
+// terminalStyle builds the style for [View.Theme] from the terminal's
+// colours.
 func terminalStyle(bg, fg, green, red color.Color, dark bool) style {
 	none := lipgloss.NoColor{}
 	green = cmp.Or(green, lipgloss.Color(fallbackGreen))
@@ -73,42 +75,43 @@ func terminalStyle(bg, fg, green, red color.Color, dark bool) style {
 		return mix(bg, fg, t)
 	}
 	plain := lipgloss.NewStyle()
-	// number is the style of a line number: right-aligned, with a space on
-	// each side.
-	number := func(s lipgloss.Style) lipgloss.Style {
+	// num returns the style of a line number: right-aligned, with a space
+	// on each side.
+	num := func(s lipgloss.Style) lipgloss.Style {
 		return s.Padding(0, lineNumPadding).Align(lipgloss.Right)
 	}
-	// changed is the style of an inserted or a deleted line, tinted toward c.
+	// changed returns the style of an added or deleted line, tinted
+	// towards c.
 	changed := func(text string, c color.Color) lineStyle {
-		fg := plain.Foreground(lipgloss.Color(text))
+		textStyle := plain.Foreground(lipgloss.Color(text))
 		return lineStyle{
-			lineNumber: number(fg.Background(tint(c, amt*tintNumber))),
-			symbol:     fg.Background(tint(c, amt)),
-			code:       plain.Background(tint(c, amt)),
+			num:  num(textStyle.Background(tint(c, amt*tintNum))),
+			mark: textStyle.Background(tint(c, amt)),
+			code: plain.Background(tint(c, amt)),
 		}
 	}
 	divider := plain.Background(subtle(shadeDivider))
 	missing := plain.Background(subtle(shadeMissing))
 	return style{
 		dividerLine: lineStyle{
-			lineNumber: number(divider.Foreground(lipgloss.Color(ansiGrey))),
-			code:       divider.Foreground(lipgloss.Color(ansiCyan)),
+			num:  num(divider.Foreground(lipgloss.Color(ansiGrey))),
+			code: divider.Foreground(lipgloss.Color(ansiCyan)),
 		},
 		missingLine: lineStyle{
-			lineNumber: number(missing),
-			symbol:     missing,
-			code:       missing,
+			num:  num(missing),
+			mark: missing,
+			code: missing,
 		},
 		equalLine: lineStyle{
-			lineNumber: number(plain.Foreground(lipgloss.Color(ansiGrey))),
-			code:       plain,
+			num:  num(plain.Foreground(lipgloss.Color(ansiGrey))),
+			code: plain,
 		},
-		insertLine: changed(ansiGreen, green),
-		deleteLine: changed(ansiRed, red),
+		addedLine:   changed(ansiGreen, green),
+		deletedLine: changed(ansiRed, red),
 	}
 }
 
-// mix mixes a toward b by the amount t, from 0 to 1.
+// mix blends colour a towards b by the amount t, from 0 to 1.
 func mix(a, b color.Color, t float64) color.Color {
 	ar, ag, ab, _ := a.RGBA()
 	br, bg, bb, _ := b.RGBA()

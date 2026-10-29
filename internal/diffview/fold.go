@@ -1,71 +1,96 @@
 package diffview
 
-import "github.com/aymanbagabas/go-udiff"
-
-// foldMargin is the number of equal lines that show beside a change. A
-// longer run of equal lines folds into one row, as in herdr-reviewr.
+// foldMargin is the number of equal lines shown before and after each
+// change.
 const foldMargin = 3
 
-// Fold is a run of equal lines that the view hides. Before and After are
-// the line numbers of its first line. Lines is the number of lines. Lines
-// is 0 if the view hides no line.
+// Fold is a run of equal lines that the diff hides. Old and New are the
+// line numbers of its first line, and Lines is the number of lines. Lines
+// is 0 if no lines are hidden.
 type Fold struct {
-	Before, After, Lines int
+	Old, New, Lines int
 }
 
-// foldHunk splits h into the hunks that show. folds[i] is the run of lines
-// that hides above hunks[i]. If the last run hides, the last hunk has no
-// lines. A run of equal lines hides if it has more than one line and no
-// line of it is within foldMargin of a change. A run does not hide if
-// expanded returns true for it.
-func foldHunk(h *udiff.Hunk, expanded func(Fold) bool) (hunks []*udiff.Hunk, folds []Fold) {
+// keptLines reports, for each line of h, whether it is within foldMargin
+// lines of a change. Such lines are never hidden.
+func keptLines(h *hunk) []bool {
 	n := len(h.Lines)
 	keep := make([]bool, n)
 	for i, l := range h.Lines {
-		if l.Kind != udiff.Equal {
+		if l.Kind != KindEqual {
 			for j := max(i-foldMargin, 0); j <= min(i+foldMargin, n-1); j++ {
 				keep[j] = true
 			}
 		}
 	}
-	var cur *udiff.Hunk
+	return keep
+}
+
+// hiddenFolds returns, in order, the runs of equal lines in h that are
+// hidden. A run is hidden if it has more than one line, keep marks none of
+// its lines, and expanded is nil or returns false for it. keep is
+// keptLines(h).
+func hiddenFolds(h *hunk, keep []bool, expanded func(Fold) bool) []Fold {
+	var hidden []Fold
+	oldNum, newNum := h.OldStart, h.NewStart
+	for i := 0; i < len(h.Lines); {
+		if keep[i] {
+			oldNum, newNum = h.Lines[i].next(oldNum, newNum)
+			i++
+			continue
+		}
+		j := i
+		for j < len(h.Lines) && !keep[j] {
+			j++
+		}
+		fold := Fold{Old: oldNum, New: newNum, Lines: j - i}
+		if fold.Lines > 1 && (expanded == nil || !expanded(fold)) {
+			hidden = append(hidden, fold)
+		}
+		// The run has only equal lines.
+		oldNum, newNum, i = oldNum+fold.Lines, newNum+fold.Lines, j
+	}
+	return hidden
+}
+
+// foldHunk splits h into visible hunks around the hidden runs from
+// hiddenFolds. folds[i] is the fold above hunks[i]. If the last run is
+// hidden, the last hunk has no lines. keep is keptLines(h).
+func foldHunk(h *hunk, keep []bool, hidden []Fold) (hunks []*hunk, folds []Fold) {
+	n := len(h.Lines)
+	var cur *hunk
 	var above Fold
-	b, a := h.FromLine, h.ToLine
+	oldNum, newNum := h.OldStart, h.NewStart
 	i := 0
+	shown := 0 // lines before this index belong to a run that is shown
 	for i < n {
-		if !keep[i] {
+		if !keep[i] && i >= shown {
 			j := i
 			for j < n && !keep[j] {
 				j++
 			}
-			f := Fold{Before: b, After: a, Lines: j - i}
-			if f.Lines > 1 && (expanded == nil || !expanded(f)) {
-				above, cur = f, nil
-				b, a, i = b+f.Lines, a+f.Lines, j
+			fold := Fold{Old: oldNum, New: newNum, Lines: j - i}
+			if len(hidden) > 0 && hidden[0] == fold {
+				hidden = hidden[1:]
+				above, cur = fold, nil
+				oldNum, newNum, i = oldNum+fold.Lines, newNum+fold.Lines, j
 				continue
 			}
-			for k := i; k < j; k++ {
-				keep[k] = true // the run shows as a whole
-			}
+			shown = j // the whole run is shown
 		}
 		if cur == nil {
-			cur = &udiff.Hunk{FromLine: b, ToLine: a}
+			cur = &hunk{OldStart: oldNum, NewStart: newNum}
 			hunks = append(hunks, cur)
 			folds = append(folds, above)
 			above = Fold{}
 		}
 		l := h.Lines[i]
 		cur.Lines = append(cur.Lines, l)
-		if l.Kind != udiff.Insert {
-			b++
-		}
-		if l.Kind != udiff.Delete {
-			a++
-		}
+		oldNum, newNum = l.next(oldNum, newNum)
 		i++
 	}
 	if above.Lines > 0 {
-		hunks = append(hunks, &udiff.Hunk{FromLine: b, ToLine: a})
+		hunks = append(hunks, &hunk{OldStart: oldNum, NewStart: newNum})
 		folds = append(folds, above)
 	}
 	return hunks, folds

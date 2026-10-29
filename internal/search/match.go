@@ -5,42 +5,40 @@ import (
 	"unicode"
 )
 
-// Match reports whether text has query, with smart case as in
-// herdr-reviewr. A query with an upper case letter matches only the same
-// case. Else Match ignores the case of ASCII letters only. An empty query
-// matches nothing.
-func Match(text, query string) bool {
+// Matches reports whether text contains query, using smart case. A query
+// with an upper-case letter must match case exactly. Otherwise Matches
+// ignores case, but only for ASCII letters. An empty query matches
+// nothing.
+func Matches(text, query string) bool { return Index(text, query) >= 0 }
+
+// Index returns the byte offset of the first match of query in text, as
+// [Matches] finds it, or -1 if there is none. It takes time linear in the
+// lengths of text and query.
+func Index(text, query string) int {
 	if query == "" {
-		return false
+		return -1
 	}
 	if strings.ContainsFunc(query, unicode.IsUpper) {
-		return strings.Contains(text, query)
+		return strings.Index(text, query)
 	}
-	for i := 0; i+len(query) <= len(text); i++ {
-		if foldEqual(text[i:i+len(query)], query) {
-			return true
-		}
-	}
-	return false
+	// query has no upper-case letter, so it matches the text with its
+	// ASCII letters in lower case. Lowering ASCII letters keeps the byte
+	// offsets.
+	return strings.Index(lowerASCII(text), query)
 }
 
-// foldEqual reports whether a and b, which have the same length, are equal
-// when ASCII letters ignore case. The bytes of a UTF-8 character other
-// than ASCII never fold, so a byte compare is correct.
-func foldEqual(a, b string) bool {
-	for i := range len(a) {
-		if lowerASCII(a[i]) != lowerASCII(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-// lowerASCII returns the lower case of the ASCII letter c. It returns
+// lowerASCII returns s with its ASCII letters in lower case. It leaves the
 // other bytes as they are.
-func lowerASCII(c byte) byte {
-	if 'A' <= c && c <= 'Z' {
-		return c + 'a' - 'A'
+func lowerASCII(s string) string {
+	i := strings.IndexFunc(s, func(r rune) bool { return 'A' <= r && r <= 'Z' })
+	if i < 0 {
+		return s
 	}
-	return c
+	b := []byte(s)
+	for k := i; k < len(b); k++ {
+		if c := b[k]; 'A' <= c && c <= 'Z' {
+			b[k] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }

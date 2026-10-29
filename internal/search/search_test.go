@@ -3,12 +3,14 @@ package search_test
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/rednafi/rexdiff/internal/search"
 )
 
-// TestFiles checks the order and the limit of the files.
+// TestFiles checks the order, limit and total count of the files that
+// Files returns.
 func TestFiles(t *testing.T) {
 	t.Parallel()
 	paths := []string{"a.go", "b.go", "c/d.go", "main.go"}
@@ -24,15 +26,15 @@ func TestFiles(t *testing.T) {
 		want      []string
 		wantTotal int
 	}{
-		{"empty query", "", paths, nil, 50, paths, 4},
-		{"recent first", "", paths, []string{"main.go", "b.go"}, 50, []string{"main.go", "b.go", "a.go", "c/d.go"}, 4},
-		{"a gone recent pick", "", paths, []string{"gone.go", "b.go"}, 50, []string{"b.go", "a.go", "c/d.go", "main.go"}, 4},
-		{"empty query limit", "", paths, []string{"main.go"}, 2, []string{"main.go", "a.go"}, 4},
-		{"fuzzy", "dgo", paths, nil, 50, []string{"c/d.go"}, 1},
-		{"recent does not rank a query", "go", paths, []string{"main.go"}, 2, []string{"a.go", "b.go"}, 4},
-		{"no match", "zzz", paths, nil, 50, nil, 0},
-		// A query shows at most the limit, and counts all the matches.
-		{"query limit", "f", many, nil, search.MaxFiles, many[:search.MaxFiles], 60},
+		{name: "empty query", paths: paths, limit: 50, want: paths, wantTotal: 4},
+		{name: "recent first", paths: paths, recent: []string{"main.go", "b.go"}, limit: 50, want: []string{"main.go", "b.go", "a.go", "c/d.go"}, wantTotal: 4},
+		{name: "a gone recent pick", paths: paths, recent: []string{"gone.go", "b.go"}, limit: 50, want: []string{"b.go", "a.go", "c/d.go", "main.go"}, wantTotal: 4},
+		{name: "empty query limit", paths: paths, recent: []string{"main.go"}, limit: 2, want: []string{"main.go", "a.go"}, wantTotal: 4},
+		{name: "fuzzy", q: "dgo", paths: paths, limit: 50, want: []string{"c/d.go"}, wantTotal: 1},
+		{name: "recent does not rank a query", q: "go", paths: paths, recent: []string{"main.go"}, limit: 2, want: []string{"a.go", "b.go"}, wantTotal: 4},
+		{name: "no match", q: "zzz", paths: paths, limit: 50, wantTotal: 0},
+		// A query returns at most limit files, but counts every match.
+		{name: "query limit", q: "f", paths: many, limit: search.MaxFiles, want: many[:search.MaxFiles], wantTotal: 60},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -46,8 +48,8 @@ func TestFiles(t *testing.T) {
 	}
 }
 
-// TestMatch checks the smart case of herdr-reviewr.
-func TestMatch(t *testing.T) {
+// TestMatches checks smart-case matching.
+func TestMatches(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		text, query string
@@ -59,23 +61,76 @@ func TestMatch(t *testing.T) {
 		{"FOO", "foo", true},
 		{"x := 1", "", false},
 		{"", "a", false},
-		{"ÉCOLE", "école", false}, // only ASCII ignores case
+		{"ÉCOLE", "école", false}, // case is ignored only for ASCII letters
 		{"école", "école", true},
 		{"Éa", "Éa", true},
 		{"\tx", "\tx", true},
 		{"ab", "abc", false},
 	}
 	for _, tt := range tests {
-		got := search.Match(tt.text, tt.query)
+		got := search.Matches(tt.text, tt.query)
 		if got != tt.want {
-			t.Errorf("Match(%q, %q) = %v, want %v",
+			t.Errorf("Matches(%q, %q) = %v, want %v",
 				tt.text, tt.query, got, tt.want)
 		}
 	}
 }
 
-// TestIndices checks that Indices returns the indices of the labels that
-// match, the best match first.
+// TestIndex checks the offset of the first smart-case match.
+func TestIndex(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		text, query string
+		want        int
+	}{
+		{"Foo bar foo", "foo", 0},
+		{"xx FOO", "foo", 3},
+		{"foo Foo", "Foo", 4},
+		{"éA", "a", 2}, // offsets count bytes
+		{"abc", "", -1},
+		{"abc", "d", -1},
+	}
+	for _, tt := range tests {
+		if got := search.Index(tt.text, tt.query); got != tt.want {
+			t.Errorf("Index(%q, %q) = %d, want %d", tt.text, tt.query, got, tt.want)
+		}
+	}
+}
+
+// longFind returns a line of about 2 MB and a 1001-byte query that
+// almost matches it everywhere, the slowest input for a naive search.
+func longFind() (text, query string) {
+	return strings.Repeat("a", 2_000_000), strings.Repeat("a", 1000) + "b"
+}
+
+// TestIndexLong checks a query that almost matches a long line at every
+// offset.
+func TestIndexLong(t *testing.T) {
+	t.Parallel()
+	text, query := longFind()
+	if got := search.Index(text, query); got != -1 {
+		t.Errorf("Index = %d, want -1", got)
+	}
+	if got := search.Index(text+"A"+query, query); got != len(text)+1 {
+		t.Errorf("Index = %d, want %d", got, len(text)+1)
+	}
+}
+
+// BenchmarkMatchesLong measures a search in a long line, as the find bar
+// does in a minified file.
+func BenchmarkMatchesLong(b *testing.B) {
+	text, query := longFind()
+	for _, q := range []string{query, strings.ToUpper(query)} {
+		b.Run(fmt.Sprintf("upper=%v", q != query), func(b *testing.B) {
+			for b.Loop() {
+				search.Matches(text, q)
+			}
+		})
+	}
+}
+
+// TestIndices checks that Indices returns the indices of the matching
+// labels, best match first.
 func TestIndices(t *testing.T) {
 	t.Parallel()
 	labels := []string{"main feat", "dev", "feature x"}
