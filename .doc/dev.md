@@ -33,15 +33,18 @@ To run the tests against a real Rex too:
 
 ```sh
 REXDIFF_REX=$(which rex) go test ./test/
+REXDIFF_REX=$(which rex) test/e2e.sh
 ```
+
+`test/e2e.sh` also needs jq.
 
 ## Release
 
 ```sh
-gh release create v0.3.0
+gh release create vX.Y.Z
 ```
 
-GitHub Actions builds the binaries and updates the Homebrew cask.
+GitHub Actions runs the tests again, builds the binaries, and updates the Homebrew cask.
 
 ## Rules
 
