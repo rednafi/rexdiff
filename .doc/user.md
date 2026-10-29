@@ -35,6 +35,13 @@ The diff is on the left. The changed files are on the right.
 
 rexdiff reloads when a file changes.
 
+Some files show a note instead of the diff:
+
+- A binary file shows `binary file`.
+- A file over 2 MB or 50,000 lines shows `file too large to show`.
+- If more than 20,000 files change, rexdiff shows only their number.
+- A Markdown file over 512 KB shows as source.
+
 ## 4. Pick what to compare
 
 - `u`: the uncommitted changes
@@ -46,15 +53,15 @@ Press `B` to pick the base branch, and `G` to pick the commits.
 
 ## 5. See both sides
 
-Press `|` to see the old and the new code side by side. Press `z` to hide the file list
-if the pane is narrow.
+Press `|` to see the old and the new code side by side. This needs 135 columns for the
+code. Press `z` to hide the file list if the pane is narrow.
 
 ![Side by side](../.asset/split.png)
 
 ## 6. Comment
 
 Put the cursor on a line, press `c`, type the comment, and press Enter. For more lines,
-press `v` and move down first.
+press `v` and move down first. You can also click or drag the line numbers.
 
 ![Writing a comment](../.asset/comment.png)
 
@@ -78,7 +85,7 @@ Enter.
 
 ![The review in the agent](../.asset/sent.png)
 
-Press `y` to copy the review instead.
+Press `y` to copy the review instead. Use `y` for a review over 256 KB.
 
 ## 9. See all the files
 
@@ -132,5 +139,6 @@ Press `?` to see all the keys.
 
 ![All keys](../.asset/help.png)
 
-Press `U` to update when the bottom line shows a new version. Press `q` to quit.
+Press `U` to update when the bottom line shows a new version. Press `q` to quit. If
+there are unsent comments, rexdiff asks first. Press `Q` to quit and drop them.
 `rexdiff uninstall` removes rexdiff from Rex.
