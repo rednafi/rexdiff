@@ -256,7 +256,14 @@ func TestTallLine(t *testing.T) {
 	}
 	b.WriteString(" THE-END\nvar next = 1\n")
 	testgit.WriteFile(t, repo, "a.go", b.String())
-	tm := start(t, repo, opts{})
+	logf := filepath.Join(t.TempDir(), "log")
+	tm := start(t, repo, opts{args: []string{"-log", logf}})
+	t.Cleanup(func() {
+		if t.Failed() {
+			b, _ := os.ReadFile(logf)
+			t.Logf("LOG:\n%s", b)
+		}
+	})
 	s := tm.waitFor("// START")
 	// The line takes about 200 rows. Each half page moves the view.
 	for i := 0; !strings.Contains(s, "THE-END"); i++ {
@@ -271,6 +278,8 @@ func TestTallLine(t *testing.T) {
 			last, _, _ := strings.Cut(lastBodyLine(s), "│")
 			return s != prev && wordsInOrder(s) && strings.TrimSpace(last) != ""
 		}, "move the view")
+		ws := regexp.MustCompile(`w(\d+)`).FindAllString(s, -1)
+		t.Logf("step %d: %s..%s end=%v next=%v", i, ws[0], ws[len(ws)-1], strings.Contains(s, "THE-END"), strings.Contains(s, "var next"))
 	}
 	if strings.Contains(s, "// START") {
 		t.Errorf("the screen shows the start and the end of the line:\n%s", s)

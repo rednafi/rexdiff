@@ -1192,7 +1192,7 @@ func (m *model) followCursor() {
 
 // onKey passes a key press to the part of the screen that has focus.
 func (m *model) onKey(msg tea.KeyPressMsg) tea.Cmd {
-	m.log.Debug("key", "key", m.loggedKey(msg), "mode", m.mode, "scope", m.scope)
+	m.log.Debug("key", "key", m.loggedKey(msg), "mode", m.mode, "scope", m.scope, "cur", m.curPane().cur, "top", m.curPane().top, "h", m.mainHeight(), "shownH", m.shownMainHeight(), "follow", m.curPane().following)
 	// Any key other than ], [ or Esc cancels a pending jump to another
 	// file, except keys pressed in the quit prompt.
 	inQuit := m.overlay != nil && m.overlay.kind == overlayQuit
