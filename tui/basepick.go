@@ -1,49 +1,45 @@
 package tui
 
-// The base picker picks the base of the branch scope.
+// The base picker lets the user choose the base branch for the branch scope.
 
 import (
-	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// branchTimeout is the longest time of the branch list.
+// branchTimeout limits how long listing the branches can take.
 const branchTimeout = 5 * time.Second
 
-// branchesMsg has the branch list of the base picker.
+// branchesMsg carries the list of branches for the base picker.
 type branchesMsg struct {
 	branches []string
 	err      error
 }
 
-// openBasePicker lists the branches for the base picker. The list does
-// nothing on the PR tab, or if the base comes from the flag.
+// openBasePicker returns a command that lists the branches for the base
+// picker. It returns nil on the PR tab, or when the base was set by a flag.
 func (m *model) openBasePicker() tea.Cmd {
-	if m.baseFlag || m.tab == tabPR {
+	if m.baseFromFlag || m.tab == tabPR {
 		return nil
 	}
-	ctx, cancel := context.WithCancelCause(m.ctx)
-	ctx, cancelTimeout := context.WithTimeoutCause(ctx, branchTimeout,
-		fmt.Errorf("branch list: %v timeout: %w", branchTimeout, context.DeadlineExceeded))
+	ctx, cancel := xctx.WithTimeout(m.ctx, branchTimeout, "branch list")
 	repo := m.repo
 	return func() tea.Msg {
-		defer cancelTimeout()
-		defer cancel(fmt.Errorf("branch list: done: %w", context.Canceled))
+		defer cancel()
 		branches, err := repo.Branches(ctx)
 		return branchesMsg{branches: branches, err: err}
 	}
 }
 
-// onBranches opens the base picker with the branch list of msg. The
-// current base has a tag. As in herdr-reviewr, the base of an open pull
-// request and the default branch come first, with a tag.
+// onBranches opens the base picker with the branches in msg. The base of
+// an open pull request comes first, then the default branch. These two and
+// the current base are tagged.
 func (m *model) onBranches(msg branchesMsg) {
 	if msg.err != nil {
 		m.flash("branch list failed: " + msg.err.Error())
@@ -59,9 +55,9 @@ func (m *model) onBranches(msg branchesMsg) {
 	}
 	defaultBase := strings.TrimPrefix(m.defaultBase, "origin/")
 	current := strings.TrimPrefix(m.base, "origin/")
-	// groups has the PR base, then the default branch, then the others.
-	// Each group keeps the newest first.
-	var groups [3][]pickItem
+	// groups holds the PR base, then the default branch, then the rest.
+	// Each group keeps the order of msg.branches, newest first.
+	var groups [3][]overlayItem
 	for _, b := range msg.branches {
 		var tags []string
 		name, g := strings.TrimPrefix(b, "origin/"), 2
@@ -74,22 +70,24 @@ func (m *model) onBranches(msg branchesMsg) {
 		if name == current {
 			tags = append(tags, "current")
 		}
-		groups[g] = append(groups[g], pickItem{label: b, id: b, tag: strings.Join(tags, " ")})
+		groups[g] = append(groups[g], overlayItem{label: b, id: b, tag: strings.Join(tags, " ")})
 	}
 	ov.setItems(slices.Concat(groups[:]...))
-	m.open(ov)
+	m.openOverlay(ov)
 }
 
-// baseRef returns the ref that the base picker picks, with the selected
-// item it. A typed ref, for example a tag, wins over the first match. A
-// match that the user moves to wins over the typed text. If the ref is
-// not valid, ok is false.
-func (m *model) baseRef(it *pickItem) (ref string, ok bool) {
+// baseRef returns the ref chosen in the base picker, given the selected
+// item it. A valid typed ref, such as a tag, is preferred over the
+// first match, but a match that the user moves the cursor to is preferred
+// over the typed text. It returns ok false if the ref does not resolve.
+func (m *model) baseRef(it *overlayItem) (ref string, ok bool) {
+	ctx, done := m.gitContext("base resolve")
+	defer done()
 	ref = strings.TrimSpace(m.overlay.input.Value())
-	_, err := m.repo.Resolve(m.ctx, ref)
+	_, err := m.repo.ResolveRev(ctx, ref)
 	if it != nil && (ref == "" || err != nil || m.overlay.cur > 0) {
 		ref = it.id
-		_, err = m.repo.Resolve(m.ctx, ref)
+		_, err = m.repo.ResolveRev(ctx, ref)
 	}
 	return ref, ref != "" && err == nil
 }

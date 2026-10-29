@@ -1,59 +1,72 @@
-// Package search finds the files of the search screen, and the lines of
-// the find band. The limits and the smart case come from herdr-reviewr.
+// Package search finds the files shown on the search screen and the lines
+// shown in the find bar.
 package search
 
-import (
-	"slices"
+import "github.com/sahilm/fuzzy"
 
-	"github.com/sahilm/fuzzy"
-)
-
-// The limits of the results. A "… more" row tells that there are others.
+// Limits on the number of results. A "… more" row shows that there are
+// more.
 const (
-	// MaxFiles is the largest number of files that the search shows.
+	// MaxFiles is the maximum number of files that the search shows.
 	MaxFiles = 50
-	// MaxCodeLines is the largest number of matching lines that the search
+	// MaxGrepLines is the maximum number of matching lines that the search
 	// shows.
-	MaxCodeLines = 200
+	MaxGrepLines = 200
 )
 
-// Files returns at most limit of paths that match q, the best match
-// first, and the number of all the matches. For an empty q, the paths in
-// recent come first, in their order, and then the other paths.
-// herdr-reviewr ranks the files of an empty query by use. rexdiff keeps
-// no history, so recent has the picks of this session.
-func Files(paths, recent []string, q string, limit int) (hits []string, total int) {
-	if q == "" {
-		for _, p := range recent {
-			if slices.Contains(paths, p) && !slices.Contains(hits, p) {
-				hits = append(hits, p)
-			}
-		}
-		total = len(paths)
-		for _, p := range paths {
-			if len(hits) >= limit {
-				break
-			}
-			if !slices.Contains(hits, p) {
-				hits = append(hits, p)
-			}
-		}
-		return hits[:min(len(hits), limit)], total
+// Files returns up to limit paths that match query, best match first, and
+// the total number of matches. If query is empty, it returns the paths in
+// recent first, in their order, followed by the other paths.
+func Files(paths, recent []string, query string, limit int) (hits []string, total int) {
+	if query == "" {
+		return recentFirst(paths, recent, limit), len(paths)
 	}
-	ms := fuzzy.Find(q, paths)
+	ms := fuzzy.Find(query, paths)
 	for _, m := range ms[:min(len(ms), limit)] {
 		hits = append(hits, m.Str)
 	}
 	return hits, len(ms)
 }
 
-// Indices returns the indices of the labels that match q, the best match
-// first. The match is the same fuzzy match as in Files.
-func Indices(q string, labels []string) []int {
-	ms := fuzzy.Find(q, labels)
-	is := make([]int, len(ms))
+// Indices returns the indices of the labels that match query, best match
+// first. It uses the same fuzzy matching as [Files].
+func Indices(query string, labels []string) []int {
+	ms := fuzzy.Find(query, labels)
+	indices := make([]int, len(ms))
 	for i, m := range ms {
-		is[i] = m.Index
+		indices[i] = m.Index
 	}
-	return is
+	return indices
+}
+
+// recentFirst returns up to limit paths: the paths in recent first, in
+// their order, followed by the other paths. It goes through paths once,
+// and stops once it has found every recent path and enough others.
+func recentFirst(paths, recent []string, limit int) []string {
+	isRecent := make(map[string]bool, len(recent))
+	for _, p := range recent {
+		isRecent[p] = true
+	}
+	found := make(map[string]bool, len(recent)) // the recent paths in paths
+	var others []string
+	for _, p := range paths {
+		if len(found) == len(isRecent) && len(others) >= limit {
+			break
+		}
+		switch {
+		case isRecent[p]:
+			found[p] = true
+		case len(others) < limit:
+			others = append(others, p)
+		}
+	}
+	var hits []string
+	for _, p := range recent {
+		if found[p] {
+			hits = append(hits, p)
+			delete(found, p) // a path listed twice in recent appears once
+		}
+	}
+	hits = append(hits, others...)
+	return hits[:min(len(hits), limit)]
 }

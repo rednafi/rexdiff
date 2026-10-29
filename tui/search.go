@@ -1,10 +1,9 @@
 package tui
 
-// The search finds files by name and lines of code, as in herdr-reviewr.
-// It shows in an overlay.
+// The search finds files by name and lines of code. It appears in an
+// overlay.
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,78 +12,80 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/rednafi/rexdiff/internal/search"
+	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// The times of a code search, as in herdr-reviewr. After codeBudget, the
-// search shows the lines that it finds, and a "+" tells that there can be
-// others. A search with no line yet goes on until its first line, or
-// until codeTimeout.
+// Time limits for a code search. After grepBudget, the search shows the
+// lines found so far, with a "+" to say there may be more. A search that
+// has found nothing keeps going until its first match or until
+// grepTimeout.
 const (
-	codeBudget  = 80 * time.Millisecond
-	codeTimeout = 2 * time.Second
+	grepBudget  = 80 * time.Millisecond
+	grepTimeout = 2 * time.Second
 )
 
-// searchState has the results of the search. As in herdr-reviewr, the
-// search has two modes. It shows the files that match by name, or the
-// lines of the code that contain the query.
+// searchState holds the search results. The search has two modes: one
+// shows the files whose names match, and the other shows the lines of code
+// that contain the query.
 type searchState struct {
-	code      bool     // the mode that shows the code matches
+	grep      bool     // true in code mode
 	paths     []string // the files that the search can find
-	files     []string // the files that match
-	fileTotal int      // the number of the files that match
+	files     []string // the matching files that are listed
+	fileTotal int      // the total number of matching files
 	hits      []vcs.Match
-	hitsMore  bool   // git finds more matches than hits has
-	err       string // the error of the code search
+	hitsMore  bool   // git found more matches than hits holds
+	err       string // the code search error
 	preview   *preview
-	// previewY is the line of the box of the search where the preview
-	// starts, with its rule.
+	// previewY is the line in the search box where the preview, with its
+	// rule, starts.
 	previewY int
 }
 
-// showSearch shows the results of the search in its mode, with the
-// cursor on the first result. As in herdr-reviewr, the code matches show
-// under a header for each file. A "… more" row tells that the list does
-// not show all the results. An error shows in place of the results.
-func (o *overlay) showSearch() {
-	s := &o.search
-	var items []pickItem
+// setSearchItems lists the results for the current mode, with the cursor
+// on the first result. Code matches are grouped under a heading for each
+// file. A "… more" row means the list does not include every result. An
+// error replaces the results.
+func (ov *overlay) setSearchItems() {
+	s := &ov.search
+	var items []overlayItem
 	switch {
 	case s.err != "":
-	case !s.code:
+		// The overlay shows the error instead of a list.
+	case !s.grep:
 		for _, p := range s.files {
-			items = append(items, pickItem{label: p, id: p})
+			items = append(items, overlayItem{label: p, id: p})
 		}
 		if s.fileTotal > len(s.files) {
-			items = append(items, pickItem{label: "… more"})
+			items = append(items, overlayItem{label: "… more"})
 		}
 	default:
 		for i, h := range s.hits {
 			if i == 0 || h.Path != s.hits[i-1].Path {
-				items = append(items, pickItem{label: h.Path, head: true})
+				items = append(items, overlayItem{label: h.Path, isHeader: true})
 			}
-			items = append(items, pickItem{
+			items = append(items, overlayItem{
 				label: fmt.Sprintf("%5d: %s", h.Line, h.Text),
 				id:    h.Path,
 				line:  h.Line,
 			})
 		}
 		if s.hitsMore {
-			items = append(items, pickItem{label: "… more"})
+			items = append(items, overlayItem{label: "… more"})
 		}
 	}
-	o.setItems(items)
-	o.cur = 0
-	if len(o.shown) > 0 && !o.pickable(0) {
-		o.move(1)
+	ov.setItems(items)
+	ov.cur = 0
+	if len(ov.shown) > 0 && !ov.canHaveCursor(0) {
+		ov.move(1)
 	}
 }
 
-// chips returns the chips of the modes of the search, as in
-// herdr-reviewr: "files N │ code M". A "+" after M tells that git finds
-// more matches. The chip of the mode in use is bright.
-func (o *overlay) chips() string {
-	s := &o.search
+// chips returns the labels of the two search modes: "files N │ code M".
+// A "+" after M means git found more matches. The label of the current
+// mode is highlighted.
+func (ov *overlay) chips() string {
+	s := &ov.search
 	files, code := "files", "code"
 	if s.err == "" {
 		files = fmt.Sprintf("files %d", s.fileTotal)
@@ -93,76 +94,134 @@ func (o *overlay) chips() string {
 			code += "+"
 		}
 	}
-	on := cursorStyle.Underline(true)
-	if s.code {
+	on := accentStyle.Underline(true)
+	if s.grep {
 		return dimStyle.Render(files+" │ ") + on.Render(code)
 	}
 	return on.Render(files) + dimStyle.Render(" │ "+code)
 }
 
-// openSearch opens the search of the files and the code. With no query,
-// it lists the files.
+// openSearch opens the search over file names and code. The query starts
+// empty, so it lists files and searches no code.
 func (m *model) openSearch() {
 	ov := newOverlay(overlaySearch, "")
 	ov.input.Placeholder = "Search files and code…"
-	for _, e := range m.allFiles {
+	ov.search.paths = searchPaths(m.allFiles.entries)
+	m.openOverlay(ov)
+	m.refreshSearch() // an empty query needs no command
+}
+
+// searchPaths returns the paths of the entries that the search can find:
+// those that git does not ignore.
+func searchPaths(es []vcs.Entry) []string {
+	var paths []string
+	for _, e := range es {
 		if !e.Ignored {
-			ov.search.paths = append(ov.search.paths, e.Path)
+			paths = append(paths, e.Path)
 		}
 	}
-	m.open(ov)
-	m.runSearch()
+	return paths
 }
 
-// runSearch finds the files that match the query of the search, and
-// starts a code search for the query. It stops the code search of the
-// last query. Until the new code search ends, the old code matches show.
-// An empty query finds no code.
-func (m *model) runSearch() tea.Cmd {
-	ov := m.overlay
-	s, q := &ov.search, ov.input.Value()
-	s.files, s.fileTotal = search.Files(s.paths, m.recent, q, search.MaxFiles)
-	s.err = ""
-	m.stopGrep(fmt.Errorf("code search: a newer query replaces it: %w", context.Canceled))
-	// A blank grep is noise, as in herdr-reviewr.
-	if strings.TrimSpace(q) == "" {
-		s.hits, s.hitsMore = nil, false
-		ov.showSearch()
+// maxSyncPaths is the most paths that the file search goes through on the
+// UI goroutine. With more, a fuzzy search is slow enough to hold up the
+// screen, so it runs in a command.
+const maxSyncPaths = 20_000
+
+// fileSearchMsg carries the files that match a search query.
+type fileSearchMsg struct {
+	gen   int // identifies the search; results of older searches are stale
+	files []string
+	total int
+}
+
+// findFiles finds the files that match the search query. With more than
+// maxSyncPaths paths, it returns a command that finds them instead, and
+// the list keeps the previous files until onFileSearch shows the new ones.
+func (m *model) findFiles() tea.Cmd {
+	s, q := &m.overlay.search, m.overlay.input.Value()
+	m.fileGen++
+	if q == "" || len(s.paths) <= maxSyncPaths {
+		s.files, s.fileTotal = search.Files(s.paths, m.recent, q, search.MaxFiles)
 		return nil
 	}
-	ov.showSearch()
-	ctx, cancel := context.WithCancelCause(m.ctx)
-	ctx, cancelTimeout := context.WithTimeoutCause(ctx, codeTimeout,
-		fmt.Errorf("code search: %v timeout: %w", codeTimeout, context.DeadlineExceeded))
-	m.grepCancel = cancel
-	repo, gen := m.repo, m.grepGen
+	paths, recent, gen := s.paths, slices.Clone(m.recent), m.fileGen
 	return func() tea.Msg {
-		defer cancelTimeout()
-		defer cancel(fmt.Errorf("code search: done: %w", context.Canceled))
-		hits, more, err := repo.Grep(ctx, q, search.MaxCodeLines, codeBudget)
-		return grepMsg{gen: gen, hits: hits, more: more, err: err}
+		files, total := search.Files(paths, recent, q, search.MaxFiles)
+		return fileSearchMsg{gen: gen, files: files, total: total}
 	}
 }
 
-// addRecent puts path first in the list of the files that the search
-// shows for an empty query.
-func (m *model) addRecent(path string) {
-	rest := slices.DeleteFunc(m.recent, func(p string) bool { return p == path })
-	m.recent = append([]string{path}, rest[:min(len(rest), search.MaxFiles-1)]...)
+// onFileSearch shows the files found by the latest file search, unless
+// the search has closed since. In code mode, only the count changes.
+func (m *model) onFileSearch(msg fileSearchMsg) {
+	ov := m.overlay
+	if ov == nil || ov.kind != overlaySearch || msg.gen != m.fileGen {
+		return
+	}
+	s := &ov.search
+	s.files, s.fileTotal = msg.files, msg.total
+	if !s.grep {
+		ov.setSearchItems()
+	}
 }
 
-// stopGrep stops the code search that runs, if any. Its result then does
-// not show. cause tells why it stops.
-func (m *model) stopGrep(cause error) {
+// refreshSearch finds the files that match the search query, cancels the
+// code search for the previous query and updates the list. It returns the
+// query, and the command that finds the files if [model.findFiles]
+// returns one. The previous code matches stay on screen until the new
+// search finishes, except that a blank query clears them.
+func (m *model) refreshSearch() (query string, cmd tea.Cmd) {
+	ov := m.overlay
+	s, q := &ov.search, ov.input.Value()
+	cmd = m.findFiles()
+	s.err = ""
+	m.stopGrep()
+	if strings.TrimSpace(q) == "" {
+		s.hits, s.hitsMore = nil, false
+	}
+	ov.setSearchItems()
+	return q, cmd
+}
+
+// startGrep refreshes the search list with [model.refreshSearch] and
+// returns a command that searches the code for the query. A blank query
+// searches no code and returns nil.
+func (m *model) startGrep() tea.Cmd {
+	q, files := m.refreshSearch()
+	// A blank query would match nearly every line.
+	if strings.TrimSpace(q) == "" {
+		return files
+	}
+	ctx, cancel := xctx.WithTimeout(m.ctx, grepTimeout, "code search")
+	m.grepCancel = cancel
+	repo, gen := m.repo, m.grepGen
+	return tea.Batch(files, func() tea.Msg {
+		defer cancel()
+		hits, more, err := repo.Grep(ctx, q, search.MaxGrepLines, grepBudget)
+		return grepMsg{gen: gen, hits: hits, more: more, err: err}
+	})
+}
+
+// addRecent moves path to the front of the recent files, which the search
+// lists for an empty query.
+func (m *model) addRecent(path string) {
+	rest := slices.DeleteFunc(m.recent, func(p string) bool { return p == path })
+	m.recent = slices.Concat([]string{path}, rest[:min(len(rest), search.MaxFiles-1)])
+}
+
+// stopGrep cancels the code search in progress, if any, and makes sure
+// its result is ignored.
+func (m *model) stopGrep() {
 	m.grepGen++
 	if m.grepCancel != nil {
-		m.grepCancel(cause)
+		m.grepCancel()
 		m.grepCancel = nil
 	}
 }
 
-// onGrep keeps the code matches of the search, but only if the search
-// still shows their query. The list shows them in the code mode.
+// onGrep stores the code matches in the search, unless the search has
+// closed or the query has changed since. The list shows them in code mode.
 func (m *model) onGrep(msg grepMsg) {
 	ov := m.overlay
 	if ov == nil || ov.kind != overlaySearch || msg.gen != m.grepGen {
@@ -171,12 +230,12 @@ func (m *model) onGrep(msg grepMsg) {
 	s := &ov.search
 	s.hits, s.hitsMore, s.err = msg.hits, msg.more, ""
 	if msg.err != nil {
-		// Show only the error, and no old results under it.
+		// Show only the error, without older results below it.
 		s.hits, s.hitsMore, s.err = nil, false, msg.err.Error()
 	}
-	// The list of the file matches stays, with its cursor. The chips
-	// show the count of the code matches.
-	if s.code {
-		ov.showSearch()
+	// In file mode, keep the list and its cursor as they are. The mode
+	// labels still show the new number of code matches.
+	if s.grep {
+		ov.setSearchItems()
 	}
 }

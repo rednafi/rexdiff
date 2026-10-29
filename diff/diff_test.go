@@ -13,23 +13,32 @@ import (
 )
 
 const (
-	oldSrc = "a\nb\nc\n"
-	newSrc = "a\nB\nc\nd\n"
+	oldText = "a\nb\nc\n"
+	newText = "a\nB\nc\nd\n"
 )
 
-// snippet returns the diff lines of a comment on rows, as
-// [diff.Comments.Review] writes them.
-func snippet(rows []diff.Row, before, after string) []string {
+// screenLines returns every screen line of d, first to last.
+func screenLines(d *diff.Diff) []string {
+	var lines []string
+	for i := range len(d.Rows) {
+		lines = append(lines, d.Line(i))
+	}
+	return lines
+}
+
+// snippet returns the diff lines that [diff.Comments.Review] writes for a
+// comment on rows.
+func snippet(rows []diff.Row, oldText, newText string) []string {
 	var cs diff.Comments
-	cs.Add(diff.NewComment("x", diff.SideNew, rows, before, after))
-	lines := strings.Split(cs.Review(""), "\n")
-	return lines[1 : len(lines)-1] // not the location and the empty text
+	cs.Add(diff.NewComment("x", diff.SideNew, rows, oldText, newText))
+	lines := strings.Split(cs.Review("", nil), "\n")
+	return lines[1 : len(lines)-1] // drop the location and the empty comment text
 }
 
 // isEqual reports whether r is a [diff.KindEqual] row.
 func isEqual(r diff.Row) bool { return r.Kind == diff.KindEqual }
 
-// kinds writes the rows as one character each, for example "@=-+=+".
+// kinds returns one character for each row's kind, for example "@=-+=+".
 func kinds(rows []diff.Row) string {
 	var b strings.Builder
 	for _, r := range rows {
@@ -38,30 +47,31 @@ func kinds(rows []diff.Row) string {
 	return b.String()
 }
 
-// renderer is a way to show two versions of a file.
+// renderer is a named way to render two versions of a file.
 type renderer struct {
 	name   string
 	render func(o diff.Options) *diff.Diff
 }
 
-// renderers returns the unified and the split diff of before and after,
-// and the file after.
-func renderers(before, after string) []renderer {
+// renderers returns renderers for the unified diff and the split diff of
+// oldText and newText, and for the file view of newText.
+func renderers(oldText, newText string) []renderer {
 	return []renderer{
 		{"unified", func(o diff.Options) *diff.Diff {
-			return diff.Render("x.go", before, after, o)
+			return diff.Render("x.go", oldText, newText, o)
 		}},
 		{"split", func(o diff.Options) *diff.Diff {
 			o.Split = true
-			return diff.Render("x.go", before, after, o)
+			return diff.Render("x.go", oldText, newText, o)
 		}},
 		{"file", func(o diff.Options) *diff.Diff {
-			return diff.RenderFile("x.go", after, o)
+			return diff.RenderFile("x.go", newText, fileOptions(o))
 		}},
 	}
 }
 
-// TestRenderRowsFollowLines checks the row of each line, in each layout and
+// TestRenderRowsFollowLines checks the row of each line, that there is one
+// line for each row and that lines fit the width, in each layout and
 // theme.
 func TestRenderRowsFollowLines(t *testing.T) {
 	t.Parallel()
@@ -82,10 +92,10 @@ func TestRenderRowsFollowLines(t *testing.T) {
 			rows: []diff.Row{
 				{Kind: diff.KindHunk},
 				{Kind: diff.KindEqual, Old: 1, New: 1},
-				{Kind: diff.KindDelete, Old: 2},
-				{Kind: diff.KindInsert, New: 2},
+				{Kind: diff.KindDeleted, Old: 2},
+				{Kind: diff.KindAdded, New: 2},
 				{Kind: diff.KindEqual, Old: 3, New: 3},
-				{Kind: diff.KindInsert, New: 4},
+				{Kind: diff.KindAdded, New: 4},
 			},
 		},
 		{
@@ -94,19 +104,19 @@ func TestRenderRowsFollowLines(t *testing.T) {
 			rows: []diff.Row{
 				{Kind: diff.KindHunk},
 				{Kind: diff.KindEqual, Old: 1, New: 1},
-				{Kind: diff.KindChange, Old: 2, New: 2},
+				{Kind: diff.KindChanged, Old: 2, New: 2},
 				{Kind: diff.KindEqual, Old: 3, New: 3},
-				{Kind: diff.KindInsert, New: 4},
+				{Kind: diff.KindAdded, New: 4},
 			},
 		},
 	}
-	for ti, th := range themes {
+	for ti, theme := range themes {
 		for _, tt := range tests {
 			name := fmt.Sprintf("split %v, theme %d", tt.split, ti)
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				o := diff.Options{Split: tt.split, Width: width, Theme: th}
-				d := diff.Render("x.go", oldSrc, newSrc, o)
+				o := diff.Options{Split: tt.split, Width: width, Theme: theme}
+				d := diff.Render("x.go", oldText, newText, o)
 				if got := kinds(d.Rows); got != tt.kinds {
 					t.Errorf("kinds = %q, want %q", got, tt.kinds)
 				}
@@ -115,11 +125,11 @@ func TestRenderRowsFollowLines(t *testing.T) {
 						t.Errorf("row %d = %+v, want %+v", i, d.Rows[i], r)
 					}
 				}
-				if len(d.Lines) != len(d.Rows) {
+				if len(screenLines(d)) != len(d.Rows) {
 					t.Errorf("%d lines for %d rows, want one line for each row",
-						len(d.Lines), len(d.Rows))
+						len(screenLines(d)), len(d.Rows))
 				}
-				for i, l := range d.Lines {
+				for i, l := range screenLines(d) {
 					if w := ansi.StringWidth(l); w > width {
 						t.Errorf("line %d is %d cells wide, want %d or fewer",
 							i, w, width)
@@ -130,31 +140,31 @@ func TestRenderRowsFollowLines(t *testing.T) {
 	}
 }
 
-// TestRenderKinds checks the kinds of the rows of a diff. Equal versions
-// give no rows. A change of a tab to spaces is a change, as Count and git
-// tell.
+// TestRenderKinds checks the row kinds of a diff. Equal versions produce
+// no rows. Replacing a tab with spaces counts as a change, as it does in
+// CountLines and git.
 func TestRenderKinds(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ old, new, want string }{
-		{oldSrc, oldSrc, ""},
+		{oldText, oldText, ""},
 		{"\tx\n", "    x\n", "@-+"},
 	}
 	for _, tt := range tests {
 		d := diff.Render("x.go", tt.old, tt.new, diff.Options{Width: 80})
-		if got := kinds(d.Rows); got != tt.want || len(d.Lines) != len(d.Rows) {
+		if got := kinds(d.Rows); got != tt.want || len(screenLines(d)) != len(d.Rows) {
 			t.Errorf("Render(%q, %q): kinds %q, %d lines, want %q, one line each",
-				tt.old, tt.new, got, len(d.Lines), tt.want)
+				tt.old, tt.new, got, len(screenLines(d)), tt.want)
 		}
 	}
 }
 
-// TestRenderLineEnding checks that a change of only the line ending shows,
-// as in herdr-reviewr. The line with the CR has a ^M. A CRLF that does not
-// change shows nothing.
+// TestRenderLineEnding checks that a change to only the line ending is
+// shown, with ^M at the end of the CRLF line. An unchanged CRLF line is
+// shown as equal, without ^M.
 func TestRenderLineEnding(t *testing.T) {
 	t.Parallel()
 	d := diff.Render("x.txt", "a\nb\r\nc\r\n", "a\r\nb\nc\r\n", diff.Options{Width: 80})
-	var got []string // the kind and the last word of each row
+	var got []string // the kind and last word of each row
 	for i, r := range d.Rows {
 		words := strings.Fields(plainLine(t, d, i))
 		got = append(got, fmt.Sprintf("%c %s", "@=+-~"[r.Kind], words[len(words)-1]))
@@ -165,29 +175,29 @@ func TestRenderLineEnding(t *testing.T) {
 	}
 }
 
-// TestRenderTabsAndOffset checks that a tab becomes spaces and that Offset
-// scrolls the code.
+// TestRenderTabsAndOffset checks that a tab is shown as spaces and that
+// ScrollX scrolls the code.
 func TestRenderTabsAndOffset(t *testing.T) {
 	t.Parallel()
 	d := diff.Render("x.go", "", "\tx := 1\n", diff.Options{Width: 80})
-	if got := plainLine(t, d, 1); !strings.Contains(got, "▌     x := 1") {
-		t.Errorf("tab: line = %q, want %q in it", got, "▌     x := 1")
+	if got := plainLine(t, d, 1); !strings.Contains(got, "▎     x := 1") {
+		t.Errorf("tab: line = %q, want %q in it", got, "▎     x := 1")
 	}
-	d = diff.Render("x.go", "", "\tx := 1\n", diff.Options{Width: 80, Offset: 6})
+	d = diff.Render("x.go", "", "\tx := 1\n", diff.Options{Width: 80, ScrollX: 6})
 	got := plainLine(t, d, 1)
 	if strings.Contains(got, "x :=") || !strings.Contains(got, "= 1") {
 		t.Errorf("offset 6: line = %q, want \"= 1\" and no \"x :=\"", got)
 	}
 }
 
-// TestMarks checks the mark at the start of the code of each line, in the two
-// layouts.
+// TestMarks checks the bar or sign at the start of the code on each line,
+// in both layouts.
 func TestMarks(t *testing.T) {
 	t.Parallel()
-	const before, after = "a\nb\nc\n", "a\nB\nc\n"
-	// By default a bar marks a changed line, as in herdr-reviewr. Signs gives
-	// + and -. The mark takes two cells in both cases, so the columns do not
-	// move.
+	const oldSrc, newSrc = "a\nb\nc\n", "a\nB\nc\n"
+	// By default a bar marks a changed line, and Signs uses + and -
+	// instead. The mark is two cells wide in both cases, so the columns
+	// stay in place.
 	theme := diff.Theme{
 		Background: color.Black,
 		Green:      color.RGBA{G: 0xff, A: 0xff},
@@ -196,17 +206,17 @@ func TestMarks(t *testing.T) {
 	tests := []struct {
 		name  string
 		o     diff.Options
-		lines []string // lines under the hunk header, no colours
+		lines []string // lines below the hunk header, without colours
 	}{
 		{"unified bar", diff.Options{Width: 40}, []string{
-			" 1  1   a", " 2    ▌ b", "    2 ▌ B", " 3  3   c",
+			" 1  1   a", " 2    ▎ b", "    2 ▎ B", " 3  3   c",
 		}},
 		{"unified signs", diff.Options{Width: 40, Signs: true}, []string{
 			" 1  1   a", " 2    - b", "    2 + B", " 3  3   c",
 		}},
 		{"split bar", diff.Options{Width: 40, Split: true}, []string{
 			" 1   a               1   a",
-			" 2 ▌ b               2 ▌ B",
+			" 2 ▎ b               2 ▎ B",
 			" 3   c               3   c",
 		}},
 		{"split signs", diff.Options{Width: 40, Split: true, Signs: true}, []string{
@@ -219,47 +229,47 @@ func TestMarks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			tt.o.Theme = theme
-			d := diff.Render("x.txt", before, after, tt.o)
-			if len(d.Lines) != 1+len(tt.lines) {
-				t.Fatalf("%d lines, want %d", len(d.Lines), 1+len(tt.lines))
+			d := diff.Render("x.txt", oldSrc, newSrc, tt.o)
+			if len(screenLines(d)) != 1+len(tt.lines) {
+				t.Fatalf("%d lines, want %d", len(screenLines(d)), 1+len(tt.lines))
 			}
 			for i, want := range tt.lines {
-				got := strings.TrimRight(ansi.Strip(d.Lines[i+1]), " ")
+				got := strings.TrimRight(ansi.Strip(screenLines(d)[i+1]), " ")
 				if got != want {
 					t.Errorf("line %d = %q, want %q", i+1, got, want)
 				}
 			}
-			// The marks have the colour of their lines: ANSI red for the
-			// delete, then ANSI green for the insert.
-			got := markColours(d.Lines[1:])
+			// Each mark has the colour of its line: ANSI red for the deleted
+			// line, then ANSI green for the added line.
+			got := markColors(screenLines(d)[1:])
 			if !slices.Equal(got, []string{"31", "32"}) {
 				t.Errorf("the marks have colours %q, want 31 and 32", got)
 			}
 		})
 	}
-	// With a scroll to the right, an ellipsis shows after the bar.
-	d := diff.Render("x.txt", "", "abcdefgh\n", diff.Options{Width: 40, Offset: 2})
-	if got := plainLine(t, d, 1); !strings.Contains(got, "▌…cdefgh") {
-		t.Errorf("offset: line = %q, want ▌…cdefgh", got)
+	// When the code is scrolled to the right, an ellipsis follows the bar.
+	d := diff.Render("x.txt", "", "abcdefgh\n", diff.Options{Width: 40, ScrollX: 2})
+	if got := plainLine(t, d, 1); !strings.Contains(got, "▎…cdefgh") {
+		t.Errorf("offset: line = %q, want ▎…cdefgh", got)
 	}
-	// The review text of a comment uses + and - for both kinds of mark.
+	// A comment's review text uses + and - with either kind of mark.
 	for _, signs := range []bool{false, true} {
-		d := diff.Render("x.txt", before, after, diff.Options{Width: 40, Signs: signs})
-		got := snippet(d.Rows[2:5], before, after)
+		d := diff.Render("x.txt", oldSrc, newSrc, diff.Options{Width: 40, Signs: signs})
+		got := snippet(d.Rows[2:5], oldSrc, newSrc)
 		if want := []string{"-b", "+B", " c"}; !slices.Equal(got, want) {
 			t.Errorf("signs %v: snippet = %q, want %q", signs, got, want)
 		}
 	}
 }
 
-// markColours returns the foreground of each bar, + or - in lines, in
-// order, for example "31". The foreground is in the SGR sequence in front
-// of the mark.
-func markColours(lines []string) []string {
+// markColors returns the foreground colour code, such as "31", of each
+// bar, + or - in lines, in order. It reads the code from the SGR sequence
+// before the mark.
+func markColors(lines []string) []string {
 	var out []string
 	for _, l := range lines {
 		for {
-			i := strings.IndexAny(l, "▌+-")
+			i := strings.IndexAny(l, "▎+-")
 			if i < 0 {
 				break
 			}
@@ -272,18 +282,18 @@ func markColours(lines []string) []string {
 	return out
 }
 
-// TestSideAt checks the side of each column, and if the column is on a line
-// number.
+// TestSideAt checks the side of various columns, and whether each column
+// is on a line number.
 func TestSideAt(t *testing.T) {
 	t.Parallel()
-	// The unified layout has " 1 " old numbers, " 1 " new numbers, and the
-	// code.
-	u := diff.Render("x.go", oldSrc, newSrc, diff.Options{Width: 80})
-	// The split layout has old numbers, old code, new numbers, and new code.
+	// The unified layout has old line numbers like " 1 ", then new line
+	// numbers, then the code.
+	u := diff.Render("x.go", oldText, newText, diff.Options{Width: 80})
+	// The split layout has old numbers, old code, new numbers and new code.
 	split := diff.Options{Split: true, Width: 80}
-	s := diff.Render("x.go", oldSrc, newSrc, split)
-	// A file has line numbers, and then the code.
-	f := diff.RenderFile("x.go", oldSrc, diff.Options{Width: 80})
+	s := diff.Render("x.go", oldText, newText, split)
+	// The file view has line numbers, then the code.
+	f := diff.RenderFile("x.go", oldText, diff.FileOptions{Width: 80})
 	tests := []struct {
 		name     string
 		d        *diff.Diff
@@ -313,67 +323,127 @@ func TestSideAt(t *testing.T) {
 	}
 }
 
-// TestCount checks the numbers of added and deleted lines.
-func TestCount(t *testing.T) {
+// TestCountLines checks the counts of added and deleted lines.
+func TestCountLines(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		old, new       string
 		added, deleted int
 	}{
-		{oldSrc, newSrc, 2, 1},
+		{oldText, newText, 2, 1},
 		{"", "a\nb\n", 2, 0},
 		{"a\r\nb\r\n", "a\nb\n", 2, 2},
-		{oldSrc, oldSrc, 0, 0},
+		{oldText, oldText, 0, 0},
 	}
 	for _, tt := range tests {
-		a, d := diff.Count(tt.old, tt.new)
+		a, d := diff.CountLines(tt.old, tt.new)
 		if a != tt.added || d != tt.deleted {
-			t.Errorf("Count(%q, %q) = %d, %d, want %d, %d",
+			t.Errorf("CountLines(%q, %q) = %d, %d, want %d, %d",
 				tt.old, tt.new, a, d, tt.added, tt.deleted)
 		}
 	}
 }
 
-// TestRenderFile checks the line numbers and the rows of a file.
+// TestManySpreadEdits checks that a file with many changes spread through
+// it gets a diff of just those changes, as git finds. The diff of a
+// 10,000-line file with 100 one-line edits once marked thousands of equal
+// lines as changed. The 50,000-line files use the fast diff.
+func TestManySpreadEdits(t *testing.T) {
+	t.Parallel()
+	for _, size := range []struct{ lines, edits int }{{10_000, 100}, {10_000, 1000}, {50_000, 100}, {50_000, 1000}} {
+		t.Run(fmt.Sprint(size.lines, "x", size.edits), func(t *testing.T) {
+			t.Parallel()
+			var o, n strings.Builder
+			every := size.lines / size.edits
+			for i := range size.lines {
+				line := fmt.Sprintf("line %d\n", i)
+				o.WriteString(line)
+				if i%every == every/2 {
+					line = fmt.Sprintf("edited %d\n", i)
+				}
+				n.WriteString(line)
+			}
+			oldSrc, newSrc := o.String(), n.String()
+			want := size.edits
+			if a, d := diff.CountLines(oldSrc, newSrc); a != want || d != want {
+				t.Errorf("CountLines = +%d -%d, want +%d -%d", a, d, want, want)
+			}
+			// Only the rows are needed, so the lines are not rendered.
+			u := diff.Render("x.txt", oldSrc, newSrc, diff.Options{Width: 80})
+			if a, d := countKind(u.Rows, diff.KindAdded), countKind(u.Rows, diff.KindDeleted); a != want || d != want {
+				t.Errorf("unified: %d added and %d deleted rows, want %d and %d", a, d, want, want)
+			}
+			s := diff.Render("x.txt", oldSrc, newSrc, diff.Options{Width: 80, Split: true})
+			if c := countKind(s.Rows, diff.KindChanged); c != want {
+				t.Errorf("split: %d changed rows, want %d", c, want)
+			}
+		})
+	}
+}
+
+// countKind returns the number of rows of kind k.
+func countKind(rows []diff.Row, k diff.Kind) int {
+	n := 0
+	for _, r := range rows {
+		if r.Kind == k {
+			n++
+		}
+	}
+	return n
+}
+
+// TestFewValues checks that the counts of a large diff of lines with few
+// distinct values match the rows of its rendered diff.
+func TestFewValues(t *testing.T) {
+	t.Parallel()
+	oldSrc, newSrc := fewValues(25_000)
+	a, d := diff.CountLines(oldSrc, newSrc)
+	u := diff.Render("x.txt", oldSrc, newSrc, diff.Options{Width: 80})
+	if ra, rd := countKind(u.Rows, diff.KindAdded), countKind(u.Rows, diff.KindDeleted); ra != a || rd != d {
+		t.Errorf("the diff has %d added and %d deleted rows, but CountLines = +%d -%d", ra, rd, a, d)
+	}
+}
+
+// TestRenderFile checks the line numbers and rows of a rendered file.
 func TestRenderFile(t *testing.T) {
 	t.Parallel()
 	src := "package x\n\nfunc f() {\n\treturn\n}\n"
-	d := diff.RenderFile("x.go", src, diff.Options{Width: 14})
-	if len(d.Lines) != 5 || len(d.Rows) != 5 {
+	d := diff.RenderFile("x.go", src, diff.FileOptions{Width: 14})
+	if len(screenLines(d)) != 5 || len(d.Rows) != 5 {
 		t.Fatalf("RenderFile: %d lines and %d rows, want 5",
-			len(d.Lines), len(d.Rows))
+			len(screenLines(d)), len(d.Rows))
 	}
 	if d.Rows[3] != (diff.Row{Kind: diff.KindEqual, Old: 4, New: 4}) {
 		t.Errorf("row 3 = %+v, want %+v",
 			d.Rows[3], diff.Row{Kind: diff.KindEqual, Old: 4, New: 4})
 	}
-	if got := ansi.Strip(d.Lines[2]); got != " 3  func f() {" {
+	if got := ansi.Strip(screenLines(d)[2]); got != " 3  func f() {" {
 		t.Errorf("line 2 = %q, want %q", got, " 3  func f() {")
 	}
-	if got := ansi.Strip(d.Lines[0]); got != " 1  package x" {
+	if got := ansi.Strip(screenLines(d)[0]); got != " 1  package x" {
 		t.Errorf("line 0 = %q, want %q", got, " 1  package x")
 	}
 }
 
-// TestWrap checks that a wrapped long line shows all of its text and fits the
-// width.
+// TestWrap checks that a wrapped long line shows all of its text and fits
+// the width.
 func TestWrap(t *testing.T) {
 	t.Parallel()
 	long := "x := []string{" + strings.Repeat(`"word", `, 12) + "}"
-	before, after := "a\nb\n", "a\n"+long+"\nb\n"
+	oldSrc, newSrc := "a\nb\n", "a\n"+long+"\nb\n"
 	const width = 40
-	for _, tt := range renderers(before, after) {
+	for _, tt := range renderers(oldSrc, newSrc) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			cut := tt.render(diff.Options{Width: width})
 			d := tt.render(diff.Options{Width: width, Wrap: true})
-			if len(d.Lines) != len(d.Rows) || len(d.Lines) <= len(cut.Lines) {
+			if len(screenLines(d)) != len(d.Rows) || len(screenLines(d)) <= len(screenLines(cut)) {
 				t.Fatalf("%d lines and %d rows, "+
 					"want more than the %d lines without wrap",
-					len(d.Lines), len(d.Rows), len(cut.Lines))
+					len(screenLines(d)), len(d.Rows), len(screenLines(cut)))
 			}
 			var text strings.Builder
-			for i, l := range d.Lines {
+			for i, l := range screenLines(d) {
 				if w := ansi.StringWidth(l); w > width {
 					t.Errorf("line %d is %d cells wide, want %d or fewer",
 						i, w, width)
@@ -382,8 +452,7 @@ func TestWrap(t *testing.T) {
 				if r.New == 2 {
 					text.WriteString(ansi.Strip(l))
 				}
-				// A continued row points at the same source lines as the
-				// row above.
+				// A continued row has the same source lines as the row above.
 				prev := d.Rows[max(i-1, 0)]
 				sameLines := prev.Old == r.Old && prev.New == r.New
 				if r.Continued && !sameLines {
@@ -398,8 +467,8 @@ func TestWrap(t *testing.T) {
 				t.Errorf("wrapped lines = \n%s\nwant all of:\n%s",
 					text.String(), long)
 			}
-			// Wrap does not change the snippet of a comment.
-			got, want := snippet(d.Rows, before, after), snippet(cut.Rows, before, after)
+			// Wrapping does not change a comment's diff lines.
+			got, want := snippet(d.Rows, oldSrc, newSrc), snippet(cut.Rows, oldSrc, newSrc)
 			if !slices.Equal(got, want) {
 				t.Errorf("snippet with wrap = %q, want %q", got, want)
 			}
@@ -407,14 +476,15 @@ func TestWrap(t *testing.T) {
 	}
 }
 
-// TestCache checks that a shared [diff.Cache] gives the same lines as no
-// cache. It tries other offsets, other languages, and new content.
+// TestCache checks that renders sharing a [diff.Cache] return the same
+// lines as renders without one, as the scroll offset, language and content
+// change.
 func TestCache(t *testing.T) {
 	t.Parallel()
 	const src = "def f(): # a comment\n\treturn 1\n"
 	tests := []struct {
 		path, old, new string
-		file           bool // RenderFile, of new
+		file           bool // use RenderFile on new
 		offset         int
 	}{
 		{path: "a.go", old: src, new: src + "x\n"},
@@ -427,15 +497,38 @@ func TestCache(t *testing.T) {
 	var c diff.Cache
 	for _, tt := range tests {
 		render := func(c *diff.Cache) []string {
-			o := diff.Options{Width: 40, Offset: tt.offset, Cache: c}
+			o := diff.Options{Width: 40, ScrollX: tt.offset, Cache: c}
 			if tt.file {
-				return diff.RenderFile(tt.path, tt.new, o).Lines
+				return screenLines(diff.RenderFile(tt.path, tt.new, fileOptions(o)))
 			}
-			return diff.Render(tt.path, tt.old, tt.new, o).Lines
+			return screenLines(diff.Render(tt.path, tt.old, tt.new, o))
 		}
 		if got, want := render(&c), render(nil); !slices.Equal(got, want) {
 			t.Errorf("%+v: lines with the cache = \n%q\nwant:\n%q",
 				tt, got, want)
+		}
+	}
+}
+
+// TestNoNewline checks that a changed last line without a line ending is
+// marked, and that an unchanged one is not.
+func TestNoNewline(t *testing.T) {
+	t.Parallel()
+	const mark = `\ No newline at end of file`
+	d := diff.Render("x.txt", "a\nb", "a\nb\n", diff.Options{Width: 80})
+	var marked []string
+	for i := range screenLines(d) {
+		if l := plainLine(t, d, i); strings.Contains(l, mark) {
+			marked = append(marked, l)
+		}
+	}
+	if len(marked) != 1 || !strings.Contains(marked[0], "b") {
+		t.Errorf("Render(%q, %q) marks %q, want only the deleted b", "a\nb", "a\nb\n", marked)
+	}
+	d = diff.Render("x.txt", "a\nb", "c\nb", diff.Options{Width: 80})
+	for i := range screenLines(d) {
+		if l := plainLine(t, d, i); strings.Contains(l, mark) {
+			t.Errorf("Render(%q, %q) line %d = %q, want no mark on the equal b", "a\nb", "c\nb", i, l)
 		}
 	}
 }

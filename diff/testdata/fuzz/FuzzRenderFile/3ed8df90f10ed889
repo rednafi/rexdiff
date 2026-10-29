@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\f')
+string("0\x8b")
+byte('/')
+byte('\x05')
+byte('z')
+bool(false)

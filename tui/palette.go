@@ -9,16 +9,23 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// requestPalette asks the terminal for its ANSI red and green (OSC 4), as
-// the system theme of pi does. Bubble Tea has no command for this request.
-// Bubble Tea gives the replies to Update as unknown OSC events.
+// The ANSI palette indices of red and green, which [requestPalette] asks
+// for.
+const (
+	paletteRed   = 1
+	paletteGreen = 2
+)
+
+// requestPalette asks the terminal for its ANSI red and green (OSC 4).
+// Bubble Tea has no command for this, and passes the replies to Update as
+// unknown OSC events.
 func requestPalette() tea.Msg {
 	return tea.RawMsg{Msg: "\x1b]4;1;?\x07\x1b]4;2;?\x07"}
 }
 
-// paletteReply returns the index and the colour in an OSC 4 reply, such
-// as "\x1b]4;1;rgb:ffff/0000/0000\x07". If s is not such a reply, ok is
-// false.
+// paletteReply returns the palette index and colour in an OSC 4 reply,
+// such as "\x1b]4;1;rgb:ffff/0000/0000\x07". ok is false if s is not such
+// a reply.
 func paletteReply(s string) (i int, c color.Color, ok bool) {
 	s, ok = strings.CutPrefix(s, "\x1b]4;")
 	if !ok {
@@ -39,16 +46,17 @@ func paletteReply(s string) (i int, c color.Color, ok bool) {
 	return i, c, true
 }
 
-// onPalette takes the red or the green from an OSC 4 reply.
+// onPalette stores the red or green colour from an OSC 4 reply and renders
+// again if it changed.
 func (m *model) onPalette(reply string) {
 	i, c, ok := paletteReply(reply)
 	if !ok {
 		return
 	}
 	switch {
-	case i == 1 && !sameColor(m.red, c):
+	case i == paletteRed && !sameColor(m.red, c):
 		m.red = c
-	case i == 2 && !sameColor(m.green, c):
+	case i == paletteGreen && !sameColor(m.green, c):
 		m.green = c
 	default:
 		return

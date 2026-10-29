@@ -13,11 +13,12 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/rednafi/rexdiff/internal/proc"
 )
 
-// Commit is a commit in the log.
+// Commit is a commit in the history of HEAD.
 type Commit struct {
 	SHA, Short string
 	Subject    string
@@ -25,28 +26,33 @@ type Commit struct {
 	When       string // the relative date, for example "2 hours ago"
 }
 
-// LastCommits is the number of commits that [Repo.Commits] returns with no
-// since.
-const LastCommits = 50
+// Limits on the number of commits that [Repo.Commits] returns.
+const (
+	// LastCommits is the number of commits when since is "".
+	LastCommits = 50
+	// MaxCommits is the most commits when since is not "".
+	MaxCommits = 1000
+)
 
-// Commits returns the first-parent commits of HEAD after the commit since,
-// the newest first, as herdr-reviewr lists them. If since is "", it returns
-// the last [LastCommits] commits. A HEAD with no commit yet has no commits.
+// Commits returns the first-parent commits of HEAD that come after the
+// commit since, newest first, up to [MaxCommits] of them. If since is "",
+// it returns the last [LastCommits] commits. If HEAD has no commits yet,
+// it returns none.
 func (r *Repo) Commits(ctx context.Context, since string) ([]Commit, error) {
-	// The subject is last, because it can have the separator.
+	// The subject comes last, because it can contain the separator.
 	const (
 		format  = "--format=%H%x1f%h%x1f%ar%x1f%an%x1f%s"
 		nFields = 5 // the number of fields in format
 	)
 	_, err := r.run(ctx, nil, "rev-parse", "-q", "--verify", "HEAD")
-	if exitedOne(err) {
+	if isExitOne(err) {
 		return nil, nil
 	}
 	args := []string{"log", "--first-parent", format}
 	if since == "" {
 		args = append(args, "-n", strconv.Itoa(LastCommits), "--end-of-options", "HEAD")
 	} else {
-		args = append(args, "--end-of-options", since+"..HEAD")
+		args = append(args, "-n", strconv.Itoa(MaxCommits), "--end-of-options", since+"..HEAD")
 	}
 	out, err := r.run(ctx, nil, args...)
 	if err != nil {
@@ -69,17 +75,17 @@ func (r *Repo) Commits(ctx context.Context, since string) ([]Commit, error) {
 	return cs, nil
 }
 
-// Branches returns the names of the local branches and of the branches
-// of origin, the newest commit first, as herdr-reviewr lists them. A
-// branch of origin, for example "origin/main", hides the local branch
-// with the same name.
+// Branches returns the names of the local branches and of the branches on
+// origin, ordered by their latest commit, newest first. A branch on
+// origin, for example "origin/main", hides the local branch with the same
+// name.
 func (r *Repo) Branches(ctx context.Context) ([]string, error) {
 	out, err := r.run(ctx, nil, "for-each-ref", "--sort=-committerdate",
 		"--format=%(refname)", "refs/remotes/origin", "refs/heads")
 	if err != nil {
 		return nil, err
 	}
-	refs := strings.Fields(out) // a ref name has no space
+	refs := strings.Fields(out) // a ref name cannot contain a space
 	onOrigin := map[string]bool{}
 	for _, ref := range refs {
 		if name, ok := strings.CutPrefix(ref, "refs/remotes/origin/"); ok {
@@ -100,31 +106,32 @@ func (r *Repo) Branches(ctx context.Context) ([]string, error) {
 	return bs, nil
 }
 
-// DefaultBase returns the default branch of the repository. This is the
-// target of origin/HEAD if it exists, or the first that exists of main,
-// master, trunk, origin/main, and origin/master. If there is none, it
-// returns "HEAD".
+// DefaultBase returns the default branch of the repository: the branch
+// that origin/HEAD points to, or else the first of main, master, trunk,
+// origin/main and origin/master that exists. If none exists, it returns
+// "HEAD".
 func (r *Repo) DefaultBase(ctx context.Context) string {
 	if ref, err := r.run(ctx, nil, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
-		// fetch --prune can leave the symbolic ref without a target.
+		// git fetch --prune can delete the branch that the symbolic ref
+		// points to.
 		ref = strings.TrimSpace(ref)
-		if _, err := r.Resolve(ctx, ref); err == nil {
+		if _, err := r.ResolveRev(ctx, ref); err == nil {
 			return ref
 		}
 	}
 	for _, b := range []string{"main", "master", "trunk", "origin/main", "origin/master"} {
-		if _, err := r.Resolve(ctx, b); err == nil {
+		if _, err := r.ResolveRev(ctx, b); err == nil {
 			return b
 		}
 	}
 	return "HEAD"
 }
 
-// Branch returns the name of the branch that HEAD points to. With a
-// detached HEAD, it returns "HEAD".
+// Branch returns the name of the branch that HEAD points to. If HEAD is
+// detached, it returns "HEAD".
 func (r *Repo) Branch(ctx context.Context) (string, error) {
 	out, err := r.run(ctx, nil, "symbolic-ref", "--quiet", "--short", "HEAD")
-	if exitedOne(err) {
+	if isExitOne(err) {
 		return "HEAD", nil
 	}
 	if err != nil {
@@ -133,8 +140,8 @@ func (r *Repo) Branch(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// remoteURL returns the URL of the remote "upstream", so that forks work, or
-// else of the remote "origin". If there is no remote, it returns "".
+// remoteURL returns the URL of the remote "upstream", or of "origin" if
+// there is no upstream. If neither remote exists, it returns "".
 func (r *Repo) remoteURL(ctx context.Context) string {
 	for _, name := range []string{"upstream", "origin"} {
 		if u, err := r.run(ctx, nil, "remote", "get-url", name); err == nil {
@@ -144,8 +151,9 @@ func (r *Repo) remoteURL(ctx context.Context) string {
 	return ""
 }
 
-// Editor returns the editor that git uses (core.editor), or "".
-func (r *Repo) Editor(ctx context.Context) string {
+// GitEditor returns the editor that git is configured to use
+// (core.editor), or "" if it is not set.
+func (r *Repo) GitEditor(ctx context.Context) string {
 	out, _ := r.run(ctx, nil, "config", "core.editor")
 	return strings.TrimSpace(out)
 }
@@ -153,24 +161,34 @@ func (r *Repo) Editor(ctx context.Context) string {
 // Entry is a path in the working tree.
 type Entry struct {
 	Path string
-	// Ignored is true if git ignores the path. An ignored directory has one
-	// entry, with a slash at the end of its path.
+	// Ignored is true if git ignores the path. An ignored directory appears
+	// as a single entry whose path ends with a slash.
 	Ignored bool
 }
 
-// listArgs are the arguments of git ls-files that list the tracked and
-// the untracked files. In a merge conflict, git lists a path once for each
-// stage. --deduplicate lists it once.
-var listArgs = []string{"-co", "--deduplicate", "--exclude-standard"}
+// lsFilesArgs are the git ls-files arguments that list the tracked and
+// untracked files. --deduplicate lists a file with a merge conflict once,
+// not once for each conflict stage.
+var lsFilesArgs = []string{"-co", "--deduplicate", "--exclude-standard"}
 
-// Files returns the tracked and the untracked files, and the ignored paths,
-// sorted by path.
+// Files returns the tracked files, the untracked files and the ignored
+// paths, sorted by path. It leaves out tracked files that were deleted
+// from the working tree, because there is nothing to show for them; the
+// diff still shows the deletion.
 func (r *Repo) Files(ctx context.Context) ([]Entry, error) {
+	gone, err := r.lsFiles(ctx, "-d")
+	if err != nil {
+		return nil, err
+	}
+	deleted := make(map[string]bool, len(gone))
+	for _, p := range gone {
+		deleted[p] = true
+	}
 	lists := []struct {
 		args    []string
 		ignored bool
 	}{
-		{listArgs, false},
+		{lsFilesArgs, false},
 		{[]string{"-oi", "--exclude-standard", "--directory"}, true},
 	}
 	var es []Entry
@@ -180,6 +198,9 @@ func (r *Repo) Files(ctx context.Context) ([]Entry, error) {
 			return nil, err
 		}
 		for _, p := range ps {
+			if !l.ignored && deleted[p] {
+				continue
+			}
 			es = append(es, Entry{Path: p, Ignored: l.ignored})
 		}
 	}
@@ -190,10 +211,9 @@ func (r *Repo) Files(ctx context.Context) ([]Entry, error) {
 }
 
 // IgnoredDir returns the entries of the ignored directory dir, sorted by
-// name. It reads them from the disk, as herdr-reviewr does, because git
-// lists an ignored directory as one path. The path of a directory ends
-// with a slash, as in [Repo.Files]. A directory that it cannot read has
-// no entries.
+// name. It reads them from disk, because git lists an ignored directory as
+// a single path. As in [Repo.Files], the path of a directory ends with a
+// slash. If it cannot read dir, it returns nil.
 func (r *Repo) IgnoredDir(dir string) []Entry {
 	des, err := os.ReadDir(filepath.Join(r.root, filepath.FromSlash(dir)))
 	if err != nil {
@@ -210,30 +230,30 @@ func (r *Repo) IgnoredDir(dir string) []Entry {
 	return es
 }
 
-// Match is a line that [Repo.Grep] finds.
+// Match is a line that [Repo.Grep] found.
 type Match struct {
 	Path string
-	Line int    // the line number, from 1
-	Text string // the line, without the leading and trailing space
+	Line int // the line number, starting at 1
+	// Text is the line, with leading and trailing white space removed. Of
+	// a line longer than 512 bytes, it holds only the start.
+	Text string
 }
 
-// Grep returns at most limit lines of the tracked and the untracked files
-// that contain the text q. The search ignores binary files. As in
-// herdr-reviewr, it has smart case. A q with an upper case letter matches
-// only the same case. Else the search ignores case. When it finds limit
-// lines, it stops git, and more is true if there are others.
-//
-// After the time budget, Grep stops git when it has a line, and returns
-// the lines with more set to true. At the deadline of ctx, Grep stops git
-// and returns the lines that it finds before it, with more set to true.
+// maxGrepLineBytes is the most bytes of a line that [Repo.Grep] keeps.
+const maxGrepLineBytes = 512
+
+// Grep returns up to limit lines of the tracked and untracked non-binary
+// files that contain the literal text q, ignoring case unless q has an
+// upper case letter. After budget, Grep stops once it has found a line,
+// and at the deadline of ctx it returns the lines found so far. more is
+// true then, or if more lines match than Grep returns.
 func (r *Repo) Grep(ctx context.Context, q string, limit int, budget time.Duration) (ms []Match, more bool, err error) {
 	if strings.Contains(q, "\n") {
-		// git reads each line of q as a pattern. A match is one line, so no
-		// match can have the newline of q.
+		// A match is a single line, so it cannot contain a newline.
 		return nil, false, nil
 	}
-	// --no-column overrides the git setting grep.column. That setting adds a
-	// field to each match.
+	// --no-column overrides the grep.column setting, which adds a field to
+	// each match.
 	args := []string{"grep", "-n", "--no-column", "-z", "-I", "-F", "--untracked", "--no-color"}
 	if !strings.ContainsFunc(q, unicode.IsUpper) {
 		args = append(args, "-i")
@@ -244,13 +264,13 @@ func (r *Repo) Grep(ctx context.Context, q string, limit int, budget time.Durati
 		return nil, false, err
 	}
 	if err := cmd.Start(); err != nil {
-		if pastDeadline(ctx) {
+		if isPastDeadline(ctx) {
 			return nil, true, nil
 		}
 		return nil, false, fmt.Errorf("git grep: %w", proc.Error(ctx, "git", err, nil))
 	}
-	// Past the budget, Grep stops git if it has a line, or else at the
-	// next line.
+	// Once budget has passed, stop git if it has found a line, or else as
+	// soon as it finds one.
 	var found, late, killed atomic.Bool
 	timer := time.AfterFunc(budget, func() {
 		late.Store(true)
@@ -270,9 +290,9 @@ func (r *Repo) Grep(ctx context.Context, q string, limit int, budget time.Durati
 	}
 	err = cmd.Wait()
 	switch {
-	case err == nil, more, exitedOne(err): // done, stopped, or no match
+	case err == nil, more, isExitOne(err): // finished, stopped early, or no match
 		return ms, more, nil
-	case pastDeadline(ctx):
+	case isPastDeadline(ctx):
 		return ms, true, nil
 	case ctx.Err() != nil:
 		return nil, false, context.Cause(ctx)
@@ -280,28 +300,29 @@ func (r *Repo) Grep(ctx context.Context, q string, limit int, budget time.Durati
 	return nil, false, fmt.Errorf("git grep: %w", proc.Error(ctx, "git", err, stderr.Bytes()))
 }
 
-// pastDeadline reports whether ctx ends at its deadline.
-func pastDeadline(ctx context.Context) bool {
+// isPastDeadline reports whether ctx ended because its deadline passed.
+func isPastDeadline(ctx context.Context) bool {
 	return errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
 
-// readMatches reads at most limit matches of "git grep -n -z". Each match
-// is "path NUL line NUL text LF". Only the text ends with a newline,
-// because the path can have a newline. After each match, a true stop ends
-// the read. more is true if there is more output.
+// readMatches reads up to limit matches from the output of
+// "git grep -n -z". Each match is "path NUL line NUL text LF". Only the
+// text is ended by a newline, because the path can contain one. readMatches
+// calls stop after each match and returns early if it reports true. more
+// is true if there is more output.
 func readMatches(r *bufio.Reader, limit int, stop func() bool) (ms []Match, more bool) {
 	for len(ms) < limit {
 		path, err := r.ReadString(0)
 		if err != nil {
 			return ms, false
 		}
-		// A cut at the deadline can end the output in a record. Such a
-		// record is not a match.
+		// Stopping git at the deadline can cut off the last record. An
+		// incomplete record is not a match.
 		num, err := r.ReadString(0)
 		if err != nil {
 			return ms, true
 		}
-		text, err := r.ReadString('\n')
+		text, err := readStart(r, maxGrepLineBytes)
 		if err != nil {
 			return ms, true
 		}
@@ -319,63 +340,90 @@ func readMatches(r *bufio.Reader, limit int, stop func() bool) (ms []Match, more
 	return ms, err == nil
 }
 
-// The refs that keep the choices of rexdiff. git keeps a ref under
-// refs/worktree/ for each worktree.
+// readStart reads up to and including the next newline, and returns the
+// first n bytes of what it read, without cutting a UTF-8 character in
+// two. It keeps no more than that of a long line in memory.
+func readStart(r *bufio.Reader, n int) (string, error) {
+	var b []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if len(b)+len(chunk) > n {
+			b = append(b, chunk[:n-len(b)]...)
+			// Drop the start of a character that the cut leaves incomplete.
+			k := len(b) - 1
+			for k > 0 && len(b)-k < utf8.UTFMax && !utf8.RuneStart(b[k]) {
+				k--
+			}
+			if k >= 0 && !utf8.FullRune(b[k:]) {
+				b = b[:k]
+			}
+			n = len(b) // keep nothing more of this line
+		} else {
+			b = append(b, chunk...)
+		}
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return string(b), err
+		}
+	}
+}
+
+// Refs where rexdiff saves the user's choices. Refs under refs/worktree/
+// are separate for each worktree.
 const (
 	baseRef = "refs/worktree/rexdiff/base-pick"
 	turnRef = "refs/worktree/rexdiff/turn-base"
 )
 
-// SavedBase returns the base that [Repo.SaveBase] keeps for this worktree.
-// It returns "" if no base is saved, or if the saved value is not a ref
-// name.
+// SavedBase returns the base that [Repo.SaveBase] saved for this worktree.
+// It returns "" if no base is saved or if the saved value is not a valid
+// ref name.
 func (r *Repo) SavedBase(ctx context.Context) string {
 	out, err := r.run(ctx, nil, "cat-file", "blob", baseRef)
 	name := strings.TrimSpace(out)
-	if err != nil || !refShaped(name) {
+	if err != nil || !isRefName(name) {
 		return ""
 	}
 	return name
 }
 
-// refShaped reports whether s is one line of printable text that is not a
-// git option, as herdr-reviewr checks a saved base.
-func refShaped(s string) bool {
+// isRefName reports whether s is non-empty printable text with no spaces
+// or control characters that git cannot mistake for an option.
+func isRefName(s string) bool {
 	return s != "" && !strings.HasPrefix(s, "-") &&
 		!strings.ContainsFunc(s, func(c rune) bool { return c <= ' ' || c == 0x7f })
 }
 
-// SaveBase keeps name as the base of this worktree. For the default branch
-// ([Repo.DefaultBase]), it deletes the saved base.
+// SaveBase saves name as the base branch for this worktree. If name is the
+// default branch ([Repo.DefaultBase]), it deletes the saved base instead.
 func (r *Repo) SaveBase(ctx context.Context, name string) error {
 	if name == r.DefaultBase(ctx) {
 		return r.deleteRef(ctx, baseRef)
 	}
-	if !refShaped(name) {
+	if !isRefName(name) {
 		return fmt.Errorf("bad base %q", name)
 	}
-	blob, err := r.runInput(ctx, nil, strings.NewReader(name),
+	blobID, err := r.runInput(ctx, nil, strings.NewReader(name),
 		"hash-object", "-w", "--stdin")
 	if err != nil {
 		return err
 	}
-	_, err = r.run(ctx, nil, "update-ref", baseRef, strings.TrimSpace(blob))
+	_, err = r.run(ctx, nil, "update-ref", baseRef, strings.TrimSpace(blobID))
 	return err
 }
 
-// SavedTurn returns the tree that [Repo.SaveTurn] keeps for this worktree.
-// It returns "" if no tree is saved, or if git cannot resolve the ref.
+// SavedTurn returns the tree that [Repo.SaveTurn] saved for this worktree.
+// It returns "" if no tree is saved or if git cannot resolve the ref.
 func (r *Repo) SavedTurn(ctx context.Context) string {
-	tree, err := r.Resolve(ctx, turnRef)
+	tree, err := r.ResolveRev(ctx, turnRef)
 	if err != nil {
 		return ""
 	}
 	return tree
 }
 
-// SaveTurn keeps tree as the tree at the start of the last turn in this
-// worktree. The ref keeps the tree from git gc. An empty tree deletes the
-// saved tree.
+// SaveTurn saves tree as the state of this worktree at the start of the
+// agent's last turn. The ref stops git gc from deleting the tree. An empty
+// tree deletes the saved tree.
 func (r *Repo) SaveTurn(ctx context.Context, tree string) error {
 	if tree == "" {
 		return r.deleteRef(ctx, turnRef)
@@ -384,7 +432,7 @@ func (r *Repo) SaveTurn(ctx context.Context, tree string) error {
 	return err
 }
 
-// deleteRef deletes ref. A missing ref is no error.
+// deleteRef deletes ref. It is not an error if ref does not exist.
 func (r *Repo) deleteRef(ctx context.Context, ref string) error {
 	_, err := r.run(ctx, nil, "update-ref", "-d", ref)
 	return err

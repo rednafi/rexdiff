@@ -1,59 +1,63 @@
-// Package turn finds the start and the end of each turn of the agents in
-// a repository, from the states of the agents. A turn starts when the
-// agents go from rest to work. It ends when they rest again. The rules
-// come from herdr-reviewr.
+// Package turn detects the start and end of each turn of the agents in a
+// repository, based on the agents' states. A turn starts when the agents
+// go from resting to working, and ends when they rest again.
 package turn
 
-import "slices"
+import (
+	"slices"
 
-// state is the work state of a repository. fold makes it from the states
-// of all the agents in the repository.
+	"github.com/rednafi/rexdiff/rex"
+)
+
+// state is the work state of a repository. combine computes it from the
+// states of all agents in the repository.
 type state int
 
 const (
-	// stateResting tells that each agent rests, or that there is no agent.
+	// stateResting means that every agent is resting, or that there are no
+	// agents.
 	stateResting state = iota
-	// stateWorking tells that at least one agent works.
+	// stateWorking means that at least one agent is working.
 	stateWorking
-	// stateHeld tells that no agent works, but one does not rest. For
-	// example, it waits at a prompt. A turn that is open stays open.
+	// stateHeld means that no agent is working but at least one is not
+	// resting, for example because it waits at a prompt. An open turn stays
+	// open.
 	stateHeld
 )
 
-// rests reports whether s is a state between turns. A blocked agent and an
-// unknown state are in the middle of a turn.
-func rests(s string) bool { return s == "idle" || s == "done" }
+// isResting reports whether s is a state between turns. A blocked or
+// unknown state counts as part of a turn.
+func isResting(s rex.State) bool { return s == rex.StateIdle || s == rex.StateDone }
 
-// fold returns the state of a repository whose agents are in the states
-// states. One working agent makes the repository work.
-func fold(states ...string) state {
-	if slices.Contains(states, "working") {
+// combine returns the state of a repository whose agents are in the given
+// states. A single working agent puts the repository in stateWorking.
+func combine(states ...rex.State) state {
+	if slices.Contains(states, rex.StateWorking) {
 		return stateWorking
 	}
-	if slices.ContainsFunc(states, func(s string) bool { return !rests(s) }) {
+	if slices.ContainsFunc(states, func(s rex.State) bool { return !isResting(s) }) {
 		return stateHeld
 	}
 	return stateResting
 }
 
-// Tracker finds the start and the end of each turn in a series of states.
+// Tracker detects the start and end of each turn in a sequence of states.
 // The zero Tracker is ready to use.
 type Tracker struct {
-	// prevResting is true if the last state is resting. It is false at
-	// first, so the first state starts no turn.
+	// prevResting is true if the previous state was resting. It starts
+	// false, so the first state never starts a turn.
 	prevResting bool
-	// worked is true if the repository works after its last rest. An end
-	// can come through held, but a start cannot. Thus the two edges keep
-	// different memories.
+	// worked is true if the repository has worked since its last rest. It
+	// stays set while held, because a turn can end after a held state.
 	worked bool
 }
 
-// Observe takes the states of all the agents in the repository at one
-// time. The states are those of the OSC 7501 protocol, for example
-// "idle". A turn starts when one agent works after all rest. A turn ends
-// when all rest after work, also through a prompt.
-func (t *Tracker) Observe(states ...string) (started, ended bool) {
-	s := fold(states...)
+// Observe records the states of all agents in the repository at one
+// moment. It reports whether a turn starts or ends. A turn starts when an
+// agent starts working after all agents were resting. It ends when all
+// agents rest after work, even if a held state came in between.
+func (t *Tracker) Observe(states ...rex.State) (started, ended bool) {
+	s := combine(states...)
 	started = s == stateWorking && t.prevResting
 	ended = t.worked && s == stateResting
 	t.prevResting = s == stateResting
@@ -66,6 +70,6 @@ func (t *Tracker) Observe(states ...string) (started, ended bool) {
 	return started, ended
 }
 
-// Gap tells the Tracker that nobody sees the agents for some time. Then
-// the next state cannot start a turn.
-func (t *Tracker) Gap() { t.prevResting = false }
+// MarkGap tells t that the agents were not observed for some time, so the
+// next state cannot start a turn.
+func (t *Tracker) MarkGap() { t.prevResting = false }

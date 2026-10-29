@@ -8,6 +8,11 @@ stderr '^usage: rexdiff'
 ! exec rexdiff -nope
 stderr -count=1 'flag provided but not defined: -nope'
 
+# A -log FIFO with no reader is an error at once, not a wait for a reader.
+exec mkfifo fifo
+! exec rexdiff -log fifo repo
+stderr '^rexdiff: open log fifo: the FIFO has no reader, start one first$'
+
 # -check checks the settings without a repository, for the Rex action.
 ! exec rexdiff -check -config '{"layuot": "split"}'
 stderr '^rexdiff: config: unknown key "layuot"$'
@@ -23,6 +28,39 @@ exec rexdiff -check -config '{"keybindings": {"list-wider": ["W"], "preview": ["
 ! exec rexdiff -check -config '{"keybindings": {"rendered": ["M"], "preview": ["P"]}}'
 stderr '^rexdiff: config: invalid value for keybindings: "rendered" and "preview" name the same action$'
 
+# The names of the settings and of the actions are those of herdr-reviewr.
+exec rexdiff -check -config '{"keybindings": {"next-hunk": ["x"], "send": ["S"], "navigator-hide": ["Z"], "keys": ["H"]}, "file_list": "left", "file_list_width": 40, "url_opener": "open {url}"}'
+! exec rexdiff -check -config '{"file_list_width": 3}'
+stderr '^rexdiff: config: invalid value for file_list_width: expected 16 or more, not "3"$'
+! exec rexdiff -check -config '{"keybindings": {"down": ["bogus"]}}'
+stderr '^rexdiff: config: invalid value for keybindings.down: expected a list of keys'
+! exec rexdiff -check -config '{"keybindings": {"down": ["x"], "up": ["x"]}}'
+stderr '^rexdiff: config: invalid value for keybindings: "x" is bound to both "down" and "up"$'
+! exec rexdiff -check -config '{"keybindings": {"down": ["x", "x"]}}'
+stderr '^rexdiff: config: invalid value for keybindings: "x" is bound twice to "down"$'
+! exec rexdiff -check -config '{"keybindings": {"down": ["U"]}}'
+stderr '^rexdiff: config: invalid value for keybindings: "U" is bound to both "down" and "update"$'
+! exec rexdiff -check -config '{"keybindings": {"next-hunk": ["j"]}}'
+stderr '^rexdiff: config: invalid value for keybindings: "j" is bound to both "down" and "next-hunk"$'
+
+# Other names of the settings and of the actions are unknown keys.
+! exec rexdiff -check -config '{"list_position": "left"}'
+stderr '^rexdiff: config: unknown key "list_position"$'
+! exec rexdiff -check -config '{"list_width": 40}'
+stderr '^rexdiff: config: unknown key "list_width"$'
+! exec rexdiff -check -config '{"browser": "open {url}"}'
+stderr '^rexdiff: config: unknown key "browser"$'
+! exec rexdiff -check -config '{"keybindings": {"move-down": ["x"]}}'
+stderr '^rexdiff: config: unknown key "keybindings.move-down"$'
+! exec rexdiff -check -config '{"keybindings": {"next-change": ["x"]}}'
+stderr '^rexdiff: config: unknown key "keybindings.next-change"$'
+! exec rexdiff -check -config '{"keybindings": {"toggle-split": ["x"]}}'
+stderr '^rexdiff: config: unknown key "keybindings.toggle-split"$'
+! exec rexdiff -check -config '{"keybindings": {"toggle-help": ["x"]}}'
+stderr '^rexdiff: config: unknown key "keybindings.toggle-help"$'
+! exec rexdiff -check -config '{"keybindings": {"upgrade": ["x"]}}'
+stderr '^rexdiff: config: unknown key "keybindings.upgrade"$'
+
 # A bad value of a flag names the flag, as the settings do.
 ! exec rexdiff -layout sideways repo
 stderr '^rexdiff: invalid value for -layout: expected one of unified, split, not "sideways"$'
@@ -30,3 +68,10 @@ stderr '^rexdiff: invalid value for -layout: expected one of unified, split, not
 stderr '^rexdiff: invalid value for -scope: expected one of uncommitted, branch, last-turn, not "all"$'
 ! exec rexdiff -wrap no repo
 stderr '^rexdiff: invalid value for -wrap: expected one of on, off, not "no"$'
+
+# -check checks the flags as a normal start does.
+! exec rexdiff -check -layout sideways
+stderr '^rexdiff: invalid value for -layout: expected one of unified, split, not "sideways"$'
+! exec rexdiff -check -scope all
+stderr '^rexdiff: invalid value for -scope: expected one of uncommitted, branch, last-turn, not "all"$'
+exec rexdiff -check -layout split -scope branch

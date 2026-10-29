@@ -11,11 +11,11 @@ import (
 	"testing"
 )
 
-// TestUpgradeAtStart checks that rexdiff in Rex writes a changed
-// rexdiff_toggle.lua again, keeps rexdiff.lua, and reloads Rex. It does not
-// change a rexdiff_toggle.lua that runs another rexdiff. Without
-// rexdiff_toggle.lua, it writes no file.
-func TestUpgradeAtStart(t *testing.T) {
+// TestMigrateLuaAtStart checks that when rexdiff starts in Rex, it
+// restores an edited rexdiff_toggle.lua, keeps the user's rexdiff.lua and
+// reloads the Rex config. It must leave alone a rexdiff_toggle.lua that
+// runs a different rexdiff binary, and must not create a missing one.
+func TestMigrateLuaAtStart(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
 	config := filepath.Join(t.TempDir(), "init.lua")
@@ -43,7 +43,7 @@ func TestUpgradeAtStart(t *testing.T) {
 	if got := read(t, lua); got != edited {
 		t.Errorf("rexdiff.lua after the start = \n%s\nwant:\n%s", got, edited)
 	}
-	// The install reloads once, and the upgrade once.
+	// Expect one reload from the install and one from the start.
 	if n := strings.Count(rex.calls(t), "config reload"); n != 2 {
 		t.Errorf("config reloads = %d, want 2", n)
 	}
@@ -72,22 +72,22 @@ func TestUpgradeAtStart(t *testing.T) {
 	}
 }
 
-// TestUpgradeFrom027 checks the first start of rexdiff in Rex after an
-// upgrade from rexdiff 0.2.7. The rexdiff.lua of 0.2.7 has the settings,
-// then the code under a marker line. rexdiff keeps the settings, puts the
-// loader in place of the code, writes rexdiff_toggle.lua, and reloads Rex.
-func TestUpgradeFrom027(t *testing.T) {
+// TestMigrateLuaFromV027 checks that the first start after an update from
+// 0.2.7 keeps the user's settings in rexdiff.lua, moves the action code to
+// rexdiff_toggle.lua, and reloads the Rex config once. With a real rex, it
+// also checks that Rex accepts the new config.
+func TestMigrateLuaFromV027(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
 	dir := t.TempDir()
 	config := filepath.Join(dir, "init.lua")
 	write(t, config, "require(\"rexdiff\")\n")
 	lua := filepath.Join(dir, "rexdiff.lua")
-	old := strings.Replace(read(t, filepath.Join("testdata", "rexdiff-0.2.7.lua")),
+	oldLua := strings.Replace(read(t, filepath.Join("testdata", "rexdiff-0.2.7.lua")),
 		"{{BIN}}", binary(t), 1)
-	old = strings.Replace(old, "  -- layout = \"split\",", "  layout = \"split\",", 1)
-	write(t, lua, old)
-	settings, _, _ := strings.Cut(old, "-- rexdiff code below.")
+	oldLua = strings.Replace(oldLua, "  -- layout = \"split\",", "  layout = \"split\",", 1)
+	write(t, lua, oldLua)
+	settings, _, _ := strings.Cut(oldLua, "-- rexdiff code below.")
 
 	tm := start(t, repo, opts{rex: rex, env: []string{"REX_CONFIG=" + config}})
 	tm.keys("q")
@@ -111,7 +111,7 @@ func TestUpgradeFrom027(t *testing.T) {
 		check.Env = append(cleanEnv(), "REX_CONFIG="+config)
 		out, err := check.CombinedOutput()
 		if err != nil || !strings.Contains(string(out), "actions: 1") {
-			t.Errorf("rex config check after the upgrade: %v\n%s", err, out)
+			t.Errorf("rex config check after migrateLua: %v\n%s", err, out)
 		}
 	}
 }
@@ -126,7 +126,8 @@ func read(t *testing.T, path string) string {
 	return string(b)
 }
 
-// write writes content to the file at path.
+// write writes content to the file at path, replacing any existing
+// content.
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
