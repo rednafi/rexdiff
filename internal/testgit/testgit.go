@@ -1,5 +1,5 @@
-// Package testgit has the test helpers that run git. The settings, hooks,
-// and templates of the user do not change what git does in a test.
+// Package testgit provides test helpers that run git without the user's
+// settings, hooks and templates.
 package testgit
 
 import (
@@ -16,20 +16,20 @@ import (
 )
 
 var (
-	// root is the directory of the fixtures. It is "" until Main runs.
+	// root is the temporary directory for fixtures. It is "" until Main
+	// runs.
 	root string
-	// gitPath is the path of git, from the PATH of the process. It is ""
-	// until Main runs, and also if PATH has no git.
+	// gitPath is the path of git, found in the process's PATH. It is ""
+	// until Main runs, or if git is not on PATH.
 	gitPath string
 )
 
-// Main runs the tests of m. Each package that runs git calls it from its
-// TestMain. Main does not change the environment of the process.
+// Main runs the tests in m. Every package whose tests run git calls it
+// from TestMain. Main does not change the process's environment.
 //
-// Main finds git in the PATH of the process, before the tests run. If
-// PATH has no git, each test that uses a helper of this package skips.
-// The helpers run git with [ToolEnv], so the setup of the user does not
-// apply. The tests also need /bin/sh and the tools in /usr/bin and /bin.
+// Main looks for git in the process's PATH before the tests run. If git is
+// not found, every test that uses a helper from this package is skipped.
+// The tests also need /bin/sh and the tools in /usr/bin and /bin.
 func Main(m *testing.M) {
 	dir, err := os.MkdirTemp("", "testgit")
 	if err != nil {
@@ -49,14 +49,10 @@ func Main(m *testing.M) {
 	m.Run()
 }
 
-// Env returns the git variables of a test, as "key=value" pairs. A test
-// that runs a program with an environment of its own adds them.
-//
-// Git reads no global or system config, so no hooksPath, signing,
-// fsmonitor, or diff setting applies. Git reads no system attributes
-// file. An empty GIT_TEMPLATE_DIR copies no template, so a new repository
-// gets no hooks. Git does no maintenance in the background. The commits
-// have a fixed author.
+// Env returns the git environment variables for a test, as "key=value"
+// pairs. With them, git reads no global or system config, no system
+// attributes file and no templates. Git runs no background maintenance,
+// and commits have a fixed author.
 func Env() []string {
 	return []string{
 		"GIT_CONFIG_GLOBAL=" + os.DevNull,
@@ -67,8 +63,7 @@ func Env() []string {
 		"GIT_AUTHOR_EMAIL=t@t",
 		"GIT_COMMITTER_NAME=t",
 		"GIT_COMMITTER_EMAIL=t@t",
-		// git starts its maintenance in the background after some commands.
-		// It then writes into .git while a test copies or reads the
+		// Background maintenance would write to .git while a test reads the
 		// repository.
 		"GIT_CONFIG_COUNT=2",
 		"GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false",
@@ -76,10 +71,9 @@ func Env() []string {
 	}
 }
 
-// ToolEnv returns the environment of a library that runs git in a test.
-// It has the variables of [Env] and PATH. PATH has dirs, then a directory
-// with only git, then /usr/bin and /bin. A test puts its fake tools in
-// dirs. ToolEnv has no HOME, so no file of the user applies.
+// ToolEnv returns the variables of [Env] plus a PATH made of dirs, a
+// directory that holds only git, /usr/bin and /bin. A test puts its fake
+// tools in dirs. ToolEnv sets no HOME, so none of the user's files apply.
 func ToolEnv(tb testing.TB, dirs ...string) []string {
 	tb.Helper()
 	ready(tb)
@@ -87,8 +81,7 @@ func ToolEnv(tb testing.TB, dirs ...string) []string {
 	return append(Env(), "PATH="+strings.Join(path, string(os.PathListSeparator)))
 }
 
-// LinkGit makes a link to git in dir. A test that removes the link takes
-// git away from a PATH with dir.
+// LinkGit creates a symbolic link to git in dir.
 func LinkGit(tb testing.TB, dir string) {
 	tb.Helper()
 	ready(tb)
@@ -97,7 +90,7 @@ func LinkGit(tb testing.TB, dir string) {
 	}
 }
 
-// ready fails tb if Main does not run. It skips tb if PATH has no git.
+// ready fails tb if Main has not run, and skips tb if git is not on PATH.
 func ready(tb testing.TB) {
 	tb.Helper()
 	if root == "" {
@@ -125,8 +118,8 @@ func Git(tb testing.TB, dir string, args ...string) string {
 	return string(out)
 }
 
-// InitRepo makes a repository in dir with the branch main. It makes dir
-// if it does not exist.
+// InitRepo creates a repository in dir with the branch main. It creates
+// dir if it does not exist.
 func InitRepo(tb testing.TB, dir string) {
 	tb.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -135,8 +128,8 @@ func InitRepo(tb testing.TB, dir string) {
 	Git(tb, dir, "init", "-q", "-b", "main")
 }
 
-// WriteFile writes content to the file name in dir. It makes the parent
-// directories.
+// WriteFile writes content to the file name in dir, creating parent
+// directories as needed.
 func WriteFile(tb testing.TB, dir, name, content string) {
 	tb.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(name))
@@ -148,8 +141,9 @@ func WriteFile(tb testing.TB, dir, name, content string) {
 	}
 }
 
-// Script writes an executable sh script with body to the file name in
-// dir, and returns its path. A test puts dir on PATH to fake a tool.
+// Script writes an executable sh script with the given body to the file
+// name in dir, and returns its path. A test puts dir on PATH to fake a
+// tool.
 func Script(tb testing.TB, dir, name, body string) string {
 	tb.Helper()
 	p := filepath.Join(dir, name)
@@ -159,22 +153,22 @@ func Script(tb testing.TB, dir, name, body string) string {
 	return p
 }
 
-// Fixture is a repository that a package makes once and copies for each
-// test. A copy costs less than the git processes that make it.
+// Fixture is a repository that a package builds once and copies for each
+// test.
 type Fixture struct {
 	build func(tb testing.TB, dir string)
 	once  sync.Once
-	dir   string // the repository, or "" if build fails
+	dir   string // the built repository, or "" if the build failed
 }
 
-// NewFixture returns a fixture that build makes in an empty directory.
+// NewFixture returns a Fixture that build creates in an empty directory.
 func NewFixture(build func(tb testing.TB, dir string)) *Fixture {
 	return &Fixture{build: build}
 }
 
-// Copy copies the repository of f to dir. The first call makes the
-// repository with the build function of f. If the build fails, tb of the
-// first call gets the failure, and each later call fails.
+// Copy copies the repository of f to dir, building it on the first call.
+// If the build fails, the first call reports that failure, and every later
+// call fails too.
 func (f *Fixture) Copy(tb testing.TB, dir string) {
 	tb.Helper()
 	ready(tb)

@@ -10,8 +10,8 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// fakeTool writes an executable script name in a new directory. It
-// returns the directory, and an environment with a PATH of only that
+// fakeTool writes an executable script called name to a new directory. It
+// returns the directory, and an environment whose PATH contains only that
 // directory.
 func fakeTool(t *testing.T, name, script string) (string, []string) {
 	t.Helper()
@@ -20,8 +20,8 @@ func fakeTool(t *testing.T, name, script string) (string, []string) {
 	return dir, []string{"PATH=" + dir}
 }
 
-// TestWrite checks that the first tool on PATH gets the text and the
-// arguments.
+// TestWrite checks that each clipboard tool receives the text on stdin and
+// the expected arguments.
 func TestWrite(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ name, want string }{
@@ -33,7 +33,7 @@ func TestWrite(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			// The script writes each argument and a bar, then the input.
+			// The script writes each argument followed by a bar, then its input.
 			dir, env := fakeTool(t, tt.name, `{ for a; do printf '%s|' "$a"; done; /bin/cat; } > "${0%/*}/out"`+"\n")
 			if err := clipboard.Write(t.Context(), env, "hi\n"); err != nil {
 				t.Fatalf("Write: %v", err)
@@ -50,8 +50,8 @@ func TestWrite(t *testing.T) {
 	}
 }
 
-// TestWriteFails checks the errors with no tool, and with a tool that
-// fails.
+// TestWriteFails checks the errors that Write returns when no tool is
+// installed and when the tool fails.
 func TestWriteFails(t *testing.T) {
 	t.Parallel()
 	for _, env := range [][]string{nil, {"PATH=" + t.TempDir()}} {
