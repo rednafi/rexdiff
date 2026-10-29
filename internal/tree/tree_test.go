@@ -9,9 +9,7 @@ import (
 	"github.com/rednafi/rexdiff/internal/tree"
 )
 
-// The tests come from file_list.rs of herdr-reviewr.
-
-// changed returns changed entries for paths.
+// changed returns an entry with Changed set for each path.
 func changed(paths ...string) []tree.Entry {
 	var es []tree.Entry
 	for _, p := range paths {
@@ -20,7 +18,7 @@ func changed(paths ...string) []tree.Entry {
 	return es
 }
 
-// plain returns entries for paths with no change.
+// plain returns an unchanged entry for each path.
 func plain(paths ...string) []tree.Entry {
 	var es []tree.Entry
 	for _, p := range paths {
@@ -29,13 +27,14 @@ func plain(paths ...string) []tree.Entry {
 	return es
 }
 
-// ignoredDir returns an ignored directory that git lists as one path.
+// ignoredDir returns an entry for an ignored directory that git lists as a
+// single path.
 func ignoredDir(path string) tree.Entry {
 	return tree.Entry{Path: path, Ignored: true, Dir: true}
 }
 
-// shape returns the rows as "depth:dir:name" or "depth:file:name". The
-// marks "+" (changed), "!" (ignored), and "v" (expanded) follow the name.
+// shape formats each row as "depth:dir:name" or "depth:file:name",
+// followed by the marks "+" (changed), "!" (ignored) and "v" (expanded).
 func shape(rows []tree.Row) []string {
 	var out []string
 	for _, r := range rows {
@@ -68,7 +67,7 @@ func set(paths ...string) map[string]bool {
 	return m
 }
 
-// TestBuild checks the rows that Build makes.
+// TestBuild checks the rows that Build returns.
 func TestBuild(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -107,12 +106,12 @@ func TestBuild(t *testing.T) {
 			want:     []string{"0:dir:src +"},
 		},
 		{
-			name:    "all files starts collapsed",
+			name:    "the Files tab starts collapsed",
 			entries: changed("src/app.rs", "src/ui.rs"),
 			want:    []string{"0:dir:src +"},
 		},
 		{
-			name:    "a toggle expands in all files",
+			name:    "a toggle expands in the Files tab",
 			entries: changed("src/app.rs", "src/ui.rs"),
 			toggled: set("src"),
 			want:    []string{"0:dir:src + v", "1:file:app.rs", "1:file:ui.rs"},
@@ -153,7 +152,7 @@ func TestBuild(t *testing.T) {
 			want:    []string{"0:dir:target ! v", "1:file:a.o !", "1:file:b.o !"},
 		},
 		{
-			// The user can collapse such a directory.
+			// The row stays so that the user can collapse the directory.
 			name: "an ignored directory with one child keeps its row",
 			entries: []tree.Entry{
 				ignoredDir("a"),
@@ -180,8 +179,8 @@ func TestBuild(t *testing.T) {
 	}
 }
 
-// TestBuildIndex checks the entry index of a file row, and the path of a
-// directory row.
+// TestBuildIndex checks the entry index of each file row and the path of
+// each directory row.
 func TestBuildIndex(t *testing.T) {
 	t.Parallel()
 	es := append(changed("z.rs", "a/b/deep.rs"), plain("a/top.rs", "a/b/other.rs")...)
@@ -194,7 +193,7 @@ func TestBuildIndex(t *testing.T) {
 	for _, r := range rows {
 		got = append(got, place{r.Dir, r.File})
 	}
-	// The rows are in alphabetical order, so z.rs is last.
+	// Directories come first and names are sorted, so z.rs is last.
 	want := []place{{"a", -1}, {"a/b", -1}, {"", 1}, {"", 3}, {"", 2}, {"", 0}}
 	if !slices.Equal(got, want) {
 		t.Errorf("Build places = %v, want %v (rows %q)", got, want, shape(rows))
