@@ -19,14 +19,14 @@ jobs:
   # Rex runs only on macOS, so rexdiff is tested there.
   test:
     runs-on: macos-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test -race -count=30 -failfast=false -run 'TestTallLine$' -v ./test 2>&1 | grep -E -- '--- FAIL|msg=key|^ok|^FAIL|caps_test' ; exit ${PIPESTATUS[0]}
+      - run: go test -race -count=3 -v ./... 2>&1 | grep -E -- '--- FAIL|msg=key|^ok|^FAIL|caps_test' ; exit ${PIPESTATUS[0]}
         shell: bash
       # A second run in a random order finds a test that depends on another.
       - run: go test -count=2 -shuffle=on ./diff/ ./vcs/ ./rex/ ./update/ ./internal/...
