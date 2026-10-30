@@ -26,8 +26,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test -race -count=3 -v ./... 2>&1 | grep -E -- '--- FAIL|msg=key|^ok|^FAIL|caps_test' ; exit ${PIPESTATUS[0]}
-        shell: bash
+      - run: go test -race -count=3 ./...
       # A second run in a random order finds a test that depends on another.
       - run: go test -count=2 -shuffle=on ./diff/ ./vcs/ ./rex/ ./update/ ./internal/...
 

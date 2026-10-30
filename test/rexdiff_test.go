@@ -99,6 +99,20 @@ func start(t *testing.T, repo string, o opts) *term {
 	if bin == "" {
 		bin = binary(t)
 	}
+	if !slices.Contains(o.args, "-log") {
+		diagLog := filepath.Join(t.TempDir(), "diag.log")
+		o.args = append([]string{"-log", diagLog}, o.args...)
+		t.Cleanup(func() {
+			if t.Failed() {
+				b, _ := os.ReadFile(diagLog)
+				for _, l := range strings.Split(string(b), "\n") {
+					if strings.Contains(l, "msg=key") {
+						t.Log("DIAG " + l)
+					}
+				}
+			}
+		})
+	}
 	cmd := exec.CommandContext(t.Context(), bin, append(o.args, repo)...)
 	cmd.Dir = repo
 	// SIGTERM, unlike a kill, lets rexdiff remove its files.
