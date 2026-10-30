@@ -450,10 +450,14 @@ func TestCache(t *testing.T) {
 		render := func(c *diff.Cache) []string {
 			o := diff.Options{Width: 40, ScrollX: tt.offset, Cache: c}
 			if tt.file {
-				d := diff.RenderFile(tt.path, tt.new, fileOptions(o))
-				if c != nil { // a busy machine can highlight later than a line needs
-					waitHighlighted(t, c)
+				// A busy machine can highlight later than a line needs. A nil
+				// Cache gives no way to wait, so use an empty one.
+				if c == nil {
+					c = &diff.Cache{}
+					o.Cache = c
 				}
+				d := diff.RenderFile(tt.path, tt.new, fileOptions(o))
+				waitHighlighted(t, c)
 				return screenLines(d)
 			}
 			return screenLines(diff.Render(tt.path, tt.old, tt.new, o))
