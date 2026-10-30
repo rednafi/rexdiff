@@ -24,8 +24,6 @@ import (
 	"github.com/rednafi/rexdiff/update"
 )
 
-// mkdir creates the directory dir and any missing parents, and returns
-// dir.
 func mkdir(t *testing.T, dir string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -34,10 +32,7 @@ func mkdir(t *testing.T, dir string) string {
 	return dir
 }
 
-// newInstaller returns an Installer for the rexdiff at bin that fetches
-// the latest release from the URL latest. Its environment sets
-// REXDIFF_LATEST_URL and PATH=/usr/bin:/bin, followed by env, so env can
-// override them.
+// newInstaller puts env after its defaults, so env can override them.
 func newInstaller(t *testing.T, latest, bin, stamped string, env ...string) *update.Installer {
 	t.Helper()
 	env = slices.Concat([]string{"REXDIFF_LATEST_URL=" + latest, "PATH=/usr/bin:/bin"}, env)
@@ -48,8 +43,6 @@ func newInstaller(t *testing.T, latest, bin, stamped string, env ...string) *upd
 	return u
 }
 
-// serve starts a test HTTP server with the handler h and returns its URL.
-// The server stops when the test ends.
 func serve(t *testing.T, h http.Handler) string {
 	t.Helper()
 	srv := httptest.NewServer(h)
@@ -57,9 +50,6 @@ func serve(t *testing.T, h http.Handler) string {
 	return srv.URL
 }
 
-// TestVersion checks that Version adds a leading v to a stamped version,
-// and that NewInstaller returns nil for a build with no valid version,
-// such as a test binary, or for an empty path.
 func TestVersion(t *testing.T) {
 	t.Parallel()
 	for stamped, want := range map[string]string{"0.2.0": "v0.2.0", "v0.2.0": "v0.2.0", "": ""} {
@@ -80,9 +70,6 @@ func TestVersion(t *testing.T) {
 	}
 }
 
-// TestLatest checks that Latest reads the release tag from a fake GitHub
-// API and reports which tags are newer than the running version. It also
-// checks the errors for a missing release and for bad JSON.
 func TestLatest(t *testing.T) {
 	t.Parallel()
 	release := func(tag string) string {
@@ -90,22 +77,21 @@ func TestLatest(t *testing.T) {
 	}
 	tests := []struct {
 		name, have, body string // an empty body makes the server return 404
-		tag              string // the release tag, or ""
+		tag              string
 		newer            bool
-		errText          string // text that the error must contain, or ""
+		errText          string
 	}{
 		{name: "minor", have: "0.1.0", body: release("v0.2.0"), tag: "v0.2.0", newer: true},
 		{name: "patch", have: "v0.1.0", body: release("v0.1.1"), tag: "v0.1.1", newer: true},
 		{name: "major", have: "0.9.9", body: release("v1.0.0"), tag: "v1.0.0", newer: true},
 		{name: "two digits", have: "0.9.0", body: release("v0.10.0"), tag: "v0.10.0", newer: true},
-		// Release tags start with a v, which GoReleaser also puts in the
-		// archive names, so a tag without it is never newer.
+		// GoReleaser puts the v of the tag in the archive names. Thus a tag
+		// without a v is never newer.
 		{name: "no v", have: "0.1.0", body: release("0.2.0"), tag: "0.2.0"},
 		{name: "same", have: "0.1.0", body: release("v0.1.0"), tag: "v0.1.0"},
 		{name: "older", have: "0.2.0", body: release("v0.1.0"), tag: "v0.1.0"},
 		{name: "release candidate", have: "0.1.0", body: release("v0.2.0-rc1"), tag: "v0.2.0-rc1"},
 		{name: "no tag", have: "0.1.0", body: release("")},
-		// Atoi accepts a sign, but a version number cannot have one.
 		{name: "sign", have: "0.9.0", body: release("v+1.0.0"), tag: "v+1.0.0"},
 		{name: "minus", have: "0.9.0", body: release("v1.-0.0"), tag: "v1.-0.0"},
 		{name: "status", have: "0.1.0", errText: "404"},
@@ -137,15 +123,10 @@ func TestLatest(t *testing.T) {
 	}
 }
 
-// TestInstallBrew checks the brew commands and environment variables that
-// Install uses for a Homebrew install, the errors when brew fails, and the
-// check of the new binary's version.
 func TestInstallBrew(t *testing.T) {
 	t.Parallel()
-	// The fake brew logs the brew variables and its arguments. Install must
-	// prefer the brew next to the Caskroom, because Rex starts rexdiff with
-	// a PATH that does not include Homebrew. The Installer's environment
-	// sets none of the brew variables.
+	// Install must prefer the brew next to the Caskroom, because Rex starts
+	// rexdiff with a PATH that does not include Homebrew.
 	const logBrew = `echo "hints=$HOMEBREW_NO_ENV_HINTS ` +
 		`ni=$NONINTERACTIVE auto=$HOMEBREW_NO_AUTO_UPDATE ${0##*/} $*" ` +
 		`>> "${0%/*}/../calls"` + "\n"
@@ -154,32 +135,29 @@ func TestInstallBrew(t *testing.T) {
 		"hints=1 ni=1 auto=1 brew upgrade --cask rexdiff\n"
 	tests := []struct {
 		name    string
-		beside  bool   // the brew is next to the Caskroom, not only in PATH
-		brew    string // the fake brew script
+		beside  bool // the brew is next to the Caskroom, not only in PATH
+		brew    string
 		version string // the version that the new rexdiff reports
-		cancel  bool   // cancel the context before Install
-		calls   string // the expected brew log, or "" to skip the check
-		errText string // text that the error must contain, or "" for no error
+		cancel  bool
+		calls   string // "" skips the check
+		errText string
 	}{
 		{name: "beside the Caskroom", beside: true, brew: logBrew, version: "v0.2.0", calls: calls},
 		{name: "in PATH", brew: logBrew, version: "v0.2.0", calls: calls},
-		// The error includes the last line of the output.
 		{
 			name: "brew fails", beside: true, brew: busy, version: "v0.2.0",
 			errText: "brew: Error: another brew is running: exit status 1",
 		},
-		// With no output, the error does not end with an empty part.
 		{
 			name: "brew fails with no output", beside: true, brew: "exit 1\n", version: "v0.2.0",
 			errText: "brew: exit status 1",
 		},
-		// It is an error if the new binary reports a different version.
 		{
 			name: "old version", beside: true, brew: logBrew, version: "v0.1.0",
 			errText: "the update left rexdiff v0.1.0, not v0.2.0",
 		},
-		// Cancelling the context does not stop brew, because stopping brew
-		// halfway can leave a broken cask.
+		// A cancel does not stop brew, because a half install can break
+		// the cask.
 		{name: "outlives a cancel", beside: true, brew: logBrew, version: "v0.2.0", cancel: true, calls: calls},
 	}
 	for _, tt := range tests {
@@ -226,8 +204,6 @@ func TestInstallBrew(t *testing.T) {
 	}
 }
 
-// archive returns a .tar.gz archive that holds a README.md and a file
-// named rexdiff with the given content.
 func archive(t *testing.T, content string) []byte {
 	t.Helper()
 	var b bytes.Buffer
@@ -254,9 +230,6 @@ func archive(t *testing.T, content string) []byte {
 	return b.Bytes()
 }
 
-// TestDownload checks that a download install verifies the checksum, the
-// binary size and the new version, replaces the file that the symlink
-// points to, and leaves the old binary in place when any check fails.
 func TestDownload(t *testing.T) {
 	t.Parallel()
 	name := fmt.Sprintf("rexdiff-v0.2.0-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
@@ -267,7 +240,6 @@ func TestDownload(t *testing.T) {
 		return hex.EncodeToString(sum[:]) + "  " + name + "\nabc  other.tar.gz\n"
 	}
 	stale := archive(t, "#!/bin/sh\necho v0.1.9\n")
-	// A binary can be at most 128 MiB.
 	big := archive(t, strings.Repeat("x", 128<<20+1))
 	files := fstest.MapFS{}
 	for dir, a := range map[string][]byte{"good": good, "stale": stale, "big": big, "bad": good} {
@@ -277,9 +249,7 @@ func TestDownload(t *testing.T) {
 	files["bad/"+name] = &fstest.MapFile{Data: []byte("tampered")}
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServerFS(files))
-	// Each directory's release lists the files in that directory as
-	// assets. The directory "none" does not exist, so its release has no
-	// assets.
+	// The directory "none" does not exist, so its release has no assets.
 	mux.HandleFunc("GET /{dir}/latest", func(w http.ResponseWriter, req *http.Request) {
 		type asset struct {
 			Name string `json:"name"`
@@ -301,13 +271,11 @@ func TestDownload(t *testing.T) {
 
 	tests := []struct {
 		name, dir string
-		errText   string // text that the error must contain, or "" for no error
+		errText   string
 	}{
 		{name: "good", dir: "good"},
 		{name: "tampered", dir: "bad", errText: "does not match its checksum"},
-		// The old binary stays in place.
 		{name: "other version", dir: "stale", errText: "the update left rexdiff v0.1.9, not v0.2.0"},
-		// A binary over the limit is an error, not a truncated binary.
 		{name: "too large", dir: "big", errText: "larger than"},
 		{name: "no archive", dir: "none", errText: "has no " + name},
 	}

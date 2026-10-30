@@ -7,7 +7,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/tree"
 )
 
-// BenchmarkBuild measures building the rows for a list of 3,000 files.
 func BenchmarkBuild(b *testing.B) {
 	es := make([]tree.Entry, 3000)
 	for i := range es {

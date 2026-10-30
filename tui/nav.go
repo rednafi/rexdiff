@@ -13,18 +13,13 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// Step sizes for the keys that scroll or resize.
 const (
-	scrollStep = 8 // the horizontal scroll step, in columns
-	// navigatorWidthStep is the resize step for the file list: columns
-	// when it is at the left or right, and a percentage of the body rows
-	// when it is above or below.
+	scrollStep = 8 // columns
+	// navigatorWidthStep is in columns for a side list. For a list above
+	// or below, it is a percentage of the body rows.
 	navigatorWidthStep = 4
 )
 
-// updateNormal handles a key press when no box is open. It runs the
-// handler of the key's action and then, unless the action keeps the view,
-// scrolls the view to the cursor.
 func (m *model) updateNormal(msg tea.KeyPressMsg) tea.Cmd {
 	a := m.keys.action(msg)
 	if a == nil {
@@ -38,19 +33,10 @@ func (m *model) updateNormal(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
-// colorsTick is how often the screen is drawn again while the shown file
-// is being highlighted, so that lines drawn without colours get them
-// soon. It is about one frame.
 const colorsTick = 16 * time.Millisecond
 
-// colorsMsg asks for the screen to be drawn again, because lines that
-// were drawn without colours may have them now.
 type colorsMsg struct{}
 
-// awaitColors returns a command that sends colorsMsg after colorsTick if
-// the last file shown with syntax highlighting is still being
-// highlighted. It returns nil if it is not, or if a colorsMsg is already
-// on its way. Update calls it after every message.
 func (m *model) awaitColors() tea.Cmd {
 	if m.colorsTicking || !m.cache.Highlighting() {
 		return nil
@@ -59,7 +45,6 @@ func (m *model) awaitColors() tea.Cmd {
 	return tea.Tick(colorsTick, func(time.Time) tea.Msg { return colorsMsg{} })
 }
 
-// onQuit quits, asking first if there are comments.
 func (m *model) onQuit() tea.Cmd {
 	if m.comments.Len() > 0 {
 		m.openQuit()
@@ -85,33 +70,26 @@ func (m *model) onCancel() tea.Cmd {
 	return nil
 }
 
-// onKeys shows or hides the full key list.
 func (m *model) onKeys() tea.Cmd {
 	m.help.ShowAll = !m.help.ShowAll
 	return nil
 }
 
-// onTabChanges shows the Changes tab.
 func (m *model) onTabChanges() tea.Cmd {
 	m.setTab(tabChanges)
 	return nil
 }
 
-// onTabAllFiles shows the Files tab.
 func (m *model) onTabAllFiles() tea.Cmd {
 	m.setTab(tabAllFiles)
 	return nil
 }
 
-// onTabPR shows the PR tab.
 func (m *model) onTabPR() tea.Cmd {
 	m.setTab(tabPR)
 	return nil
 }
 
-// The scope and picker keys do nothing on the PR tab.
-
-// onScopeUncommitted shows the uncommitted changes.
 func (m *model) onScopeUncommitted() tea.Cmd {
 	if m.tab != tabPR {
 		m.setScope(ScopeUncommitted)
@@ -119,7 +97,6 @@ func (m *model) onScopeUncommitted() tea.Cmd {
 	return nil
 }
 
-// onScopeBranch shows the changes on the branch.
 func (m *model) onScopeBranch() tea.Cmd {
 	if m.tab != tabPR {
 		m.setScope(ScopeBranch)
@@ -127,7 +104,6 @@ func (m *model) onScopeBranch() tea.Cmd {
 	return nil
 }
 
-// onScopeLastTurn shows the changes made in the last agent turn.
 func (m *model) onScopeLastTurn() tea.Cmd {
 	if m.tab != tabPR {
 		m.setScope(ScopeLastTurn)
@@ -135,8 +111,6 @@ func (m *model) onScopeLastTurn() tea.Cmd {
 	return nil
 }
 
-// onScopeCommits shows the chosen commits. If no commits have been
-// chosen, it opens the commit picker.
 func (m *model) onScopeCommits() tea.Cmd {
 	switch {
 	case m.tab == tabPR:
@@ -148,7 +122,6 @@ func (m *model) onScopeCommits() tea.Cmd {
 	return nil
 }
 
-// onBasePick opens the base picker.
 func (m *model) onBasePick() tea.Cmd {
 	if m.tab == tabPR {
 		return nil
@@ -156,11 +129,8 @@ func (m *model) onBasePick() tea.Cmd {
 	return m.openBasePicker()
 }
 
-// onCommitPick opens the commit picker.
 func (m *model) onCommitPick() tea.Cmd { return m.openCommitPicker() }
 
-// onFocus moves focus between the file list and the main pane. If the
-// file list is hidden, it shows it and gives it focus.
 func (m *model) onFocus() tea.Cmd {
 	if m.navigatorHidden && m.tab != tabPR {
 		m.navigatorHidden, m.navigatorFocused = false, true
@@ -171,7 +141,6 @@ func (m *model) onFocus() tea.Cmd {
 	return nil
 }
 
-// onDown moves the cursor down one line, or down one row in the file list.
 func (m *model) onDown() tea.Cmd {
 	if m.navigatorFocused && m.tab != tabPR {
 		m.stepNavigatorRow(1)
@@ -181,7 +150,6 @@ func (m *model) onDown() tea.Cmd {
 	return nil
 }
 
-// onUp moves the cursor up one line, or up one row in the file list.
 func (m *model) onUp() tea.Cmd {
 	if m.navigatorFocused && m.tab != tabPR {
 		m.stepNavigatorRow(-1)
@@ -191,24 +159,18 @@ func (m *model) onUp() tea.Cmd {
 	return nil
 }
 
-// onPageDown moves the cursor down one screen.
 func (m *model) onPageDown() tea.Cmd { return m.moveCur(m.mainHeight()) }
 
-// onPageUp moves the cursor up one screen.
 func (m *model) onPageUp() tea.Cmd { return m.moveCur(-m.mainHeight()) }
 
-// onHalfDown moves the cursor down half a screen.
 func (m *model) onHalfDown() tea.Cmd { return m.moveCur(m.mainHeight() / 2) }
 
-// onHalfUp moves the cursor up half a screen.
 func (m *model) onHalfUp() tea.Cmd { return m.moveCur(-m.mainHeight() / 2) }
 
-// moveCur moves the cursor of the current pane by d rows, stopping at the
-// first and last rows. A move down always leaves the cursor line. The
-// cursor stays on the first row of a wrapped line, so a line taller than
-// the screen scrolls instead: the view moves through its rows until it
-// shows the end of the line going down, or its start going up. Moving up
-// onto such a line shows its end.
+// moveCur moves the cursor by d rows. A move down always leaves the
+// cursor line. The cursor stays on the first row of a wrapped line. So a
+// line taller than the screen scrolls until its end or start shows. A move
+// up onto such a line shows its end.
 func (m *model) moveCur(d int) tea.Cmd {
 	p := m.curPane()
 	h := max(m.mainHeight(), 1)
@@ -222,46 +184,39 @@ func (m *model) moveCur(d int) tea.Cmd {
 	}
 	to := min(max(p.cur+d, 0), p.last())
 	if d > 0 {
-		if last == p.last() { // no line below, so the view stays where it is
+		if last == p.last() {
 			p.following = p.top <= first
 			return nil
 		}
 		to = max(to, last+1)
 	}
-	p.cur, p.following = to, true // the view follows the cursor again
+	p.cur, p.following = to, true
 	if first, last := p.lineStart(to), p.lineEnd(to); d < 0 && last-first+1 > h {
 		p.cur, p.top, p.following = first, last-h+1, false
 	}
 	return nil
 }
 
-// onNextHunk moves the cursor to the next hunk.
 func (m *model) onNextHunk() tea.Cmd {
 	m.stepHunk(1)
 	return nil
 }
 
-// onPrevHunk moves the cursor to the previous hunk.
 func (m *model) onPrevHunk() tea.Cmd {
 	m.stepHunk(-1)
 	return nil
 }
 
-// onNextFile shows the next file.
 func (m *model) onNextFile() tea.Cmd {
 	m.stepFile(1)
 	return nil
 }
 
-// onPrevFile shows the previous file.
 func (m *model) onPrevFile() tea.Cmd {
 	m.stepFile(-1)
 	return nil
 }
 
-// onExpand expands the directory or fold at the cursor. On the PR tab, it
-// expands every <details> block. Otherwise, when lines are not wrapped, it
-// scrolls right.
 func (m *model) onExpand() tea.Cmd {
 	p := m.curPane()
 	switch {
@@ -279,10 +234,6 @@ func (m *model) onExpand() tea.Cmd {
 	return nil
 }
 
-// onCollapse collapses the directory at the cursor, or the expanded fold
-// at the cursor once the view is scrolled fully left. On the PR tab, it
-// collapses every <details> block. Otherwise, when lines are not wrapped,
-// it scrolls left.
 func (m *model) onCollapse() tea.Cmd {
 	p := m.curPane()
 	switch {
@@ -300,9 +251,8 @@ func (m *model) onCollapse() tea.Cmd {
 	return nil
 }
 
-// onWrap turns wrapping of long diff lines on or off and resets the
-// horizontal scroll. It does nothing outside a diff, because rendered
-// Markdown does its own wrapping.
+// onWrap does nothing outside a diff, because rendered Markdown does its
+// own wrapping.
 func (m *model) onWrap() tea.Cmd {
 	if m.curPane().diff == nil {
 		return nil
@@ -313,8 +263,6 @@ func (m *model) onWrap() tea.Cmd {
 	return nil
 }
 
-// onSelect starts a visual selection at the cursor, or clears the current
-// one.
 func (m *model) onSelect() tea.Cmd {
 	p := m.curPane()
 	switch {
@@ -326,8 +274,6 @@ func (m *model) onSelect() tea.Cmd {
 	return nil
 }
 
-// onComment opens the comment box for a new comment. It does nothing
-// while the file list has focus.
 func (m *model) onComment() tea.Cmd {
 	if m.navigatorFocused {
 		return nil
@@ -335,8 +281,6 @@ func (m *model) onComment() tea.Cmd {
 	return m.openComment(diff.SideNew)
 }
 
-// onDelete deletes the comment on the cursor line. It does nothing while
-// the file list has focus.
 func (m *model) onDelete() tea.Cmd {
 	if m.navigatorFocused {
 		return nil
@@ -348,51 +292,41 @@ func (m *model) onDelete() tea.Cmd {
 	return nil
 }
 
-// onNextComment moves the cursor to the next comment.
 func (m *model) onNextComment() tea.Cmd {
 	m.stepComment(1)
 	return nil
 }
 
-// onPrevComment moves the cursor to the previous comment.
 func (m *model) onPrevComment() tea.Cmd {
 	m.stepComment(-1)
 	return nil
 }
 
-// onComments opens the comment list.
 func (m *model) onComments() tea.Cmd {
 	m.openComments()
 	return nil
 }
 
-// onSend starts sending the comments to an agent.
 func (m *model) onSend() tea.Cmd { return m.startSend() }
 
-// onCopy copies the comments to the clipboard.
 func (m *model) onCopy() tea.Cmd {
 	m.copyComments()
 	return nil
 }
 
-// onSearch opens the search over file names and code.
 func (m *model) onSearch() tea.Cmd {
 	m.ensureAllFiles()
 	m.openSearch()
 	return nil
 }
 
-// onFind opens the find bar.
 func (m *model) onFind() tea.Cmd { return m.openFind() }
 
-// onGotoLine opens the go-to-line prompt.
 func (m *model) onGotoLine() tea.Cmd {
 	m.openInput(overlayGotoLine, "go to line (:0 first, :$ last)", "")
 	return nil
 }
 
-// onRendered switches a Markdown file between rendered and source views.
-// It does nothing unless the current file is Markdown with text to render.
 func (m *model) onRendered() tea.Cmd {
 	src, ok := m.markdownSource()
 	switch {
@@ -406,9 +340,6 @@ func (m *model) onRendered() tea.Cmd {
 	return nil
 }
 
-// onSplit switches the diff between the split and unified layouts. It
-// turns split on only if the file allows it and the pane is wide enough.
-// It shows a message only when the pane is too narrow.
 func (m *model) onSplit() tea.Cmd {
 	shown := m.splitShown()
 	switch {
@@ -421,32 +352,26 @@ func (m *model) onSplit() tea.Cmd {
 	return nil
 }
 
-// onNavigatorPosition moves the file list to its next position.
 func (m *model) onNavigatorPosition() tea.Cmd {
 	m.moveNavigator()
 	return nil
 }
 
-// onNavigatorHide hides or shows the file list.
 func (m *model) onNavigatorHide() tea.Cmd {
 	m.toggleNavigator()
 	return nil
 }
 
-// onNavigatorGrow makes the file list larger.
 func (m *model) onNavigatorGrow() tea.Cmd {
 	m.resizeNavigator(navigatorWidthStep)
 	return nil
 }
 
-// onNavigatorShrink makes the file list smaller.
 func (m *model) onNavigatorShrink() tea.Cmd {
 	m.resizeNavigator(-navigatorWidthStep)
 	return nil
 }
 
-// onUpdate starts updating to the newer release. It does nothing unless
-// the footer is announcing one.
 func (m *model) onUpdate() tea.Cmd {
 	if m.release == nil {
 		return nil
@@ -454,8 +379,6 @@ func (m *model) onUpdate() tea.Cmd {
 	return m.startUpdate()
 }
 
-// moveNavigator moves the file list clockwise around the main pane. A
-// hidden file list does not move.
 func (m *model) moveNavigator() {
 	if m.navigatorHidden && m.tab != tabPR {
 		return
@@ -464,8 +387,6 @@ func (m *model) moveNavigator() {
 	m.rerender()
 }
 
-// toggleNavigator hides the file list and gives focus to the main pane,
-// or shows the file list again. It does nothing on the PR tab.
 func (m *model) toggleNavigator() {
 	if m.tab == tabPR {
 		return
@@ -477,8 +398,6 @@ func (m *model) toggleNavigator() {
 	m.rerender()
 }
 
-// resizeNavigator grows the file list by d, or shrinks it if d is
-// negative. A hidden file list keeps its size.
 func (m *model) resizeNavigator(d int) {
 	if m.navigatorHidden && m.tab != tabPR {
 		return
@@ -491,7 +410,6 @@ func (m *model) resizeNavigator(d int) {
 	m.rerender()
 }
 
-// onOpenPR opens the pull request in the browser.
 func (m *model) onOpenPR() tea.Cmd {
 	pr := m.pr.pr
 	if pr == nil || pr.URL == "" {
@@ -504,8 +422,6 @@ func (m *model) onOpenPR() tea.Cmd {
 	return m.openURL(pr.URL, kind)
 }
 
-// openURL opens url in the browser and shows a message naming what was
-// opened.
 func (m *model) openURL(url, what string) tea.Cmd {
 	wait, err := urlOpenerCmd(m.env, m.cfg, url)
 	if err != nil {
@@ -516,7 +432,6 @@ func (m *model) openURL(url, what string) tea.Cmd {
 	return wait
 }
 
-// onRefresh reloads the current tab.
 func (m *model) onRefresh() tea.Cmd {
 	m.requestReload()
 	if m.tab == tabAllFiles {
@@ -530,11 +445,9 @@ func (m *model) onRefresh() tea.Cmd {
 	return cmd
 }
 
-// setTab switches to tab t.
 func (m *model) setTab(t tab) {
 	m.tab = t
 	m.drag = dragState{}
-	// The PR tab has no find bar.
 	if t == tabPR {
 		m.closeFind()
 	}
@@ -555,11 +468,7 @@ func (m *model) setTab(t tab) {
 	m.rerender()
 }
 
-// setScope switches to the Changes tab with scope s, starting at the
-// first row.
 func (m *model) setScope(s Scope) {
-	// If loading the new scope fails, the error replaces the files of
-	// the previous scope.
 	m.tab, m.scope, m.expandedFolds, m.shownTrees = tabChanges, s, nil, ""
 	m.cache.StopHighlighting()
 	m.requestReload()
@@ -567,24 +476,19 @@ func (m *model) setScope(s Scope) {
 	m.crossStep = 0
 }
 
-// cursorOnFold reports whether the cursor is on a fold in the Changes tab.
 func (m *model) cursorOnFold() bool {
 	p := m.curPane()
 	return m.tab == tabChanges && p.cur < len(p.rows) && p.rows[p.cur].Fold.Lines > 0
 }
 
-// expandedFolds records the folds that the user has expanded in one file,
-// as ranges of old line numbers, which stay valid while the agent edits
-// the file. They apply only while the old content has the hash Old. The
-// JSON names are used in the resume state.
+// expandedFolds uses old line numbers, because they stay valid while the
+// agent edits the file. The ranges apply only while the old content has
+// the hash Old.
 type expandedFolds struct {
 	Old    uint64   `json:"old"`
-	Ranges [][2]int `json:"ranges"` // the first and last line of each range
+	Ranges [][2]int `json:"ranges"` // inclusive first and last lines
 }
 
-// foldExpanded reports whether the lines of fold in the file at path are
-// shown. They are shown if the user expanded the fold or if one of the
-// comments is on one of its lines.
 func (m *model) foldExpanded(path string, comments []*diff.Comment, fold diff.Fold) bool {
 	// A fold that overlaps an expanded range is shown. Undoing a change
 	// next to a range creates a larger fold, which is then shown in full.
@@ -605,8 +509,6 @@ func (m *model) foldExpanded(path string, comments []*diff.Comment, fold diff.Fo
 	return false
 }
 
-// expandFold shows the hidden lines of fold in the Changes tab and moves
-// the cursor to the first of them. The selection stays on the same lines.
 func (m *model) expandFold(fold diff.Fold) {
 	p := &m.changes.pane
 	f := m.curChangedFile()
@@ -626,8 +528,6 @@ func (m *model) expandFold(fold diff.Fold) {
 	p.cur = max(p.rowOf(diff.SideNew, fold.New), 0)
 }
 
-// cursorInExpandedFold reports whether the cursor is on a line of a fold
-// that the user has expanded in the Changes tab.
 func (m *model) cursorInExpandedFold() bool {
 	p := m.curPane()
 	f := m.curChangedFile()
@@ -643,16 +543,11 @@ func (m *model) cursorInExpandedFold() bool {
 	return slices.ContainsFunc(o.Ranges, func(r [2]int) bool { return inRange(r, line) })
 }
 
-// canCollapseFold reports whether the collapse key would collapse the
-// expanded fold at the cursor. That needs the cursor to be in an expanded
-// fold and the view to be scrolled fully left.
 func (m *model) canCollapseFold() bool {
 	return m.curPane().scrollX == 0 && m.cursorInExpandedFold()
 }
 
-// collapseFold hides the expanded lines around the cursor again and moves
-// the cursor to the fold that replaces them. A fold with a comment on it
-// stays open. The caller must check canCollapseFold first.
+// collapseFold needs canCollapseFold to be true.
 func (m *model) collapseFold() {
 	p := m.curPane()
 	f := m.curChangedFile()
@@ -669,7 +564,6 @@ func (m *model) collapseFold() {
 	}
 }
 
-// curFileIndex returns the index of the current file in the current tab.
 func (m *model) curFileIndex() int {
 	if m.tab == tabAllFiles {
 		return m.allFiles.cur
@@ -677,9 +571,6 @@ func (m *model) curFileIndex() int {
 	return m.changes.cur
 }
 
-// setCurFile selects file i in the current tab. If the file's row is
-// visible in the file list, the list cursor moves to it. Any pending jump
-// to another file is cancelled.
 func (m *model) setCurFile(i int) {
 	if t := m.curNavigator(); t != nil {
 		if r := t.rowOf(i); r >= 0 {
@@ -706,11 +597,8 @@ func (m *model) setCurFile(i int) {
 	m.drag = dragState{}
 }
 
-// stepHunk moves the cursor to the next (d = 1) or previous (d = -1) hunk.
-// When there are no more hunks in that direction, the first press arms a
-// jump to the nearest file with changes, and a second press in the same
-// direction opens that file at its first hunk in that direction. It does
-// nothing while a selection is active.
+// stepHunk arms a jump to the nearest changed file when no hunk is left
+// in direction d. A second press opens that file.
 func (m *model) stepHunk(d int) {
 	armed := m.crossStep == d
 	m.crossStep = 0
@@ -745,8 +633,6 @@ func (m *model) stepHunk(d int) {
 	p.cur = max(nextHunkRow(p.rows, from, d), 0)
 }
 
-// nextHunkRow returns the first row of the next (d = 1) or previous
-// (d = -1) hunk after row from, or -1 if there is none.
 func nextHunkRow(rows []diff.Row, from, d int) int {
 	isChanged := func(i int) bool {
 		k := rows[i].Kind
@@ -760,9 +646,7 @@ func nextHunkRow(rows []diff.Row, from, d int) int {
 	return -1
 }
 
-// crossFile returns the index of the nearest file in direction d that has
-// a changed line, or -1. It follows the order of the file list, starting
-// from the row of the shown file.
+// crossFile follows the order of the file list, not of m.changes.files.
 func (m *model) crossFile(d int) int {
 	t := &m.changes.navigator
 	from := t.rowOf(m.changes.cur)
@@ -777,13 +661,10 @@ func (m *model) crossFile(d int) int {
 	return -1
 }
 
-// stepComment moves the cursor to the next (d = 1) or previous (d = -1)
-// comment in the open file, in row order, wrapping around at the ends. It
-// skips comments whose lines are not shown.
 func (m *model) stepComment(d int) {
 	p := m.curPane()
 	a := m.curAnchor()
-	var stops []int // the first row of each comment
+	var stops []int
 	for _, c := range m.comments.All() {
 		if c.Anchor != a || c.Path != p.path || p.path == "" {
 			continue
@@ -807,7 +688,6 @@ func (m *model) stepComment(d int) {
 	p.cur, p.selStart = stops[k], -1
 }
 
-// jumpToComment shows comment c in the tab that it was made on.
 func (m *model) jumpToComment(c *diff.Comment) {
 	if c.Anchor.InDiff {
 		m.jumpTo(c.Path, c.Side, c.Start)
@@ -817,8 +697,6 @@ func (m *model) jumpToComment(c *diff.Comment) {
 	m.jumpToNearLine(c)
 }
 
-// jumpTo shows path with the cursor on line. It uses the Changes tab if
-// the file has changes, and the Files tab otherwise.
 func (m *model) jumpTo(path string, side diff.Side, line int) {
 	inChanges := func(f changedFile) bool { return f.Path == path }
 	if i := slices.IndexFunc(m.changes.files, inChanges); i >= 0 {
@@ -833,8 +711,6 @@ func (m *model) jumpTo(path string, side diff.Side, line int) {
 	m.jumpToFile(path, side, line)
 }
 
-// expandFoldAt expands the fold in the Changes tab that hides line on
-// side.
 func (m *model) expandFoldAt(side diff.Side, line int) {
 	for _, r := range m.changes.pane.rows {
 		if foldHas(r.Fold, side, line) {
@@ -844,10 +720,8 @@ func (m *model) expandFoldAt(side diff.Side, line int) {
 	}
 }
 
-// jumpToFile shows path in the Files tab with the cursor on line.
 func (m *model) jumpToFile(path string, side diff.Side, line int) {
 	if m.allFiles.entries == nil {
-		// Jump once the entries have loaded.
 		m.ensureAllFiles()
 		m.allFiles.jump = &fileJump{path, side, line}
 		return
@@ -867,17 +741,14 @@ func (m *model) jumpToFile(path string, side diff.Side, line int) {
 	jumpToLine(&m.allFiles.pane, diff.SideNew, line)
 }
 
-// jumpToLine moves the cursor of p to the row that shows line on side. It
-// does nothing if no row shows it.
 func jumpToLine(p *pane, side diff.Side, line int) {
 	if i := p.rowOf(side, line); i >= 0 {
 		p.cur = i
 	}
 }
 
-// rowOf returns the first row of p that shows line on side, or -1. In
-// rendered Markdown, a line inside a block maps to the first row of the
-// block, as in gotoLine.
+// rowOf maps a line inside a rendered Markdown block to the first row of
+// the block.
 func (p *pane) rowOf(side diff.Side, line int) int {
 	shows := func(r diff.Row) bool { return r.Line(side) == line }
 	if i := slices.IndexFunc(p.rows, shows); i >= 0 {
@@ -900,11 +771,8 @@ func (p *pane) rowOf(side diff.Side, line int) int {
 	return p.lineStart(lineRow(p.rows, diff.SideNew, newLine))
 }
 
-// gotoLine moves the cursor to the line number in text: digits, clamped to
-// the file, or "$" for the last line. The number is on the new side if any
-// row has one, else the old side, or a row number in a pane without line
-// numbers. It expands a fold that hides the line, and in rendered Markdown
-// goes to the line's block.
+// gotoLine treats the number as a row number in a pane without line
+// numbers.
 func (m *model) gotoLine(text string) {
 	p := m.curPane()
 	n, ok := parseLineNum(text)
@@ -930,9 +798,6 @@ func (m *model) gotoLine(text string) {
 	p.cur = p.lineStart(lineRow(p.rows, side, n))
 }
 
-// lineRow returns the row that shows line on side. If no row shows it, it
-// returns the first row with a larger line number or, failing that, the
-// last row that has a line number on side.
 func lineRow(rows []diff.Row, side diff.Side, line int) int {
 	if i := slices.IndexFunc(rows, func(r diff.Row) bool { return r.Line(side) == line }); i >= 0 {
 		return i
@@ -948,7 +813,6 @@ func lineRow(rows []diff.Row, side diff.Side, line int) int {
 	return len(rows) - 1
 }
 
-// foldStart returns the first line that fold hides on side.
 func foldStart(fold diff.Fold, side diff.Side) int {
 	if side == diff.SideOld {
 		return fold.Old
@@ -956,8 +820,6 @@ func foldStart(fold diff.Fold, side diff.Side) int {
 	return fold.New
 }
 
-// foldEnd returns the last line that fold hides on side, or 0 if fold is
-// empty.
 func foldEnd(fold diff.Fold, side diff.Side) int {
 	if fold.Lines == 0 {
 		return 0
@@ -965,17 +827,12 @@ func foldEnd(fold diff.Fold, side diff.Side) int {
 	return foldStart(fold, side) + fold.Lines - 1
 }
 
-// foldHas reports whether fold hides line on side.
 func foldHas(fold diff.Fold, side diff.Side, line int) bool {
 	return fold.Lines > 0 && line >= foldStart(fold, side) && line <= foldEnd(fold, side)
 }
 
-// inRange reports whether line is in the range r of expanded lines,
-// including both ends.
 func inRange(r [2]int, line int) bool { return line >= r[0] && line <= r[1] }
 
-// parseLineNum parses s, the text of the go-to-line prompt. "$" returns
-// the largest int. ok is false unless s is all digits or "$".
 func parseLineNum(s string) (n int, ok bool) {
 	if s == "$" {
 		return math.MaxInt, true
@@ -990,8 +847,6 @@ func parseLineNum(s string) (n int, ok bool) {
 	return n, true
 }
 
-// isLineKey reports whether the go-to-line prompt accepts msg: a digit,
-// "$", or a key that moves the text cursor or deletes.
 func isLineKey(msg tea.KeyPressMsg) bool {
 	if msg.Mod&^tea.ModShift != 0 {
 		return false
@@ -1003,9 +858,6 @@ func isLineKey(msg tea.KeyPressMsg) bool {
 	return len(msg.Text) == 1 && strings.ContainsAny(msg.Text, "0123456789$")
 }
 
-// pastedLine extracts a line number from text pasted into the go-to-line
-// prompt. It strips surrounding quotes, brackets and punctuation. ok is
-// false unless what remains is all digits or "$".
 func pastedLine(text string) (line string, ok bool) {
 	line = strings.Trim(strings.TrimSpace(text), "`'\"“”‘’()[]<>:.,;")
 	_, ok = parseLineNum(line)

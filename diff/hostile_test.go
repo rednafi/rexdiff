@@ -12,8 +12,6 @@ import (
 	"github.com/rednafi/rexdiff/diff"
 )
 
-// TestHostileContent checks the lines and rows of [Render] and
-// [RenderFile] for each hostile input, with several layout options.
 func TestHostileContent(t *testing.T) {
 	t.Parallel()
 	opts := []diff.Options{
@@ -40,8 +38,6 @@ func TestHostileContent(t *testing.T) {
 	}
 }
 
-// TestEscapesAreVisible checks that escape sequences and control
-// characters in a file are shown as visible symbols.
 func TestEscapesAreVisible(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ src, want string }{
@@ -65,16 +61,12 @@ func TestEscapesAreVisible(t *testing.T) {
 	}
 }
 
-// TestBidiControlsAreVisible checks that bidirectional controls and
-// zero-width characters in a file are shown as their code points, so that
-// they cannot reorder or hide the code on screen, in a highlighted file
-// and in a plain one. The zero-width joiner and variation selectors stay,
-// because emoji need them.
+// TestBidiControlsAreVisible expects bidi and zero-width characters as code
+// points. Emoji keep the joiner and variation selectors.
 func TestBidiControlsAreVisible(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ src, want string }{
-		// A "Trojan Source" line: the override makes the comment appear
-		// after the return on screen.
+		// "Trojan Source". The override shows the comment after the return.
 		{"if admin { /*\u202e } \u2066if user\u2069 \u2066*/ return\n", "/*<U+202E> } <U+2066>if user<U+2069> <U+2066>*/ return"},
 		{"a\u202ab\u202bc\u202cd\u202de\n", "a<U+202A>b<U+202B>c<U+202C>d<U+202D>e"},
 		{"a\u2067b\u2068c\n", "a<U+2067>b<U+2068>c"},
@@ -97,9 +89,6 @@ func TestBidiControlsAreVisible(t *testing.T) {
 	}
 }
 
-// TestBidiControlCell checks that a click on any cell of a shown bidi
-// control finds that control, and that a click after it finds the
-// character after it.
 func TestBidiControlCell(t *testing.T) {
 	t.Parallel()
 	d := diff.Render("x.txt", "", "a\u202eb\n", diff.Options{Width: 40})
@@ -114,9 +103,7 @@ func TestBidiControlCell(t *testing.T) {
 	}
 }
 
-// TestSlowLexers checks that files whose chroma lexers never stop, or
-// take seconds, on some lines are drawn quickly. Each line used to take
-// more than 40 s or never finish.
+// TestSlowLexers uses lines that took chroma over 40 s or never finished.
 func TestSlowLexers(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ name, line string }{
@@ -138,9 +125,7 @@ func TestSlowLexers(t *testing.T) {
 	}
 }
 
-// TestSlowLines checks that a diff of long lines that a lexer takes
-// seconds to highlight is drawn quickly. Without a time limit, the V
-// shell lexer takes 2 s on each of these lines.
+// TestSlowLines needs the time limit. The V lexer takes 2 s per line.
 func TestSlowLines(t *testing.T) {
 	t.Parallel()
 	var src strings.Builder
@@ -150,8 +135,7 @@ func TestSlowLines(t *testing.T) {
 	within(t, 6*time.Second, "x.vsh", func() { diff.Render("x.vsh", "", src.String(), diff.Options{}) })
 }
 
-// within fails the test if f takes longer than limit. f keeps running
-// after the failure.
+// within does not stop f after the failure.
 func within(t *testing.T, limit time.Duration, what string, f func()) {
 	t.Helper()
 	done := make(chan struct{})
@@ -166,8 +150,6 @@ func within(t *testing.T, limit time.Duration, what string, f func()) {
 	}
 }
 
-// TestWrapWideText checks that wrapped CJK and emoji text fits the width
-// and that no characters are lost.
 func TestWrapWideText(t *testing.T) {
 	t.Parallel()
 	line := strings.Repeat("日本語😀", 10)
@@ -191,8 +173,6 @@ func TestWrapWideText(t *testing.T) {
 	}
 }
 
-// TestRenderFileLineCount checks the number of rows that [RenderFile]
-// returns for different line endings.
 func TestRenderFileLineCount(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -216,8 +196,6 @@ func TestRenderFileLineCount(t *testing.T) {
 	}
 }
 
-// TestRenderFileNarrow checks that wrapped wide text fits widths of 1 to 7
-// cells.
 func TestRenderFileNarrow(t *testing.T) {
 	t.Parallel()
 	for w := 1; w < 8; w++ {
@@ -226,8 +204,6 @@ func TestRenderFileNarrow(t *testing.T) {
 	}
 }
 
-// TestReviewHostileComment checks that Review quotes a hostile path and
-// removes control characters from the code and the comment text.
 func TestReviewHostileComment(t *testing.T) {
 	t.Parallel()
 	c := comment("a\x1b]52;c;aGk=\x07.go", diff.SideNew,
@@ -241,8 +217,7 @@ func TestReviewHostileComment(t *testing.T) {
 	}
 }
 
-// TestBlackTint checks that an equal line with the same text as a deleted
-// line has no background colour when deleted lines are tinted black.
+// TestBlackTint expects no tint on an equal line that matches a deleted one.
 func TestBlackTint(t *testing.T) {
 	t.Parallel()
 	black := color.RGBA{A: 255}

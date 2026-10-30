@@ -6,23 +6,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// When a newer release is available, the footer announces it. A key press
-// or a click installs it in the background, and rexdiff then restarts in
-// the same pane, keeping the comments and the user's position. Package
-// update does the installing.
-
-// updatePhase is the stage that a self-update has reached.
 type updatePhase int
 
 const (
-	updateIdle    updatePhase = iota
-	updateRunning             // the release is installing in the background
-	updateDone                // rexdiff restarts once the user is ready
+	updateIdle updatePhase = iota
+	updateRunning
+	updateDone
 )
 
-// fetchRelease returns a command that checks for the latest release. The
-// command returns a releaseMsg if that release is newer, and nil otherwise,
-// including on failure.
 func (m *model) fetchRelease() tea.Cmd {
 	u, ctx := m.installer, m.ctx
 	return func() tea.Msg {
@@ -34,7 +25,6 @@ func (m *model) fetchRelease() tea.Cmd {
 	}
 }
 
-// releaseBadge returns the footer text about m.release.
 func (m *model) releaseBadge() string {
 	switch m.updatePhase {
 	case updateRunning:
@@ -46,8 +36,6 @@ func (m *model) releaseBadge() string {
 		m.release.Tag, firstKey(m.keys.Update))
 }
 
-// startUpdate starts installing the new release in the background. It
-// does nothing if there is no release or an update has already started.
 func (m *model) startUpdate() tea.Cmd {
 	if m.release == nil || m.updatePhase != updateIdle {
 		return nil
@@ -57,8 +45,6 @@ func (m *model) startUpdate() tea.Cmd {
 	return func() tea.Msg { return updatedMsg{err: u.Install(ctx, r)} }
 }
 
-// onUpdated marks the update as done so that rexdiff can restart, or shows
-// why the update failed. After a failure, the user can try again.
 func (m *model) onUpdated(msg updatedMsg) {
 	if msg.err != nil {
 		m.updatePhase = updateIdle
@@ -68,11 +54,8 @@ func (m *model) onUpdated(msg updatedMsg) {
 	m.updatePhase = updateDone
 }
 
-// restartIfUpdated saves the state to restore after the restart and
-// stores its path in m.resumePath. It reports whether rexdiff can quit to
-// restart. It returns false while the user is writing a comment or using
-// an overlay, while a review is being sent, and while hasPending reports
-// that the command returned for the last message is still to run.
+// restartIfUpdated saves the resume state and reports whether rexdiff can
+// quit to restart.
 func (m *model) restartIfUpdated(hasPending bool) bool {
 	if m.mode != modeNormal || hasPending || m.sends > 0 {
 		return false

@@ -13,10 +13,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// TestChanges checks that the Changes tab lists the changed files with
-// their added and removed line counts and shows the diff of the selected
-// file, that f and F move to the next and previous file, and that right
-// and left expand and collapse a fold of unchanged lines.
 func TestChanges(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.waitFor("Changes (2)", "M a.go", "+2 -1", "M long.txt", "+2 -2",
@@ -37,8 +33,6 @@ func TestChanges(t *testing.T) {
 	tm.waitFor("x := 2")
 }
 
-// TestCollapseSelection checks that collapsing a fold that contains the
-// selected lines clears the selection.
 func TestCollapseSelection(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("f", "j", "j", "j", "j", "j", "j", "right")
@@ -50,9 +44,6 @@ func TestCollapseSelection(t *testing.T) {
 	tm.waitGone("extend")
 }
 
-// TestMove checks the keys that move the cursor: ] and [ to the next and
-// previous change, page and half-page keys, : to go to a line number, and
-// the arrow keys.
 func TestMove(t *testing.T) {
 	tm := start(t, newRepo(t), opts{height: 16})
 	tm.keys("f", "j", "j", "j", "j", "j", "j", "right") // expand the fold to show all of long.txt
@@ -79,10 +70,6 @@ func TestMove(t *testing.T) {
 	tm.waitCursor("first")
 }
 
-// TestScopes checks that the branch, uncommitted and last-turn scopes
-// show the right changes, that the commit picker shows a single commit,
-// and that the base picker marks the current base and switches to
-// another one.
 func TestScopes(t *testing.T) {
 	repo := newRepo(t)
 	// In the base picker, origin/main replaces main.
@@ -112,16 +99,11 @@ func TestScopes(t *testing.T) {
 	tm.waitFor("vs feat", "Changes (2)")
 }
 
-// TestSlowCommitPicker checks that while the commit list loads, the
-// commit picker shows that it is loading, q does not quit, and esc closes
-// the picker for good: the end of the cancelled list does not open it
-// again.
+// TestSlowCommitPicker checks that the end of a cancelled commit list does
+// not open the picker again.
 func TestSlowCommitPicker(t *testing.T) {
-	// The fake git lists no commits until the test lets it. The first list
-	// notes in the file ready that it can be stopped. It waits until rexdiff
-	// stops it and then notes that in the file stopped.
-	// The second waits for the FIFO gate. Then it runs the real git, which
-	// is next on PATH.
+	// The first list blocks until rexdiff stops it. The second list waits
+	// for the FIFO gate and then runs the real git.
 	bin := tools(t, map[string]string{"git": `d="${0%/*}"
 case "$*" in
 *--first-parent*)
@@ -161,9 +143,6 @@ PATH=${PATH#*:} exec git "$@"
 	tm.waitFor("1 Changes", "Changes (")
 }
 
-// TestFlags checks that -scope, -base, -layout and -wrap set the initial
-// state, that -wrap off does not wrap a long line, and that -log writes a
-// log file.
 func TestFlags(t *testing.T) {
 	repo := newRepo(t)
 	long := "var long = \"" + strings.Repeat("ab", 100) + "end\"\n"
@@ -172,8 +151,7 @@ func TestFlags(t *testing.T) {
 	tm := start(t, repo, opts{width: 220, args: []string{
 		"-scope", "branch", "-base", "main", "-layout", "split", "-wrap", "off", "-log", log,
 	}})
-	// Wait for the whole frame, because the top lines can appear before the
-	// rest.
+	// The top lines can appear before the rest, so wait for the whole frame.
 	tm.waitUntil(func(s string) bool {
 		return hasAll(s, "vs main", "Changes (3)") && sameLine(s, "return 1", "x := 2")
 	}, "show return 1 beside x := 2 vs main")
@@ -190,8 +168,6 @@ func TestFlags(t *testing.T) {
 	}
 }
 
-// TestSplit checks that | shows the old and new lines side by side on a
-// wide screen, and shows a message instead on a narrow screen.
 func TestSplit(t *testing.T) {
 	tm := start(t, newRepo(t), opts{width: 220})
 	tm.keys("|")
@@ -203,9 +179,6 @@ func TestSplit(t *testing.T) {
 	narrow.waitFor("too narrow for split")
 }
 
-// TestWrap checks that rexdiff wraps a long line by default, that w turns
-// wrapping off, and that the right arrow then scrolls to the end of the
-// line.
 func TestWrap(t *testing.T) {
 	repo := newRepo(t)
 	long := "var long = \"" + strings.Repeat("ab", 60) + "end\"\n"
@@ -221,8 +194,6 @@ func TestWrap(t *testing.T) {
 	tm.waitFor("end\"")
 }
 
-// column returns the column of the first occurrence of text in s, or -1
-// if s does not contain text.
 func column(s, text string) int {
 	if x, _, ok := position(s, text); ok {
 		return x
@@ -230,8 +201,6 @@ func column(s, text string) int {
 	return -1
 }
 
-// TestFileList checks that < and > change the width of the file list, p
-// moves it to the bottom, z hides it, and tab shows it again.
 func TestFileList(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	right := column(tm.waitFor("Changes (2)"), "Changes (2)")
@@ -239,7 +208,7 @@ func TestFileList(t *testing.T) {
 	tm.waitUntil(func(s string) bool { return column(s, "Changes (2)") < right }, "widen the list")
 	tm.keys(">", ">")
 	tm.waitUntil(func(s string) bool { return column(s, "Changes (2)") > right }, "narrow the list")
-	tm.keys("p") // move the list to the bottom
+	tm.keys("p")
 	tm.waitUntil(func(s string) bool {
 		_, y, ok := position(s, "Changes (2)")
 		return ok && y > 10
@@ -250,8 +219,6 @@ func TestFileList(t *testing.T) {
 	tm.waitFor("Changes (2)")
 }
 
-// TestKeys checks that ? opens the help with all the keys and esc closes
-// it.
 func TestKeys(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("?")
@@ -260,9 +227,7 @@ func TestKeys(t *testing.T) {
 	tm.waitGone("pick commits")
 }
 
-// TestFind checks that ctrl+f counts the lines that contain the typed
-// text, that enter moves the cursor to the first match, and that a pasted
-// \r\n becomes a single space.
+// TestFind also checks that a pasted \r\n becomes a single space.
 func TestFind(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("f", "ctrl+f")
@@ -280,8 +245,6 @@ func TestFind(t *testing.T) {
 		"count 11 lines for the pasted query")
 }
 
-// TestFindInFiles checks that ctrl+f finds text in a file of the Files
-// tab, and in a Markdown file shown rendered.
 func TestFindInFiles(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("2")
@@ -303,9 +266,8 @@ func TestFindInFiles(t *testing.T) {
 	tm.waitCursor("Some text.")
 }
 
-// TestFindNothing checks that ctrl+f opens the find bar on a binary file,
-// which has no text to find, so that the typed text goes into the bar and
-// does not run commands such as t, which switches the scope.
+// TestFindNothing checks that ctrl+f opens the find bar on a binary file.
+// Otherwise the typed text runs commands such as t.
 func TestFindNothing(t *testing.T) {
 	repo := newRepo(t)
 	testgit.WriteFile(t, repo, "bin.dat", "a\x00b\n")
@@ -318,9 +280,8 @@ func TestFindNothing(t *testing.T) {
 		"the query in the find bar with a note")
 }
 
-// TestBranchNoCommits checks that the branch scope in a repository with
-// no commits says so in plain words, as the commit picker does, and that
-// a long error keeps its indent on every line when it wraps.
+// TestBranchNoCommits also checks that a long error keeps its indent on
+// every line when it wraps.
 func TestBranchNoCommits(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	testgit.InitRepo(t, repo)
@@ -338,9 +299,6 @@ func TestBranchNoCommits(t *testing.T) {
 	}
 }
 
-// TestSettings checks that -config settings change the layout, the +/-
-// signs, the position and width of the file list, the default scope, and
-// the key bindings.
 func TestSettings(t *testing.T) {
 	tm := start(t, newRepo(t), opts{width: 220, args: []string{
 		"-config",
@@ -362,8 +320,6 @@ func TestSettings(t *testing.T) {
 	tm.waitFor("var B = 2")
 }
 
-// TestReviewPrefix checks that the review_prefix setting is added before
-// the copied review.
 func TestReviewPrefix(t *testing.T) {
 	bin := clipboard(t)
 	tm := start(t, newRepo(t), opts{path: bin, env: clipEnv, args: []string{
@@ -377,8 +333,6 @@ func TestReviewPrefix(t *testing.T) {
 	})
 }
 
-// TestTinyScreen checks that rexdiff draws its screen and responds to keys
-// in a 40 by 8 terminal.
 func TestTinyScreen(t *testing.T) {
 	tm := start(t, newRepo(t), opts{width: 40, height: 8})
 	tm.keys("f", "j", "2", "/")
@@ -393,8 +347,6 @@ func TestTinyScreen(t *testing.T) {
 	tm.waitFor("1 Changes")
 }
 
-// TestHostileText checks that escape sequences in a file are shown as
-// visible symbols and do not affect the terminal.
 func TestHostileText(t *testing.T) {
 	repo := newRepo(t)
 	testgit.WriteFile(t, repo, "evil.txt", "a\x1b[2Jb\x1b]0;title\x07c\n")
@@ -403,9 +355,6 @@ func TestHostileText(t *testing.T) {
 	tm.waitFor("a␛[2Jb␛]0;title␇c")
 }
 
-// TestTinyStackedNavigator checks that a file list placed above or below
-// the main pane is hidden when the terminal is too short for it, and that
-// no line is wider than the terminal.
 func TestTinyStackedNavigator(t *testing.T) {
 	for _, pos := range []string{"top", "bottom"} {
 		t.Run(pos, func(t *testing.T) {
@@ -426,8 +375,6 @@ func TestTinyStackedNavigator(t *testing.T) {
 	}
 }
 
-// TestSkippedCounts checks that the file list and the title say why a
-// binary or too large file has no counts.
 func TestSkippedCounts(t *testing.T) {
 	repo := newRepo(t)
 	testgit.WriteFile(t, repo, "bin.dat", "a\x00b\n")
@@ -438,8 +385,6 @@ func TestSkippedCounts(t *testing.T) {
 	}, "show binary and too large in the list")
 }
 
-// TestEmptyFile checks that a new empty file shows in the list with no
-// counts, and that its diff says that the content did not change.
 func TestEmptyFile(t *testing.T) {
 	repo := newRepo(t)
 	testgit.WriteFile(t, repo, "empty.txt", "")

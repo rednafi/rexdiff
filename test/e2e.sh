@@ -1,26 +1,14 @@
 #!/bin/sh
-# e2e.sh runs the rexdiff of this tree in a real Rex and walks through each
-# feature of .doc/user.md, then through the cases at the edges: hostile
-# file names, tiny and huge blocks, boxes open while the block resizes, a
-# send of more than 64 KB, and the quit prompt.
+# e2e.sh runs the rexdiff of this tree in a real Rex. It walks through each
+# feature of .doc/user.md, then through the edge cases.
 #
 #	REXDIFF_REX=$(which rex) test/e2e.sh
 #
-# It needs a running Rex server, go, git and jq. It creates the session
-# rexdiff-e2e-PID and kills only that session when it ends. Fake programs
-# stand in for the agent, gh, the clipboard, the editor and the browser.
-# With REXDIFF_E2E_KEEP=1, it keeps its files, such as the debug log of
-# rexdiff.
+# It needs a running Rex server, go, git and jq. It kills only its own
+# session. REXDIFF_E2E_KEEP=1 keeps the files, such as the debug log.
 #
-# The script leaves out the install, the toggle key and U, because they
-# change the Rex configuration or need a release. The Go tests in test/
-# cover them.
-#
-# Each step types keys, then reads the screen with rex capture until it
-# shows what the step expects in a whole frame: rexdiff still runs, no line
-# is wrapped, no crash shows, and on a block big enough the tab bar is on
-# the first line and the key hints on the last. The script prints one line
-# per step. At the first failure it prints the screen and exits with 1.
+# The install, the toggle key and U change the Rex config or need a
+# release. So the Go tests in test/ cover them.
 set -eu
 
 : "${REXDIFF_REX:?set REXDIFF_REX to the path of rex}"
@@ -28,7 +16,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/rexdiff-e2e.XXXXXX")
 work=$(cd "$work" && pwd -P) # without links, the paths match what git reports
 session=rexdiff-e2e-$$
-wait_seconds=20 # how long a step waits for the screen
+wait_seconds=20
 
 rex() { "$REXDIFF_REX" --autostart=false "$@"; }
 
@@ -40,28 +28,23 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
-# ---- Steps and failures ----
-
 n=0
 what=""
 screen=""
 
-# step prints the number and the name of the next step.
 step() {
 	n=$((n + 1))
 	what=$*
 	printf '%3d %s\n' "$n" "$what"
 }
 
-# fail prints why the step failed and the last screen, and exits.
 fail() {
 	printf 'FAIL at step %d, %s: %s\n' "$n" "$what" "$*" >&2
 	printf '%s\n' "The block shows:" "$screen" >&2
 	exit 1
 }
 
-# poll runs the command in its arguments until it succeeds, or fails the
-# step after wait_seconds. The first argument says what poll waits for.
+# poll WHY CMD...
 poll() {
 	why=$1
 	shift
@@ -72,12 +55,10 @@ poll() {
 	done
 }
 
-# ---- The fixture: tools and repositories ----
-
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_TEMPLATE_DIR=
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-# numbered prints the lines "WORD N" for N from FIRST to LAST.
+# numbered WORD FIRST LAST
 numbered() { awk -v w="$1" -v a="$2" -v b="$3" 'BEGIN { for (i = a; i <= b; i++) print w, i }'; }
 
 step "build rexdiff"
@@ -135,11 +116,8 @@ git rm -q gone.txt
 git remote add origin https://github.com/o/r.git
 cd "$root"
 
-# ---- Rex ----
-
-# The fake agent pi tells Rex that it is idle, then saves what it reads to
-# agent.in, as the input box of an agent would hold a paste. A line WORK or
-# IDLE in the FIFO agent.ctl sets its state.
+# The fake agent pi saves its input to agent.in. A line WORK or IDLE in the
+# FIFO agent.ctl sets its state.
 mkfifo "$work/agent.ctl"
 cat > "$work/agent" << EOF
 #!/bin/sh
@@ -166,13 +144,10 @@ rex block rename "$agent" agent -s "$session"
 agent_shows() { screen=$(rex capture -s "$session" -b "$agent"); case $screen in *"$1"*) ;; *) return 1 ;; esac; }
 poll "the agent does not start" agent_shows "agent ready"
 
-# shape prints the paths of the keys in the JSON on stdin, with 0 for
-# each array index.
 shape() { jq -c '[paths | map(if type == "number" then 0 else . end)] | unique'; }
 
-# same_shape fails the step if the JSON on stdin lacks a key of the
-# recording in test/testdata/rex/NAME, which the fake rex of the Go tests
-# prints.
+# same_shape NAME fails if the JSON on stdin lacks a key of
+# test/testdata/rex/NAME, which the fake rex of the Go tests prints.
 same_shape() {
 	got=$(shape)
 	want=$(shape < "$root/test/testdata/rex/$1")
@@ -190,7 +165,7 @@ poll "the agent reports no status" has_status
 rex block call -s "$session" -b "$agent" program_status | same_shape status.json
 "$REXDIFF_REX" --autostart=false events -s "$session" --json > "$work/events" 2> /dev/null &
 events_pid=$!
-# Rex sends no event before the stream starts, so report states until one
+# Rex sends no event before the stream starts. So report states until one
 # arrives.
 status_event() {
 	echo WORK > "$work/agent.ctl"
@@ -202,16 +177,12 @@ events_pid=
 grep -m 1 program_status_changed "$work/events" | same_shape event.json
 echo IDLE > "$work/agent.ctl"
 
-# ---- rexdiff in a block ----
-
 block=""
 cols=0
 rows=0
 config='{"focus_agent_after_send": false, "editor": "code -g {file}:{line}", "url_opener": "opener"}'
 
-# start runs rexdiff on the repository DIR in a new block, with the flags
-# that follow, and waits until it runs. The block stays open after rexdiff
-# quits.
+# start DIR FLAGS...
 start() {
 	dir=$1
 	shift
@@ -228,10 +199,9 @@ start() {
 	poll "rexdiff does not start" running
 }
 
-# running reports whether rexdiff runs in the block.
 running() { [ "$(rex block call -s "$session" -b "$block" process | jq -r '.child.name // ""')" = rexdiff ]; }
 
-# resize sets the size of the block to COLS by ROWS.
+# resize COLS ROWS
 resize() {
 	cols=$1 rows=$2
 	rex block call -s "$session" -b "$block" resize "{\"columns\": $cols, \"rows\": $rows}" > /dev/null
@@ -239,13 +209,9 @@ resize() {
 	[ "$size" = "${cols}x$rows" ] || fail "the block is $size, want ${cols}x$rows"
 }
 
-# capture reads the screen of the block into $screen.
 capture() { screen=$(rex capture -s "$session" -b "$block" | tail -n "$rows"); }
 
-# whole reports whether $screen is a whole frame at the size of the block,
-# and says why not in $why. On a block big enough, the frame has the tab
-# bar on the first line and the key hints on the last, or it is a whole
-# box.
+# whole reports whether $screen is a whole frame, and says why not in $why.
 whole() {
 	why="rexdiff does not run"
 	running || return 1
@@ -263,21 +229,18 @@ whole() {
 	esac
 }
 
-# shows reports whether $screen holds each of its arguments.
 shows() {
 	for want; do
 		case $screen in *"$want"*) ;; *) return 1 ;; esac
 	done
 }
 
-# lacks reports whether $screen holds none of its arguments.
 lacks() {
 	for want; do
 		case $screen in *"$want"*) return 1 ;; esac
 	done
 }
 
-# on_line reports whether one line of $screen holds each of its arguments.
 on_line() {
 	printf '%s\n' "$screen" | while IFS= read -r line; do
 		ok=1
@@ -287,15 +250,12 @@ on_line() {
 	[ $? -eq 3 ]
 }
 
-# header reports whether the diff pane shows the file NAME: its header,
-# on the second line, starts with NAME.
+# header NAME checks the file header on the second line.
 header() {
 	line=$(printf '%s\n' "$screen" | sed -n 2p | sed 's/^ *//')
 	case $line in "$1  "*) ;; *) return 1 ;; esac
 }
 
-# until_screen CHECK ARGS... captures the screen until CHECK ARGS succeeds
-# on a whole frame.
 until_screen() {
 	end=$(($(date +%s) + wait_seconds))
 	while :; do
@@ -318,26 +278,23 @@ wait_cursor() { until_screen on_line "▶" "$@"; }
 wait_header() { until_screen header "$1"; }
 wait_frame() { until_screen true; }
 
-# keys presses each named key, such as enter, escape or ctrl+f.
+# keys takes key names, such as enter, escape or ctrl+f.
 keys() { rex send-key -s "$session" -b "$block" "$@"; }
 
-# text types its argument, such as j or :20.
 text() { rex send -s "$session" -b "$block" "$1"; }
 
-# at prints the column and the line of the first TEXT on the screen,
-# counting from 1. The screen of the fixture has no wide characters, so
-# a character is a column.
+# at TEXT prints the 1-based column and line of TEXT. The fixture has no
+# wide characters, so a character is a column.
 at() {
 	printf '%s\n' "$screen" | jq -Rnr --arg t "$1" \
 		'[inputs] | to_entries | map(select(.value | contains($t))) | first
 		| "\((.value | split($t) | first | explode | length) + 1) \(.key + 1)"'
 }
 
-# mouse sends the mouse event: BUTTON at COLUMN and LINE, pressed (M) or
-# released (m), in the SGR encoding that rexdiff turns on.
+# mouse BUTTON COLUMN LINE M|m sends an SGR mouse event. M is a press and
+# m is a release.
 mouse() { printf '\033[<%d;%d;%d%s' "$@" | rex send -s "$session" -b "$block"; }
 
-# click clicks on TEXT.
 click() {
 	wait_for "$1"
 	set -- $(at "$1")
@@ -345,8 +302,6 @@ click() {
 	mouse 0 "$1" "$2" m
 }
 
-# drag drags with the left button from the start of FROM to the start of
-# TO.
 drag() {
 	wait_for "$1" "$2"
 	set -- $(at "$1") $(at "$2")
@@ -355,10 +310,8 @@ drag() {
 	mouse 0 "$3" "$4" m
 }
 
-# file_is reports whether the file PATH holds exactly TEXT and a newline.
 file_is() { [ -f "$1" ] && [ "$(cat "$1")" = "$2" ]; }
 
-# file_has reports whether the file PATH holds each TEXT that follows.
 file_has() {
 	f=$1
 	shift
@@ -366,13 +319,11 @@ file_has() {
 	for want; do grep -qF -- "$want" "$f" || return 1; done
 }
 
-# column prints the column of TEXT on the screen.
 column() { at "$1" | cut -d ' ' -f 1; }
 
-# line_of prints the line of TEXT on the screen.
 line_of() { at "$1" | cut -d ' ' -f 2; }
 
-# ---- The user guide ----
+# A step number N names section N of .doc/user.md.
 
 step "3. rexdiff opens with the changes and finds the agent"
 start "$repo" -config "$config"
@@ -695,8 +646,6 @@ wait_for "search files and code" "pick commits" "move list"
 keys escape
 wait_gone "pick commits"
 
-# ---- The edges ----
-
 step "s sends a review of more than 64 KB in parts"
 before=$(wc -c < "$work/agent.in")
 numbered "<&> a long review line" 1 3000 > "$work/long"
@@ -724,9 +673,8 @@ for size in 10x3 1x1 20x5 40x10 300x80 13x7 150x30; do
 done
 wait_for "Changes (5)"
 
-# with_box OPEN SHOWS CLOSE: OPEN opens a box that shows SHOWS, the block
-# goes through sizes from tiny to huge, and the box still shows; CLOSE
-# closes it.
+# with_box OPEN SHOWS CLOSE checks that the box from OPEN still shows
+# SHOWS after many resizes. CLOSE closes it.
 with_box() {
 	eval "$1"
 	wait_for "$2"
@@ -765,8 +713,6 @@ wait_for "1 unsent comment will be lost"
 text Q
 stopped() { ! running; }
 poll "Q does not quit" stopped
-
-# ---- Hostile names ----
 
 step "create a repository of hostile names and contents"
 hostile=$work/hostile

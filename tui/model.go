@@ -32,7 +32,6 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// tab is one of the program's tabs: Changes, Files or PR.
 type tab int
 
 const (
@@ -41,24 +40,20 @@ const (
 	tabPR
 )
 
-// scopeCommits shows the commits that the user chooses in the commit
-// picker. It cannot be used as the default scope.
 const scopeCommits Scope = "commits"
 
-// scopes lists the scopes in the order the header shows them.
+// scopes is in the order that the header shows them.
 var scopes = [...]Scope{ScopeUncommitted, ScopeBranch, ScopeLastTurn, scopeCommits}
 
-// label returns the name that the header shows for s.
 func (s Scope) label() string { return strings.ReplaceAll(string(s), "-", " ") }
 
-// mode says which part of the screen receives key presses.
 type mode int
 
 const (
 	modeNormal mode = iota
 	modeComment
 	modeOverlay
-	modeFind // the find bar
+	modeFind
 )
 
 // String returns the name of the mode, for logging.
@@ -76,47 +71,38 @@ func (md mode) String() string {
 	return "mode(" + strconv.Itoa(int(md)) + ")"
 }
 
-// pane is a scrollable view that the user can comment on. It holds the
-// rendered lines and the source rows they display.
 type pane struct {
-	// lines holds the lines of a pane without a diff. A pane with a diff
-	// renders each line from diff when it is first needed. Read lines
-	// through line and count.
+	// lines is nil with a diff, which renders lazily. Read through line and count.
 	lines    []string
 	rows     []diff.Row // rows[i] is the source line that line(i) displays
-	diff     *diff.Diff // the rendered diff, which renders the lines and maps clicks; nil for Markdown or PR
-	path     string     // the file the rows come from, or "" if the pane takes no comments
-	srcRows  []diff.Row // the source rows behind rendered Markdown, or nil
-	cur      int        // the cursor row
-	top      int        // the first row on screen
-	selStart int        // the first row of the visual selection, or -1
-	scrollX  int        // the horizontal scroll, in columns
-	note     string     // the text shown when there are no lines
-	renders  int        // incremented whenever the lines change, so cached find results can tell
-	// following is true while the view keeps the cursor on screen. The
-	// mouse wheel sets it to false, which lets the cursor go off screen
+	diff     *diff.Diff // nil for Markdown or PR
+	path     string     // "" if the pane takes no comments
+	srcRows  []diff.Row
+	cur      int
+	top      int
+	selStart int // the first row of the visual selection, or -1
+	scrollX  int // in columns
+	note     string
+	renders  int // changes with the lines, so cached find results can tell
+	// following keeps the cursor on screen. The mouse wheel clears it
 	// until the next key press or click.
 	following bool
 }
 
-// set replaces the lines and the source rows they display. It keeps the
-// cursor, top row and selection within the new lines.
 func (p *pane) set(lines []string, rows []diff.Row) {
 	p.lines, p.rows, p.diff, p.srcRows = lines, rows, nil, nil
 	p.renders++
 	p.clamp()
 }
 
-// clamp moves the cursor, top row and selection back within the lines.
 func (p *pane) clamp() {
 	p.cur = min(p.cur, p.last())
 	p.top = min(p.top, p.last())
-	if p.selStart >= len(p.rows) { // the file got shorter
+	if p.selStart >= len(p.rows) {
 		p.selStart = -1
 	}
 }
 
-// count returns the number of lines in the pane.
 func (p *pane) count() int {
 	if p.diff != nil {
 		return len(p.diff.Rows)
@@ -124,11 +110,8 @@ func (p *pane) count() int {
 	return len(p.lines)
 }
 
-// last returns the index of the last line in the pane, or 0 if it has none.
 func (p *pane) last() int { return max(p.count()-1, 0) }
 
-// line returns line i of the pane. With a diff, the line is rendered the
-// first time it is needed.
 func (p *pane) line(i int) string {
 	if p.diff != nil {
 		return p.diff.Line(i)
@@ -136,11 +119,8 @@ func (p *pane) line(i int) string {
 	return p.lines[i]
 }
 
-// cont reports whether line i is a continuation of the source line above
-// it, as happens with wrapped lines.
 func (p *pane) cont(i int) bool { return i > 0 && i < len(p.rows) && p.rows[i].Continued }
 
-// lineStart returns the first pane line of the source line shown at line i.
 func (p *pane) lineStart(i int) int {
 	for p.cont(i) {
 		i--
@@ -148,7 +128,6 @@ func (p *pane) lineStart(i int) int {
 	return i
 }
 
-// lineEnd returns the last pane line of the source line shown at line i.
 func (p *pane) lineEnd(i int) int {
 	for p.cont(i + 1) {
 		i++
@@ -156,19 +135,14 @@ func (p *pane) lineEnd(i int) int {
 	return i
 }
 
-// reset moves the cursor and view to the first row, and clears the
-// selection and horizontal scroll.
 func (p *pane) reset() { p.cur, p.top, p.selStart, p.scrollX = 0, 0, -1, 0 }
 
-// setDiff makes the pane display d.
 func (p *pane) setDiff(d *diff.Diff) {
 	p.lines, p.rows, p.diff, p.srcRows = nil, d.Rows, d, nil
 	p.renders++
 	p.clamp()
 }
 
-// side returns the diff side at screen column x, and reports whether x is
-// in the line number gutter.
 func (p *pane) side(x int) (side diff.Side, onGutter bool) {
 	if p.diff == nil {
 		return diff.SideNew, false
@@ -176,16 +150,12 @@ func (p *pane) side(x int) (side diff.Side, onGutter bool) {
 	return p.diff.SideAt(x)
 }
 
-// changedFile is a changed file with its added and deleted line counts
-// and a hash of its old content. The hash identifies the file's folds.
 type changedFile struct {
 	vcs.File
 	added, deleted int
-	oldHash        uint64
+	oldHash        uint64 // identifies the file's folds
 }
 
-// stat returns the counts of the added and deleted lines of f, such as
-// "+3 -1". For a file that rexdiff does not diff, it says why.
 func (f changedFile) stat() string {
 	switch {
 	case errors.Is(f.Err, vcs.ErrBinary):
@@ -197,105 +167,88 @@ func (f changedFile) stat() string {
 		deletedStyle.Render(fmt.Sprintf("-%d", f.deleted))
 }
 
-// turnState describes an agent turn in the repository, with a snapshot of
-// the working tree taken when the turn started.
 type turnState struct {
-	app     string // the name of the first agent in the turn, for example "pi"
-	tree    string // the snapshot taken when the turn started
+	app     string
+	tree    string // the working tree snapshot from the turn start
 	running bool
-	at      time.Time // when the turn started
+	at      time.Time
 }
 
-// dragState tracks a drag with the left mouse button in the main pane.
 type dragState struct {
-	active   bool      // the button is held down
-	moved    bool      // the cursor has left the starting row
-	gutter   bool      // the drag started in the line number gutter
-	startRow int       // the row where the drag started
-	prefer   diff.Side // the diff side where the drag started
-	// The screen line and code column where the button was pressed and
-	// where the pointer is now.
+	active                     bool
+	moved                      bool
+	gutter                     bool
+	startRow                   int
+	prefer                     diff.Side
 	startY, startX, endY, endX int
 	link                       string // the URL under the initial press, or ""
 }
 
-// draft is the comment that the user is writing: either a new comment or
-// an edit of the comment with ID editID. If the edit started from the
-// comment list, itemRow is the list row to return to. Otherwise itemRow is
-// -1.
+// draft edits the comment with ID editID, if set. itemRow is the comment
+// list row to return to, or -1.
 type draft struct {
 	diff.Comment
 	editID  int
 	itemRow int
 }
 
-// changesTab holds the state of the Changes tab.
 type changesTab struct {
-	files []changedFile
-	// tooMany is the number of changed files when there are too many to
-	// show, and 0 otherwise.
-	tooMany   int
-	cur       int // the index of the file being shown
+	files     []changedFile
+	tooMany   int // the changed file count if there are too many to show, else 0
+	cur       int
 	navigator navigator
 	pane      pane
 }
 
-// allFilesTab holds the state of the Files tab.
 type allFilesTab struct {
-	entries   []vcs.Entry
-	fileCount int // how many entries are files, for the list title
-	more      int // how many entries the list leaves out, past maxListedFiles
-	listing   listState
-	listed    bool // a read of the entries has finished, even if it failed
-	// jump is a jump to a file that waits for the entries to load, or nil.
-	jump      *fileJump
-	cur       int
-	navigator navigator
-	pane      pane
-	// shownText and shownPath are the content and path of the file being
-	// shown, used to detect edits. shownErr is the error from reading it.
+	entries              []vcs.Entry
+	fileCount            int
+	more                 int // how many entries the list leaves out, past maxListedFiles
+	listing              listState
+	listed               bool // a read of the entries has finished, even if it failed
+	jump                 *fileJump
+	cur                  int
+	navigator            navigator
+	pane                 pane
 	shownText, shownPath string
 	shownErr             error
 }
 
-// prTab holds the state of the PR tab.
 type prTab struct {
 	pr              *vcs.PR
 	err             string
 	fetch           prFetch
 	pane            pane
-	place           *resumePane // the scroll position to restore in pane after a restart
-	detailsExpanded bool        // whether the PR's <details> blocks are expanded
+	place           *resumePane
+	detailsExpanded bool
 }
 
-// agentState is what rexdiff knows about the agent in a Rex block.
 type agentState struct {
-	app    string    // the name of the agent, for example "pi"
+	app    string
 	state  rex.State // "" if the agent reports no status
-	since  time.Time // when Rex received the state
-	cwd    string    // the working directory, or "" if Rex does not know it
-	hasCwd bool      // Rex has answered the request for cwd
-	asking bool      // a request to Rex for cwd is in progress
+	since  time.Time
+	cwd    string // "" if Rex does not know it
+	hasCwd bool
+	asking bool
 }
 
-// model is the state of the program. It implements [tea.Model].
 type model struct {
-	// ctx comes from Run. The model stores it for git and Rex calls,
+	// ctx comes from Run. The model keeps it for git and Rex calls,
 	// because the tea.Model methods do not take a context.
 	ctx  context.Context
 	repo *vcs.Repo
 	rex  *rex.Client // nil outside Rex
 	log  *slog.Logger
-	env  []string // the environment for the editor, URL opener and clipboard
+	env  []string
 
 	cfg    config
 	keys   keyMap
-	notice string // a problem to show in the footer, or ""
+	notice string
 
 	installer   *update.Installer // nil if rexdiff cannot update itself
-	release     *update.Release   // a newer release, or nil
+	release     *update.Release
 	updatePhase updatePhase
-	resumePath  string // the file that saves the state across a restart, or ""
+	resumePath  string
 
 	// The terminal size. Until the terminal reports it, w and h are a
 	// guess and sized is false.
@@ -306,140 +259,109 @@ type model struct {
 	green  color.Color // the terminal's ANSI green, or nil
 	ticks  int
 
-	// watch reports changes to files and refs, or is nil. While it is
-	// nil, a tick reloads the current tab once reloadInterval has passed
-	// since polled. If the watcher fails, a later tick starts it again.
+	// watch is nil if there is no watcher. A tick then reloads each
+	// reloadInterval since polled.
 	watch         *vcs.Watcher
-	watchStarting bool // a command is starting the watcher
-	watching      bool // a check of watch is in progress
+	watchStarting bool
+	watching      bool
 	// watchReset makes the next check call [vcs.Watcher.Reset] first. The
-	// check calls it in its command, because Reset waits for a check in
+	// call is in the check command, because Reset waits for a check in
 	// progress.
-	watchReset bool
-	// watchedDirs and watchedFile are the expanded ignored directories and
-	// the open file of the Files tab that the last check covered.
-	watchedDirs []string
-	watchedFile string
-	polled      time.Time
-	watchRetry  retryTimer
-	// reloadPending is true if the Changes tab is not yet showing a
-	// change. The reload waits until reloadAt and, after a failure, until
-	// the retry.
+	watchReset      bool
+	watchedDirs     []string
+	watchedFile     string
+	polled          time.Time
+	watchRetry      retryTimer
 	reloadPending   bool
-	allFilesPending bool // like reloadPending, for the Files tab
+	allFilesPending bool
 	reloadAt        time.Time
 	reloadRetry     retryTimer
 	reloads         reloadState
-	changesLoaded   bool // the first reload has finished
-	// held is the input that waits for the tab to load; see holdInput.
-	held []tea.Msg
-	// resumeChanges and resumeFiles hold the state of the previous process
-	// after a restart, until the first reload and the first file list have
-	// loaded and its places are restored. Otherwise they are nil.
+	changesLoaded   bool
+	held            []tea.Msg
+	// The state from before a restart, until the first loads restore it.
 	resumeChanges, resumeFiles *resumeState
-	// turnChecking is true while the pending turn is being checked.
-	turnChecking bool
+	turnChecking               bool
 	// turnGen counts turn starts and ends. A snapshot taken before the
 	// latest start or end is stale.
 	turnGen int
 
-	tab   tab
-	scope Scope
-	// expandedFolds holds the folds that the user has expanded in the
-	// Changes tab, keyed by path.
+	tab           tab
+	scope         Scope
 	expandedFolds map[string]*expandedFolds
 	base          string
-	// defaultBase is the default branch found at startup, for the base
-	// picker.
-	defaultBase string
-	// baseFromFlag is true if the base was set by a flag, in which case
-	// the user cannot choose another.
-	baseFromFlag bool
-	oldest       string // the oldest commit chosen for the commits scope
-	newest       string // the newest commit chosen for the commits scope
+	defaultBase   string
+	baseFromFlag  bool
+	oldest        string
+	newest        string
 
-	// turn is the latest turn that changed a file, or nil. The last-turn
-	// scope compares against it. pendingTurn is a turn that has started
-	// but not yet changed a file, or nil.
+	// turn is the latest turn that changed a file. pendingTurn has not
+	// changed a file yet. Both can be nil.
 	turn, pendingTurn *turnState
-	// turnRaced is true if the last turn started too close to a file
-	// write. Its starting snapshot may then include that write, so the
-	// scope shows no turn.
+	// turnRaced is true if the last turn started too near a file write.
+	// Its snapshot can include that write, so the scope shows no turn.
 	turnRaced bool
 	tracker   turn.Tracker
-	// agentsSampled is true once the agents have been listed for the
-	// first time. State changes seen before then may be wrong, so the
-	// tracker receives no states until then.
+	// agentsSampled is true after the first agent listing. State changes
+	// before then can be wrong, so the tracker gets no states until then.
 	agentsSampled bool
-	// sampleRetry schedules the next agent listing after a failed one.
-	sampleRetry retryTimer
+	sampleRetry   retryTimer
 	// agentsGen counts reconnections to Rex. An agent list with an older
 	// generation was taken before a disconnection.
-	agentsGen int
-	// agentInRepo points to true if an agent is in the repository, and to
-	// false if none is. It is nil until this is known.
-	agentInRepo *bool
-	ownsDir     map[string]bool // the answers of owns, by directory
-	ownsErr     string          // the last error from owns, already logged
+	agentsGen   int
+	agentInRepo *bool // nil until known
+	ownsDir     map[string]bool
+	ownsErr     string // already logged
 
 	changes    changesTab
-	shownTrees string // the two trees being compared, used to detect a change
-	shownScope Scope  // the scope that changes.files was loaded for
+	shownTrees string
+	shownScope Scope
 	allFiles   allFilesTab
-	readErr    string // the last read error, already logged
+	readErr    string // already logged
 	pr         prTab
 
-	split             bool // show the diff side by side
+	split             bool
 	wrap              bool
-	rendered          bool // show Markdown rendered
+	rendered          bool
 	navigatorPosition position
 	navigatorHidden   bool
-	navigatorFocused  bool // j and k move in the file list
-	// crossStep is 1 or -1 when ] or [ was pressed past the last change
-	// and the next press in the same direction will jump to the file at
-	// crossPath. Otherwise it is 0.
+	navigatorFocused  bool
+	// crossStep is 1 or -1 after ] or [ went past the last change. The
+	// next press in that direction jumps to crossPath. Otherwise it is 0.
 	crossStep int
 	crossPath string
-	// navigatorWidthSet is the width in columns of the file list when it
-	// is at the left or right, or 0 for the default share of the width.
+	// navigatorWidthSet is in columns, or 0 for the default share.
 	navigatorWidthSet int
-	navigatorPct      int        // the percentage of body rows used by the file list when above or below
-	cache             diff.Cache // the highlighted lines and diff, reused between renders
-	colorsTicking     bool       // a colorsMsg is on its way; see [model.awaitColors]
+	navigatorPct      int
+	cache             diff.Cache
+	colorsTicking     bool
 
-	comments diff.Comments
-	// commentFiles holds the files of the comments made outside the
-	// Changes tab, by path, so that checking whether a comment is stale
-	// reads its file again only after the file changes.
+	comments     diff.Comments
 	commentFiles map[string]fileCopy
 	commentInput textarea.Model
 	draft        *draft
 	mode         mode
 	overlay      *overlay
-	// recent holds the files that the user opened from the search in this
-	// session, most recent first.
-	recent     []string
-	grepCancel context.CancelFunc // stops the code search in progress
-	grepGen    int                // identifies the latest code search
-	fileGen    int                // identifies the latest search of file names
-	find       findState
-	findSides  sideLines     // the lines that find searches
-	markdown   markdownCache // the most recently used Markdown renderer
-	drag       dragState
-	click      clickState
-	help       help.Model
+	recent       []string
+	grepCancel   context.CancelFunc
+	grepGen      int
+	fileGen      int
+	find         findState
+	findSides    sideLines
+	markdown     markdownCache
+	drag         dragState
+	click        clickState
+	help         help.Model
 
 	flashText  string
 	flashUntil time.Time
 
-	agents   map[string]*agentState // keyed by block
-	sends    int                    // the number of send steps in progress
-	lastSent string                 // the block that the last review was sent to
-	beside   string                 // the agent block in the pane beside rexdiff
+	agents   map[string]*agentState
+	sends    int
+	lastSent string
+	beside   string // the agent block in the pane beside rexdiff
 }
 
-// newModel returns the program's model for the options o and the settings
-// cfg.
 func newModel(ctx context.Context, o Options, cfg config) model {
 	ta := textarea.New()
 	ta.ShowLineNumbers = false
@@ -467,8 +389,7 @@ func newModel(ctx context.Context, o Options, cfg config) model {
 	if m.log == nil {
 		m.log = slog.New(slog.DiscardHandler)
 	}
-	// The flag takes priority over the saved base. A saved base that does
-	// not resolve is ignored.
+	// The flag wins over the saved base.
 	ctx, done := m.gitContext("startup")
 	defer done()
 	if m.base == "" {
@@ -486,8 +407,7 @@ func newModel(ctx context.Context, o Options, cfg config) model {
 		m.turn = &turnState{tree: tree}
 	}
 	if o.Rex != nil && o.Agent != "" {
-		// If Rex does not know the agent, the picker starts with no agent
-		// selected, but still lists every agent.
+		// If Rex does not know the agent, the picker starts with none selected.
 		ctx, cancel := xctx.WithTimeout(ctx, rexTimeout, "rex resolve")
 		m.beside, _ = o.Rex.ResolveBlock(ctx, o.Agent)
 		cancel()
@@ -499,109 +419,88 @@ func newModel(ctx context.Context, o Options, cfg config) model {
 	m.keys.applyConfig(cfg.Keybindings)
 	m.navigatorPosition, m.navigatorWidthSet, m.navigatorPct = cfg.FileList, cfg.FileListWidth, navigatorStackPct
 	m.rendered = cfg.MarkdownView == markdownViewRendered
-	// Flags take priority over the settings.
 	m.split = cmp.Or(o.Layout, cfg.Layout) == LayoutSplit
 	m.scope = cmp.Or(o.Scope, cfg.DefaultScope)
 	return m
 }
 
-// Messages used by the program.
 type (
 	tickMsg    struct{}
 	watchedMsg struct {
 		ch   vcs.Change
 		err  error
-		at   time.Time     // the tick that started the check
-		took time.Duration // how long the check took
-		// The expanded ignored directories and the open file of the Files
-		// tab that the check covered.
+		at   time.Time
+		took time.Duration
 		dirs []string
 		file string
 	}
 
-	// reloadDueMsg reports that the pause after a reload has ended, so a
-	// change seen during the pause need not wait for the next tick.
+	// reloadDueMsg ends the pause after a reload. A change seen during the
+	// pause then does not wait for the next tick.
 	reloadDueMsg struct{}
 
 	agentsMsg struct {
 		agents []rex.Agent
 		err    error
-		send   bool // true if the list is for sending a review, not for updating states
-		gen    int  // the value of agentsGen when the listing started
+		send   bool // the list is for sending a review, not for updating states
+		gen    int
 	}
 	sentMsg struct {
 		agent rex.Agent
-		sent  map[int]string // the text of each sent comment, keyed by ID
+		sent  map[int]string
 		err   error
 	}
 	grepMsg struct {
-		gen  int // identifies the search; results of older searches are stale
+		gen  int
 		hits []vcs.Match
-		more bool // git found more matches than hits holds
+		more bool
 		err  error
 	}
 	prMsg struct {
-		gen int // identifies the fetch; see prFetch
+		gen int
 		pr  *vcs.PR
 		err error
 	}
-	eventMsg rex.Event
-	// editorPaneMsg is the result of asking Rex to open a split for the
-	// editor of path.
+	eventMsg      rex.Event
 	editorPaneMsg struct {
 		path, script string
 		err          error
 	}
-	// cwdMsg is Rex's answer to a request for an agent's working
-	// directory.
 	cwdMsg struct {
 		block, cwd string
 		err        error
 	}
-	// editorDoneMsg reports that the editor for path, running in this
-	// pane, has exited.
 	editorDoneMsg struct {
 		path string
 		err  error
 	}
-	// detachedMsg reports that a detached program failed. what describes
-	// the program's purpose.
 	detachedMsg struct {
 		what string
 		err  error
 	}
-	// releaseMsg carries a release that is newer than the running rexdiff.
 	releaseMsg struct {
 		release update.Release
 	}
-	// updatedMsg reports that the update to the new release has finished.
 	updatedMsg struct {
 		err error
 	}
 )
 
-// requestColors are the commands that ask the terminal for its colours.
-// The replies set the colours used for the diff.
 var requestColors = []tea.Cmd{
 	tea.RequestBackgroundColor,
 	tea.RequestForegroundColor,
 	requestPalette,
 }
 
-// tickInterval is the time between ticks.
 const tickInterval = time.Second
 
-// tick returns a command that sends a tickMsg after d.
 func tick(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-// Init starts the ticks and the watcher, asks the terminal for its
-// colours, and loads the changes, the pull request and the agents.
+// Init starts the ticks, the watcher and the first loads.
 func (m *model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tick(tickInterval), m.requestPR(true), m.startWatch(), m.startReload(), m.startFiles()}
-	// After a restart the PR tab may be the first tab shown, so render it
-	// now to show that loading is in progress.
 	m.renderPR()
 	cmds = append(cmds, requestColors...)
 	if m.rex != nil {
@@ -613,60 +512,40 @@ func (m *model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// flashTimeout is how long a flash message stays in the footer.
 const flashTimeout = 4 * time.Second
 
-// flash shows s in the footer for flashTimeout. It quotes s if it contains
-// control characters, because s can come from Rex or git.
+// flash quotes s, because s can come from Rex or git.
 func (m *model) flash(s string) {
 	m.flashText, m.flashUntil = termtext.Quote(s), time.Now().Add(flashTimeout)
 }
 
-// requestReload asks for the changes in the scope to be read again, even
-// if the trees have not changed. Any reload in progress becomes stale. The
-// watcher did not cause this reload, so its next check resets it.
+// requestReload reloads even if the trees are the same. The watcher did
+// not cause it, so the next check resets the watcher.
 func (m *model) requestReload() {
 	l := &m.reloads
 	l.want, l.force, l.stale = true, true, l.running
 	m.watchReset = true
 }
 
-// requestReloadIfChanged asks for the changes in the scope to be read
-// again if the trees differ from the ones shown.
 func (m *model) requestReloadIfChanged() { m.reloads.want = true }
 
-// reloadState tracks reloads of the Changes tab. Each reload runs git in
-// a command, one at a time. A request made during a reload starts another
-// reload once it finishes.
 type reloadState struct {
-	gen     int  // identifies the latest reload; results of older reloads are stale
-	running bool // reload gen is in progress
-	want    bool // a reload is due
-	// The due reload shows the changes even if the trees are unchanged.
-	force bool
-	// The view changed while reload gen was running, so its result is
-	// out of date.
-	stale bool
+	gen     int
+	running bool
+	want    bool
+	force   bool // show the changes even if the trees are the same
+	stale   bool // the view changed during reload gen
 }
 
-// gitTimeout limits a short git command that runs on the UI goroutine,
-// such as one that resolves a ref.
 const gitTimeout = 5 * time.Second
 
-// gitContext returns a context for a short git command on the UI
-// goroutine, which ends after gitTimeout. Call done when the command has
-// finished.
 func (m *model) gitContext(what string) (ctx context.Context, done func()) {
 	return xctx.WithTimeout(m.ctx, gitTimeout, what)
 }
 
-// reloadTimeout limits how long a reload can take. If git hangs, the
-// reload fails and the next tick tries again.
+// reloadTimeout stops a reload if git hangs.
 const reloadTimeout = time.Minute
 
-// startReload returns a command for the due reload, or nil if none is due
-// or one is already running. While the comment box is open, the reload
-// waits until the box closes.
 func (m *model) startReload() tea.Cmd {
 	l := &m.reloads
 	if !l.want || l.running || m.mode == modeComment {
@@ -679,8 +558,6 @@ func (m *model) startReload() tea.Cmd {
 	return func() tea.Msg { return in.run(ctx) }
 }
 
-// reloadInput copies what a reload needs from the model, so that the
-// reload can run in a command.
 func (m *model) reloadInput(force bool) reloadInput {
 	in := reloadInput{
 		repo: m.repo, gen: m.reloads.gen, scope: m.scope,
@@ -702,8 +579,6 @@ func (m *model) reloadInput(force bool) reloadInput {
 	return in
 }
 
-// reloadInput is the input to a reload. note explains why there is
-// nothing to compare, or is "".
 type reloadInput struct {
 	repo                       *vcs.Repo
 	gen                        int
@@ -711,24 +586,21 @@ type reloadInput struct {
 	base, oldest, newest, note string
 	turnTree, shownTrees       string
 	force                      bool
-	prevFiles                  map[string]changedFile // the files currently shown, keyed by path
+	prevFiles                  map[string]changedFile
 }
 
-// changesMsg is the result of a reload.
 type changesMsg struct {
 	gen       int
 	trees     string // the two trees, as "from..to"
-	unchanged bool   // the trees match those shown and the reload was not forced
+	unchanged bool
 	files     []changedFile
 	note      string
-	tooMany   int // the number of changed files, if there are too many to show
+	tooMany   int
 	err       error
-	start     time.Time     // when the reload started
-	elapsed   time.Duration // how long it took
+	start     time.Time
+	elapsed   time.Duration
 }
 
-// run reads the changes described by in. It counts added and deleted
-// lines only for files whose content differs from in.prevFiles.
 func (in reloadInput) run(ctx context.Context) changesMsg {
 	msg := changesMsg{gen: in.gen, note: in.note, start: time.Now()}
 	ctx, cancel := xctx.WithTimeout(ctx, reloadTimeout, "reload")
@@ -748,8 +620,6 @@ func (in reloadInput) run(ctx context.Context) changesMsg {
 	return msg
 }
 
-// trees returns the IDs of the two trees that the Changes tab compares
-// for the scope.
 func (in reloadInput) trees(ctx context.Context) (oldTree, newTree string, err error) {
 	switch in.scope {
 	case scopeCommits:
@@ -772,26 +642,24 @@ func (in reloadInput) trees(ctx context.Context) (oldTree, newTree string, err e
 	return oldTree, newTree, err
 }
 
-// changes returns the changed files between oldTree and newTree, with
-// their line counts.
 func (in reloadInput) changes(ctx context.Context, oldTree, newTree string) ([]changedFile, error) {
 	files, err := in.repo.Diff(ctx, oldTree, newTree)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]changedFile, len(files))
-	var count []int // indexes of the files whose lines need counting
+	var count []int
 	for i, f := range files {
 		c := &out[i]
 		if p, ok := in.prevFiles[f.Path]; ok && p.OldText == f.OldText && p.NewText == f.NewText {
-			*c = p // unchanged, so reuse the previous counts
+			*c = p
 		} else if f.Err == nil {
 			count = append(count, i)
 		}
 		c.File = f
 	}
-	// Count in parallel on all cores. Each goroutine writes only to its
-	// own elements of out, so no locking is needed.
+	// Each goroutine writes only its own elements of out, so no lock is
+	// necessary.
 	var next atomic.Int64
 	var wg sync.WaitGroup
 	for range min(runtime.GOMAXPROCS(0), len(count)) {
@@ -807,17 +675,14 @@ func (in reloadInput) changes(ctx context.Context, oldTree, newTree string) ([]c
 	return out, nil
 }
 
-// textHash returns the 64-bit FNV-1a hash of s.
 func textHash(s string) uint64 {
 	h := fnv.New64a()
-	_, _ = h.Write([]byte(s)) // writing to a hash.Hash never fails
+	_, _ = h.Write([]byte(s))
 	return h.Sum64()
 }
 
-// onChanges shows the result of a reload. After a failure, a later tick
-// tries again after a delay. A failure keeps the files that are shown, and
-// the error replaces them only if no files are shown. If the view changed
-// during the reload, another reload starts.
+// onChanges keeps the shown files after a failure. The error replaces
+// them only if no files show.
 func (m *model) onChanges(msg changesMsg) {
 	l := &m.reloads
 	if msg.gen != l.gen {
@@ -825,14 +690,11 @@ func (m *model) onChanges(msg changesMsg) {
 	}
 	l.running = false
 	if l.stale || m.mode == modeComment {
-		// Do not change the view while the comment box is open. The reload
-		// runs again later.
 		l.want, l.stale = true, false
 		return
 	}
-	// The first load reads files and objects that are not yet cached, so
-	// its duration says nothing about later reloads. After a failure, the
-	// retry delay applies instead.
+	// The first load is uncached, so its duration tells nothing about
+	// later reloads. After a failure, the retry delay applies instead.
 	m.reloadAt = time.Time{}
 	if m.changesLoaded && msg.err == nil {
 		m.reloadAt = msg.start.Add(min(reloadPauseFactor*msg.elapsed, maxReloadPause))
@@ -852,8 +714,8 @@ func (m *model) onChanges(msg changesMsg) {
 	}
 	m.shownScope = m.scope
 	if note != "" {
-		// A note for too many files comes with the trees, so that the next
-		// reload of the same trees does nothing.
+		// A note for too many files keeps the trees. A reload of the same
+		// trees then does nothing.
 		m.changes.pane.note, m.changes.files, m.shownTrees = note, nil, ""
 		m.changes.tooMany = msg.tooMany
 		if err == nil {
@@ -872,8 +734,6 @@ func (m *model) onChanges(msg changesMsg) {
 	m.changes.cur = slices.IndexFunc(m.changes.files, func(f changedFile) bool { return f.Path == curPath })
 	m.buildBothNavigators()
 	if f := m.curChangedFile(); f == nil || f.Path != curPath {
-		// A different file is now shown, so reset the cursor and the
-		// selection, but keep the horizontal scroll.
 		m.changes.pane.cur, m.changes.pane.top, m.changes.pane.selStart = 0, 0, -1
 	}
 	if len(m.changes.files) == 0 {
@@ -882,37 +742,28 @@ func (m *model) onChanges(msg changesMsg) {
 	m.renderChanges()
 }
 
-// ensureAllFiles starts reading the entries of the Files tab if they
-// have not been read yet.
 func (m *model) ensureAllFiles() {
 	if m.allFiles.entries == nil {
 		m.allFiles.listing.want = true
 	}
 }
 
-// reloadAllFiles reads the shown file of the Files tab again, and starts
-// reading the entries again.
 func (m *model) reloadAllFiles() {
 	m.allFilesPending = false
 	m.allFiles.listing.want = true
 	m.reloadShownFile()
 }
 
-// listState tracks the reads of the entries of the Files tab. Each read
-// runs git in a command, one at a time. A request made during a read
-// starts another read once it finishes.
 type listState struct {
-	gen     int  // identifies the latest read; results of older reads are stale
-	running bool // read gen is in progress
-	want    bool // a read is due
+	gen     int
+	running bool
+	want    bool
 }
 
-// maxListedFiles is the most entries that the Files tab lists. Building
-// the tree of the file list takes time in proportion to the entries.
+// maxListedFiles exists because the file list tree takes time in
+// proportion to the entries.
 const maxListedFiles = 200_000
 
-// filesMsg is the result of reading the entries of the Files tab. more
-// counts the entries left out past maxListedFiles.
 type filesMsg struct {
 	gen     int
 	entries []vcs.Entry
@@ -920,9 +771,6 @@ type filesMsg struct {
 	err     error
 }
 
-// startFiles returns a command for the due read of the entries of the
-// Files tab, or nil if none is due or one is already running. While the
-// comment box is open, the read waits until the box closes.
 func (m *model) startFiles() tea.Cmd {
 	l := &m.allFiles.listing
 	if !l.want || l.running || m.mode == modeComment {
@@ -945,17 +793,12 @@ func (m *model) startFiles() tea.Cmd {
 	}
 }
 
-// fileJump is a jump to a line of a file in the Files tab.
 type fileJump struct {
 	path string
 	side diff.Side
 	line int
 }
 
-// onFiles shows the entries read for the Files tab, keeping the current
-// file selected. On error, it keeps the old list and shows the error. It
-// then does the jump that waited for the entries, if any. It returns the
-// command that searches the new entries if the search is open.
 func (m *model) onFiles(msg filesMsg) tea.Cmd {
 	l, af := &m.allFiles.listing, &m.allFiles
 	if msg.gen != l.gen {
@@ -1000,9 +843,6 @@ func (m *model) onFiles(msg filesMsg) tea.Cmd {
 	return nil
 }
 
-// buildBothNavigators rebuilds the rows of both file lists after the
-// Changes tab changes, because the Files tab marks directories that
-// contain changes.
 func (m *model) buildBothNavigators() {
 	m.buildChangesNavigator()
 	if m.allFiles.entries != nil {
@@ -1010,8 +850,8 @@ func (m *model) buildBothNavigators() {
 	}
 }
 
-// Update handles a message. After a self-update, it restarts the program
-// once no work can be lost.
+// Update handles a message. After a self-update, it restarts when no work
+// can be lost.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.holdInput(msg) {
@@ -1019,15 +859,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	} else {
 		cmd = m.handleMsg(msg)
 	}
-	// Start any reload that handling the messages requested.
 	cmd = tea.Batch(cmd, m.releaseInput(), m.startReload(), m.startFiles())
 	// The colours only draw the screen again, so they are not pending work.
 	colors := m.awaitColors()
 	if m.updatePhase != updateDone {
 		return m, tea.Batch(cmd, colors)
 	}
-	// The new process runs ticks and watcher checks itself, so they do
-	// not count as pending work.
+	// The new process runs its own ticks and watcher checks. They are not
+	// pending work.
 	hasPending := cmd != nil
 	switch msg.(type) {
 	case tickMsg, watchedMsg, reloadDueMsg:
@@ -1039,9 +878,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, colors)
 }
 
-// waiting reports whether the shown tab is still loading the data that
-// key presses act on: the first changes, or the first list of the Files
-// tab.
 func (m *model) waiting() bool {
 	switch m.tab {
 	case tabChanges:
@@ -1052,11 +888,8 @@ func (m *model) waiting() bool {
 	return false
 }
 
-// holdInput reports whether Update must hold the input msg until the tab
-// stops [model.waiting], as if the program were busy loading. Input is
-// then handled in the order it came. A key that quits or switches tabs
-// does not wait if no other input is held, so the user can leave a tab
-// that loads slowly.
+// holdInput lets a key that quits or switches tabs skip the wait. The
+// user can then leave a slow tab.
 func (m *model) holdInput(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.PasteMsg, tea.MouseClickMsg, tea.MouseMotionMsg,
@@ -1075,8 +908,6 @@ func (m *model) holdInput(msg tea.Msg) bool {
 		m.keys.TabChanges, m.keys.TabAllFiles, m.keys.TabPR)
 }
 
-// releaseInput handles the held input, in order, until a tab is waiting
-// again.
 func (m *model) releaseInput() tea.Cmd {
 	var cmds []tea.Cmd
 	for len(m.held) > 0 && !m.waiting() {
@@ -1087,7 +918,6 @@ func (m *model) releaseInput() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// handleMsg does the work of Update for msg.
 func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
@@ -1118,7 +948,7 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 	case tickMsg:
 		cmd = tea.Batch(tick(tickInterval), m.onTick())
 	case colorsMsg:
-		m.colorsTicking = false // Update asks for the next one
+		m.colorsTicking = false
 	case watchedMsg:
 		cmd = m.onWatched(msg)
 	case tea.BackgroundColorMsg:
@@ -1160,8 +990,8 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 	case editorPaneMsg:
 		cmd = m.onEditorPane(msg)
 	case tea.MouseClickMsg:
-		// Find the clicked row on the current screen first, then make the
-		// view follow the cursor.
+		// Find the clicked row on the current screen before the view
+		// follows the cursor.
 		cmd = m.onClick(msg.Mouse())
 		m.followCursor()
 		m.scrollToCursor()
@@ -1169,7 +999,7 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 	case tea.MouseMotionMsg:
 		m.onDrag(msg.Mouse())
 	case tea.MouseReleaseMsg:
-		cmd = m.onMouseUp(msg.Mouse()) // may open the comment box, which can be off screen
+		cmd = m.onMouseUp(msg.Mouse()) // the comment box it opens can be off screen
 	case tea.MouseWheelMsg:
 		m.onWheel(msg.Mouse())
 	case tea.PasteMsg:
@@ -1183,18 +1013,15 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// followCursor makes every pane and file list keep its cursor on screen
-// again.
 func (m *model) followCursor() {
 	m.changes.pane.following, m.allFiles.pane.following, m.pr.pane.following = true, true, true
 	m.changes.navigator.following, m.allFiles.navigator.following = true, true
 }
 
-// onKey passes a key press to the part of the screen that has focus.
 func (m *model) onKey(msg tea.KeyPressMsg) tea.Cmd {
 	m.log.Debug("key", "key", m.loggedKey(msg), "mode", m.mode, "scope", m.scope)
-	// Any key other than ], [ or Esc cancels a pending jump to another
-	// file, except keys pressed in the quit prompt.
+	// Keys other than ], [ or Esc cancel a pending jump to another file.
+	// Keys in the quit prompt do not.
 	inQuit := m.overlay != nil && m.overlay.kind == overlayQuit
 	step := key.Matches(msg, m.keys.NextHunk, m.keys.PrevHunk)
 	if !inQuit && !step && msg.Code != tea.KeyEscape {
@@ -1211,10 +1038,7 @@ func (m *model) onKey(msg tea.KeyPressMsg) tea.Cmd {
 	return m.updateNormal(msg)
 }
 
-// loggedKey returns the name of the key press msg for the debug log. While
-// the user types into the comment box or another text input, the log must
-// not hold what they type, so it names only keys that type no text, such
-// as enter, and gives "text" for the others.
+// loggedKey hides typed text from the debug log.
 func (m *model) loggedKey(msg tea.KeyPressMsg) string {
 	typing := m.mode == modeComment || m.mode == modeFind ||
 		m.mode == modeOverlay && m.overlay != nil && m.overlay.hasInput()
@@ -1224,9 +1048,6 @@ func (m *model) loggedKey(msg tea.KeyPressMsg) string {
 	return msg.String()
 }
 
-// onPaste inserts pasted text into the comment box, the overlay input or
-// the find bar. Line breaks become \n; the one-line inputs turn them into
-// spaces.
 func (m *model) onPaste(text string) tea.Cmd {
 	text = unixLines(text)
 	switch {
@@ -1249,53 +1070,41 @@ func (m *model) onPaste(text string) tea.Cmd {
 	return nil
 }
 
-// unixLines replaces each \r\n and each lone \r in s with \n. Terminals
-// often paste \r\n, which the inputs would otherwise read as two line
-// breaks.
+// unixLines exists because terminals often paste \r\n, which the inputs
+// read as two line breaks.
 func unixLines(s string) string {
 	return strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(s)
 }
 
-// colorTicks is how often, in one-second ticks, rexdiff asks the terminal
-// for its colours.
+// colorTicks is in one-second ticks.
 const colorTicks = 3
 
-// Delays between reloads.
 const (
-	// reloadPauseFactor sets the pause between reloads: the next reload
-	// starts this many times as long as the last one took after the start
-	// of the last one, but at most maxReloadPause after it, so reloading
-	// takes at most 1/reloadPauseFactor of the time. The watcher in vcs
-	// has its own pause.
+	// The next reload starts reloadPauseFactor times the last duration
+	// after the last start. Reloads thus use at most 1/reloadPauseFactor
+	// of the time.
 	reloadPauseFactor = 20
 	maxReloadPause    = 30 * time.Second
-	minRetryDelay     = time.Second // the first delay after a failure
-	maxRetryDelay     = time.Minute // the longest delay after a failure
+	minRetryDelay     = time.Second
+	maxRetryDelay     = time.Minute
 )
 
-// reloadInterval is the time between reloads when there is no watcher.
 const reloadInterval = 5 * time.Second
 
-// retryTimer schedules the next attempt after a failure. Each failure
-// doubles the delay, from minRetryDelay up to maxRetryDelay.
 type retryTimer struct {
-	at   time.Time     // the time of the next attempt, or zero
-	wait time.Duration // the delay to use after the next failure, or 0
+	at   time.Time
+	wait time.Duration
 }
 
-// fail records a failure at now and schedules the next attempt.
 func (r *retryTimer) fail(now time.Time) {
 	w := max(r.wait, minRetryDelay)
 	r.at, r.wait = now.Add(w), min(2*w, maxRetryDelay)
 }
 
-// due reports whether an attempt is scheduled at or before now.
 func (r *retryTimer) due(now time.Time) bool {
 	return !r.at.IsZero() && !now.Before(r.at)
 }
 
-// retry schedules the next reload after the failure err, with a delay
-// that doubles on each failure. A nil err clears the delay.
 func (m *model) retry(err error) {
 	if err == nil {
 		m.reloadRetry = retryTimer{}
@@ -1305,23 +1114,19 @@ func (m *model) retry(err error) {
 	m.reloadPending = true
 }
 
-// stopWatch logs err and drops the watcher. A later tick starts it again
-// after a delay.
 func (m *model) stopWatch(err error) {
 	m.log.Warn("watch failed", "err", err)
 	m.watch = nil
 	m.watchRetry.fail(time.Now())
 }
 
-// watchStartedMsg carries a new watcher, or the error from starting it.
 type watchStartedMsg struct {
 	w   *vcs.Watcher
 	err error
 }
 
-// startWatch returns a command that starts watching the repository for
-// changes. Starting lists the files, which can take seconds in a large
-// repository.
+// startWatch runs in a command, because listing the files can take
+// seconds in a large repository.
 func (m *model) startWatch() tea.Cmd {
 	m.watchStarting = true
 	repo, ctx := m.repo, m.ctx
@@ -1333,8 +1138,6 @@ func (m *model) startWatch() tea.Cmd {
 	}
 }
 
-// onWatchStarted keeps the new watcher. After an error, a later tick
-// tries again.
 func (m *model) onWatchStarted(msg watchStartedMsg) {
 	m.watchStarting = false
 	if msg.err != nil {
@@ -1344,12 +1147,7 @@ func (m *model) onWatchStarted(msg watchStartedMsg) {
 	m.watch, m.watchRetry.at = msg.w, time.Time{}
 }
 
-// watchChanges reports the changes seen on a tick. With a watcher, it
-// returns a command that checks the watcher, and onWatched handles the
-// result. Only one check runs at a time, and a tick during a check sees no
-// change. Without a watcher, it reports that both files and refs changed
-// once every reloadInterval. While the watcher starts, it reports no
-// change: the first check of the new watcher reports both kinds.
+// one, it reports files and refs as changed each reloadInterval.
 func (m *model) watchChanges() (vcs.Change, tea.Cmd) {
 	now := time.Now()
 	switch {
@@ -1385,8 +1183,6 @@ func (m *model) watchChanges() (vcs.Change, tea.Cmd) {
 	}
 }
 
-// onWatched handles the result of a watcher check. After an error, it
-// drops the watcher and treats both files and refs as changed.
 func (m *model) onWatched(msg watchedMsg) tea.Cmd {
 	m.watching = false
 	m.log.Debug("watch", "took", msg.took, "files", msg.ch.Files, "refs", msg.ch.Refs)
@@ -1396,11 +1192,8 @@ func (m *model) onWatched(msg watchedMsg) tea.Cmd {
 		return m.onChange(vcs.Change{Files: true, Refs: true})
 	}
 	m.watchRetry = retryTimer{}
-	// The watcher misses writes made to a path before Include added it, so
-	// when the watched paths change, the Files tab rereads what the new
-	// paths cover: just the shown file if only the shown file is new,
-	// otherwise the file list as well. The reload waits while another tab
-	// is shown or the comment box is open.
+	// The watcher misses writes to a path before Include adds it. So when
+	// the watched paths change, read them again.
 	sameDirs := slices.Equal(msg.dirs, m.watchedDirs)
 	if !sameDirs || msg.file != m.watchedFile {
 		switch {
@@ -1416,8 +1209,6 @@ func (m *model) onWatched(msg watchedMsg) tea.Cmd {
 	return m.onChange(msg.ch)
 }
 
-// onTick checks for changes and does the periodic work. Update schedules
-// the next tick.
 func (m *model) onTick() tea.Cmd {
 	m.ticks++
 	ch, check := m.watchChanges()
@@ -1430,20 +1221,18 @@ func (m *model) onTick() tea.Cmd {
 		m.flashText = ""
 	}
 	if m.rex != nil && !m.agentsSampled && m.sampleRetry.due(now) {
-		m.sampleRetry.at = time.Time{} // only one listing at a time
+		m.sampleRetry.at = time.Time{}
 		cmds = append(cmds, m.fetchAgents(agentsMsg{}))
 	}
 	if m.tab == tabPR && time.Since(m.pr.fetch.polled) >= prInterval {
 		cmds = append(cmds, m.requestPR(false))
 	}
-	if m.ticks%colorTicks == 0 { // pick up changes to the terminal theme
+	if m.ticks%colorTicks == 0 {
 		cmds = append(cmds, requestColors...)
 	}
 	return tea.Batch(cmds...)
 }
 
-// onChange reloads the current tab if ch reports a change or one is
-// pending. Each tick calls it once.
 func (m *model) onChange(ch vcs.Change) tea.Cmd {
 	var cmds []tea.Cmd
 	if ch.Files && m.pendingTurn != nil {
@@ -1452,18 +1241,14 @@ func (m *model) onChange(ch vcs.Change) tea.Cmd {
 	m.reloadPending = m.reloadPending || ch.Files || ch.Refs
 	m.allFilesPending = m.allFilesPending || ch.Files
 	m.reloadIfDue()
-	// Without a watcher, every tick reports a ref change, so leave the
-	// pull request to its own polling.
+	// Without a watcher, every tick reports a ref change. The PR then
+	// uses its own polling.
 	if ch.Refs && m.watch != nil {
 		cmds = append(cmds, m.reloadPR())
 	}
 	return tea.Batch(cmds...)
 }
 
-// reloadIfDue reloads the current tab if a change is pending. On the
-// Changes tab, the reload also waits for the pause after the last reload
-// and for any retry delay. Nothing is reloaded while the comment box is
-// open.
 func (m *model) reloadIfDue() {
 	if m.mode == modeComment {
 		return
@@ -1473,15 +1258,14 @@ func (m *model) reloadIfDue() {
 	case m.tab == tabChanges && m.reloadPending && !m.reloads.running &&
 		!now.Before(m.reloadAt) && !now.Before(m.reloadRetry.at):
 		m.reloadPending = false
-		m.requestReloadIfChanged() // onChanges sets the next reloadAt
+		m.requestReloadIfChanged()
 	case m.tab == tabAllFiles && m.allFilesPending:
-		m.reloadAllFiles() // also renders the shown file
+		m.reloadAllFiles()
 	case m.tab == tabAllFiles && m.watch == nil:
 		m.reloadShownFile() // without a watcher, every tick reads the file again
 	}
 }
 
-// curPane returns the pane of the current tab.
 func (m *model) curPane() *pane {
 	switch m.tab {
 	case tabAllFiles:
@@ -1492,8 +1276,6 @@ func (m *model) curPane() *pane {
 	return &m.changes.pane
 }
 
-// sameColor reports whether a and b are the same colour, ignoring alpha.
-// A nil colour equals only another nil.
 func sameColor(a, b color.Color) bool {
 	if a == nil || b == nil {
 		return a == b

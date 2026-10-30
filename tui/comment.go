@@ -13,16 +13,11 @@ import (
 	"github.com/rednafi/rexdiff/diff"
 )
 
-// targetLine is the source line that a comment on a row is attached to.
 type targetLine struct {
 	side diff.Side
 	line int
 }
 
-// targetAt returns the line that a comment on row i of the current pane
-// would attach to, or nil if there is none. If the row changes a line on
-// side prefer, targetAt uses that side. Otherwise it uses the new side when
-// the row has one.
 func (m *model) targetAt(i int, prefer diff.Side) *targetLine {
 	p := m.curPane()
 	if p.path == "" || i < 0 || i >= len(p.rows) {
@@ -40,7 +35,6 @@ func (m *model) targetAt(i int, prefer diff.Side) *targetLine {
 	return nil
 }
 
-// curChangedFile returns the selected file in the Changes tab, or nil.
 func (m *model) curChangedFile() *changedFile {
 	if m.changes.cur >= len(m.changes.files) {
 		return nil
@@ -48,9 +42,6 @@ func (m *model) curChangedFile() *changedFile {
 	return &m.changes.files[m.changes.cur]
 }
 
-// contentFor returns the text of the given side of the file at path, as
-// the current tab shows it. It returns "" if the tab is not showing that
-// file.
 func (m *model) contentFor(path string, side diff.Side) string {
 	if f := m.curChangedFile(); m.tab == tabChanges && f != nil && f.Path == path {
 		if side == diff.SideOld {
@@ -64,9 +55,6 @@ func (m *model) contentFor(path string, side diff.Side) string {
 	return ""
 }
 
-// diffRev returns the revision range of the diff in the Changes tab, for
-// use in a [diff.Anchor]. It returns "" when the diff is of the working
-// tree.
 func (m *model) diffRev() string {
 	if m.scope == scopeCommits {
 		return m.oldest + ".." + m.newest
@@ -74,8 +62,6 @@ func (m *model) diffRev() string {
 	return ""
 }
 
-// anchorOf returns the anchor for a comment made in tab t. A comment made
-// outside the Changes tab is always on the working tree.
 func (m *model) anchorOf(t tab) diff.Anchor {
 	if t == tabChanges {
 		return diff.Anchor{InDiff: true, Rev: m.diffRev()}
@@ -83,22 +69,15 @@ func (m *model) anchorOf(t tab) diff.Anchor {
 	return diff.Anchor{}
 }
 
-// curAnchor returns the anchor for a comment made in the current tab.
 func (m *model) curAnchor() diff.Anchor { return m.anchorOf(m.tab) }
 
-// commentOnCurRev reports whether the current scope shows the diff that c
-// was made on. The user can edit c from the comment list only if it does.
 func (m *model) commentOnCurRev(c *diff.Comment) bool {
 	return !c.Anchor.InDiff || c.Anchor.Rev == m.diffRev()
 }
 
-// commentStale reports whether the lines of c may no longer hold the code
-// that c was made on. Comments do not follow moved code, so a comment is
-// stale when its lines now hold other code or are past the end of the
-// file, as [diff.Comment.Moved] reports. A comment on a diff is also stale
-// when its file is no longer among the changed files, and any other
-// comment when its file no longer exists. The code of a comment on a
-// different diff than the one shown is not checked.
+// commentStale reports whether the lines of c may no longer hold its code.
+// Comments do not follow moved code. It returns false for a comment on a
+// diff that is not shown.
 func (m *model) commentStale(c *diff.Comment) bool {
 	if c.Anchor.InDiff {
 		i := slices.IndexFunc(m.changes.files, func(f changedFile) bool { return f.Path == c.Path })
@@ -129,13 +108,9 @@ func (m *model) commentStale(c *diff.Comment) bool {
 		}
 		m.commentFiles[c.Path] = f
 	}
-	// The code of a binary or unreadable file is not checked.
 	return f.err == nil && c.Moved(f.text)
 }
 
-// fileCopy is the content of a file in the working tree, read when the
-// file had the given size and modification time. err is the error from
-// reading it.
 type fileCopy struct {
 	size    int64
 	modTime time.Time
@@ -143,9 +118,8 @@ type fileCopy struct {
 	err     error
 }
 
-// jumpToNearLine moves the cursor to the line nearest line Start of c if
-// the current pane shows the file of c but not that line, for example
-// because the file is now shorter.
+// jumpToNearLine is for when the pane shows the file of c but not its
+// line, for example because the file is now shorter.
 func (m *model) jumpToNearLine(c *diff.Comment) {
 	p := m.curPane()
 	hasSide := func(r diff.Row) bool { return r.Line(c.Side) > 0 }
@@ -155,7 +129,6 @@ func (m *model) jumpToNearLine(c *diff.Comment) {
 	p.cur = p.lineStart(lineRow(p.rows, c.Side, c.Start))
 }
 
-// curComment returns the comment on the cursor line, or nil.
 func (m *model) curComment() *diff.Comment {
 	p := m.curPane()
 	target := m.targetAt(p.cur, diff.SideNew)
@@ -165,8 +138,6 @@ func (m *model) curComment() *diff.Comment {
 	return m.commentOn(p.cur, target)
 }
 
-// selRange returns the first and last rows of the visual selection. With
-// no selection, it returns the rows of the cursor line.
 func (p *pane) selRange() (lo, hi int) {
 	if p.selStart < 0 {
 		return p.cur, p.lineEnd(p.cur)
@@ -175,8 +146,7 @@ func (p *pane) selRange() (lo, hi int) {
 }
 
 // selRows returns the source rows of the selection. In rendered Markdown,
-// these are all the source rows of the selected blocks, including any
-// deleted lines between them.
+// it includes the deleted lines between the selected blocks.
 func (p *pane) selRows() []diff.Row {
 	lo, hi := p.selRange()
 	if p.srcRows == nil {
@@ -188,15 +158,10 @@ func (p *pane) selRows() []diff.Row {
 	return p.srcRows[i : j+1]
 }
 
-// span returns the first and last rows of the lines from row a to row b.
-// a and b can be in either order.
 func (p *pane) span(a, b int) (lo, hi int) {
 	return min(a, b), p.lineEnd(max(a, b))
 }
 
-// openComment opens the comment box for a new comment on the selection or,
-// with no selection, on the cursor line. A line can have more than one
-// comment.
 func (m *model) openComment(prefer diff.Side) tea.Cmd {
 	p := m.curPane()
 	target := m.targetAt(p.cur, prefer)
@@ -221,8 +186,8 @@ func (m *model) openComment(prefer diff.Side) tea.Cmd {
 	return m.commentInput.Focus()
 }
 
-// editComment opens the comment box with the text of c. If itemRow is 0
-// or more, the comment list opens again at that row when the box closes.
+// editComment opens the comment list again at itemRow when the box
+// closes, if itemRow is 0 or more.
 func (m *model) editComment(c *diff.Comment, itemRow int) tea.Cmd {
 	m.draft = &draft{Comment: *c, editID: c.ID, itemRow: itemRow}
 	m.sizeCommentInput()
@@ -232,19 +197,14 @@ func (m *model) editComment(c *diff.Comment, itemRow int) tea.Cmd {
 	return m.commentInput.Focus()
 }
 
-// commentShown reports whether the current pane shows the last line of c
-// in the same diff or file view that c was made on.
 func (m *model) commentShown(c *diff.Comment) bool {
 	p := m.curPane()
 	return m.curAnchor() == c.Anchor && p.path == c.Path && p.rowOf(c.Side, c.End) >= 0
 }
 
-// updateComment handles a key while the comment box is open.
 func (m *model) updateComment(msg tea.KeyPressMsg) tea.Cmd {
 	switch {
 	case key.Matches(msg, m.keys.SaveComment):
-		// Blank text cancels. Editing keeps the comment's ID and its place
-		// in the list.
 		d := m.draft
 		text := strings.TrimSpace(m.commentInput.Value())
 		edited := m.comments.Find(d.editID)
@@ -271,9 +231,6 @@ func (m *model) updateComment(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
-// closeComment closes the comment box, clears the selection and runs any
-// reload that was put off while the box was open. If the edit started from
-// the comment list, it opens the list again.
 func (m *model) closeComment() {
 	row := m.draft.itemRow
 	m.mode, m.draft = modeNormal, nil
@@ -286,9 +243,6 @@ func (m *model) closeComment() {
 	}
 }
 
-// nearestNewLine returns the new-side line number of row i. For a row with
-// no new line, such as a deleted line, it returns the next new line below,
-// then the nearest one above, and 1 if there are none.
 func nearestNewLine(rows []diff.Row, i int) int {
 	if j := slices.IndexFunc(rows[i:], func(r diff.Row) bool { return r.New > 0 }); j >= 0 {
 		return rows[i+j].New
@@ -301,9 +255,6 @@ func nearestNewLine(rows []diff.Row, i int) int {
 	return 1
 }
 
-// onEdit edits the comment on the cursor line or, if there is none, opens
-// the file in an editor at that line. It does nothing while a selection is
-// active.
 func (m *model) onEdit() tea.Cmd {
 	if m.curPane().selStart >= 0 {
 		return nil

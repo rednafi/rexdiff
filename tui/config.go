@@ -17,23 +17,21 @@ type Layout string
 
 // The supported layouts.
 const (
-	LayoutUnified Layout = "unified" // old and new lines in one column
-	LayoutSplit   Layout = "split"   // old lines on the left, new lines on the right
+	LayoutUnified Layout = "unified"
+	LayoutSplit   Layout = "split"
 )
 
 // Scope selects what the Changes tab compares the working tree with.
 type Scope string
 
-// The scopes that can be set in the config. Each comment says what the
-// working tree is compared with.
+// The scopes that the config can set. Each comment names the base of the
+// comparison.
 const (
 	ScopeUncommitted Scope = "uncommitted" // HEAD
 	ScopeBranch      Scope = "branch"      // the base branch
 	ScopeLastTurn    Scope = "last-turn"   // the start of the last agent turn
 )
 
-// markdownView selects whether a Markdown file is shown as source or
-// rendered.
 type markdownView string
 
 const (
@@ -41,7 +39,6 @@ const (
 	markdownViewRendered markdownView = "rendered"
 )
 
-// position is where the file list sits relative to the main pane.
 type position string
 
 const (
@@ -51,7 +48,6 @@ const (
 	positionTop    position = "top"
 )
 
-// next returns the position after p, clockwise around the main pane.
 func (p position) next() position {
 	switch p {
 	case positionRight:
@@ -64,12 +60,9 @@ func (p position) next() position {
 	return positionRight
 }
 
-// stacked reports whether the file list is above or below the main pane,
-// in which case it takes rows from the body rather than columns.
 func (p position) stacked() bool { return p == positionTop || p == positionBottom }
 
-// The values that each setting accepts, in the order the error messages
-// list them.
+// The values that each setting accepts, in error message order.
 var (
 	layouts       = []Layout{LayoutUnified, LayoutSplit}
 	configScopes  = []Scope{ScopeUncommitted, ScopeBranch, ScopeLastTurn}
@@ -77,42 +70,29 @@ var (
 	positions     = []position{positionRight, positionBottom, positionLeft, positionTop}
 )
 
-// config holds the rexdiff settings. The toggle action reads them from
-// rexdiff.lua, in the same directory as the Rex init.lua, and passes them
-// as JSON in --config.
+// config holds the rexdiff settings. The toggle action reads rexdiff.lua
+// next to the Rex init.lua. It passes the settings as JSON in --config.
 type config struct {
-	Layout       Layout `json:"layout"`
-	DefaultScope Scope  `json:"default_scope"`
-	// ReviewPrefix is the text that starts each sent or copied review.
-	ReviewPrefix string `json:"review_prefix"`
-	// Editor is the command that opens a file, such as
-	// "code -g {file}:{line}".
-	Editor string `json:"editor"`
-	// URLOpener is the command that opens a URL, such as "open {url}".
+	Layout       Layout       `json:"layout"`
+	DefaultScope Scope        `json:"default_scope"`
+	ReviewPrefix string       `json:"review_prefix"`
+	Editor       string       `json:"editor"`
 	URLOpener    string       `json:"url_opener"`
 	MarkdownView markdownView `json:"markdown_view"`
-	// FileList is where the file list goes: right, bottom, left or top.
-	FileList position `json:"file_list"`
-	// FileListWidth is the width in columns of the file list when it is at
-	// the left or right. It is at least minNavigatorWidth, or 0 if not set.
-	FileListWidth int `json:"file_list_width"`
-	// DiffSigns marks changed lines with + or - instead of a coloured bar.
-	DiffSigns bool `json:"diff_signs"`
-	// FocusAgent reports whether focus moves to the agent after sending a
-	// review. Nil means true.
-	FocusAgent *bool `json:"focus_agent_after_send"`
-	// GitHubHost, GitLabHost and AzureHost are the bare hostnames of
-	// self-hosted forges.
+	FileList     position     `json:"file_list"`
+	// FileListWidth is in columns. It is 0 if not set.
+	FileListWidth int  `json:"file_list_width"`
+	DiffSigns     bool `json:"diff_signs"`
+	// FocusAgent nil means true.
+	FocusAgent  *bool       `json:"focus_agent_after_send"`
 	GitHubHost  string      `json:"github_host"`
 	GitLabHost  string      `json:"gitlab_host"`
 	AzureHost   string      `json:"azure_devops_host"`
 	Keybindings keybindings `json:"keybindings"`
 }
 
-// keybindings holds the keys bound to each action. The JSON names are the
-// action names. A nil list keeps the default keys.
+// A nil list keeps the default keys.
 type keybindings struct {
-	// Movement.
 	Down     []string `json:"down"`
 	Up       []string `json:"up"`
 	PageDown []string `json:"page-down"`
@@ -127,7 +107,6 @@ type keybindings struct {
 	PrevFile []string `json:"prev-file"`
 	Focus    []string `json:"focus"`
 
-	// Scopes and tabs.
 	ScopeUncommitted []string `json:"scope-uncommitted"`
 	ScopeBranch      []string `json:"scope-branch"`
 	ScopeLastTurn    []string `json:"scope-last-turn"`
@@ -138,7 +117,6 @@ type keybindings struct {
 	TabAllFiles      []string `json:"tab-all-files"`
 	TabPR            []string `json:"tab-pr"`
 
-	// Comments.
 	Select      []string `json:"select"`
 	Comment     []string `json:"comment"`
 	Edit        []string `json:"edit"`
@@ -149,7 +127,6 @@ type keybindings struct {
 	Send        []string `json:"send"`
 	Copy        []string `json:"copy"`
 
-	// View and other actions.
 	Search            []string `json:"search"`
 	Find              []string `json:"find"`
 	GotoLine          []string `json:"goto-line"`
@@ -172,8 +149,6 @@ type keybindings struct {
 	Preview      []string `json:"preview"`
 }
 
-// useOldNames moves keys set under a former action name to the current
-// name. It returns an error if both names have keys.
 func (kb *keybindings) useOldNames() error {
 	names := []struct {
 		name, old     string
@@ -196,12 +171,8 @@ func (kb *keybindings) useOldNames() error {
 	return nil
 }
 
-// minNavigatorWidth is the smallest allowed width of the file list, in
-// columns.
 const minNavigatorWidth = 16
 
-// defaultConfig returns the settings used for anything --config does not
-// set.
 func defaultConfig() config {
 	return config{
 		Layout:       LayoutUnified,
@@ -211,9 +182,6 @@ func defaultConfig() config {
 	}
 }
 
-// parseConfig decodes the JSON text on top of the default settings. An
-// empty text returns the defaults. It returns an error for an unknown key,
-// a key in the wrong case, or an invalid value.
 func parseConfig(text string) (config, error) {
 	c := defaultConfig()
 	if text == "" {
@@ -237,8 +205,6 @@ func parseConfig(text string) (config, error) {
 	return c, nil
 }
 
-// configError converts a JSON decoding error into one that names the
-// setting, such as "keybindings.send".
 func configError(err error) error {
 	se, ok := errors.AsType[*json.SemanticError](err)
 	if !ok {
@@ -266,7 +232,6 @@ func configError(err error) error {
 		key, want, jsonKinds[se.JSONKind])
 }
 
-// jsonKinds describes each kind of JSON value in Lua terms.
 var jsonKinds = map[jsontext.Kind]string{
 	'"': "text",
 	'0': "a number",
@@ -277,8 +242,6 @@ var jsonKinds = map[jsontext.Kind]string{
 	'n': "nil",
 }
 
-// validate returns an error for the first invalid setting. set holds the
-// keys that the config text sets.
 func (c config) validate(set map[string]jsontext.Value) error {
 	if err := c.validateChoices(set); err != nil {
 		return err
@@ -292,8 +255,6 @@ func (c config) validate(set map[string]jsontext.Value) error {
 	return c.validateKeybindings()
 }
 
-// validateChoices checks the layout, default scope, Markdown view and file
-// list settings. set holds the keys that the config text sets.
 func (c config) validateChoices(set map[string]jsontext.Value) error {
 	if err := cmp.Or(
 		validateChoice("layout", c.Layout, layouts),
@@ -310,9 +271,6 @@ func (c config) validateChoices(set map[string]jsontext.Value) error {
 	return nil
 }
 
-// validateTexts checks the commands and the review prefix. A command may
-// use only its own placeholders, and a value that the user sets must not
-// be blank.
 func (c config) validateTexts(set map[string]jsontext.Value) error {
 	commands := []struct {
 		key, value, want string
@@ -337,7 +295,6 @@ func (c config) validateTexts(set map[string]jsontext.Value) error {
 			return invalidError(k.key, k.want, k.value)
 		}
 	}
-	// The first word of the URL opener must name a program, not the URL.
 	w := splitWords(c.URLOpener)
 	noProgram := len(w) == 0 || w[0] == "" || strings.Contains(w[0], "{url}")
 	if c.URLOpener != "" && noProgram {
@@ -349,7 +306,6 @@ func (c config) validateTexts(set map[string]jsontext.Value) error {
 	return nil
 }
 
-// validateHosts checks the hostnames of the self-hosted forges.
 func (c config) validateHosts(set map[string]jsontext.Value) error {
 	hosts := []struct{ key, value string }{
 		{"github_host", c.GitHubHost},
@@ -364,9 +320,6 @@ func (c config) validateHosts(set map[string]jsontext.Value) error {
 	return nil
 }
 
-// validateKeybindings checks the key bindings. A list that is set must not
-// be empty, and each key must have a valid name. Once the settings are
-// applied to the default keys, no key may be bound to two actions.
 func (c config) validateKeybindings() error {
 	k := defaultKeys()
 	bs := k.bindings(c.Keybindings)
@@ -386,7 +339,7 @@ func (c config) validateKeybindings() error {
 		}
 	}
 	k.applyConfig(c.Keybindings)
-	first := map[string]string{} // the first action bound to each key
+	first := map[string]string{}
 	for _, b := range bs {
 		for _, key := range b.key.Keys() {
 			switch a, ok := first[key]; {
@@ -403,14 +356,10 @@ func (c config) validateKeybindings() error {
 	return nil
 }
 
-// invalidError returns an error for an invalid value of the setting key.
-// want describes the accepted values.
 func invalidError(key, want, value string) error {
 	return fmt.Errorf("invalid value for %s: expected %s, not %q", key, want, value)
 }
 
-// hasOnlyPlaceholders reports whether every { in command starts one of the
-// known placeholders, such as {file}.
 func hasOnlyPlaceholders(command string, known ...string) bool {
 	for _, rest, ok := strings.Cut(command, "{"); ok; _, rest, ok = strings.Cut(rest, "{") {
 		name, _, closed := strings.Cut(rest, "}")
@@ -427,8 +376,6 @@ const (
 	maxHostLabel = 63
 )
 
-// isHostname reports whether s is a bare DNS name, such as
-// "git.example.com", with no scheme, port, or path.
 func isHostname(s string) bool {
 	if len(s) > maxHostname {
 		return false
@@ -441,7 +388,6 @@ func isHostname(s string) bool {
 	return true
 }
 
-// isHostLabel reports whether s is a valid label of a DNS name.
 func isHostLabel(s string) bool {
 	if s == "" || len(s) > maxHostLabel || s[0] == '-' || s[len(s)-1] == '-' {
 		return false
@@ -452,12 +398,8 @@ func isHostLabel(s string) bool {
 	})
 }
 
-// focusesAgent reports whether focus moves to the agent after sending a
-// review.
 func (c config) focusesAgent() bool { return c.FocusAgent == nil || *c.FocusAgent }
 
-// validateChoice returns an error if value is not in allowed. key names
-// the setting in the error message.
 func validateChoice[T ~string](key string, value T, allowed []T) error {
 	if slices.Contains(allowed, value) {
 		return nil

@@ -1,18 +1,12 @@
 package diffview
 
-// foldMargin is the number of equal lines shown before and after each
-// change.
 const foldMargin = 3
 
-// Fold is a run of equal lines that the diff hides. Old and New are the
-// line numbers of its first line, and Lines is the number of lines. Lines
-// is 0 if no lines are hidden.
+// Fold is a run of hidden equal lines. Lines is 0 if no lines are hidden.
 type Fold struct {
 	Old, New, Lines int
 }
 
-// keptLines reports, for each line of h, whether it is within foldMargin
-// lines of a change. Such lines are never hidden.
 func keptLines(h *hunk) []bool {
 	n := len(h.Lines)
 	keep := make([]bool, n)
@@ -26,10 +20,7 @@ func keptLines(h *hunk) []bool {
 	return keep
 }
 
-// hiddenFolds returns, in order, the runs of equal lines in h that are
-// hidden. A run is hidden if it has more than one line, keep marks none of
-// its lines, and expanded is nil or returns false for it. keep is
-// keptLines(h).
+// hiddenFolds never hides a run of one line.
 func hiddenFolds(h *hunk, keep []bool, expanded func(Fold) bool) []Fold {
 	var hidden []Fold
 	oldNum, newNum := h.OldStart, h.NewStart
@@ -47,22 +38,20 @@ func hiddenFolds(h *hunk, keep []bool, expanded func(Fold) bool) []Fold {
 		if fold.Lines > 1 && (expanded == nil || !expanded(fold)) {
 			hidden = append(hidden, fold)
 		}
-		// The run has only equal lines.
 		oldNum, newNum, i = oldNum+fold.Lines, newNum+fold.Lines, j
 	}
 	return hidden
 }
 
-// foldHunk splits h into visible hunks around the hidden runs from
-// hiddenFolds. folds[i] is the fold above hunks[i]. If the last run is
-// hidden, the last hunk has no lines. keep is keptLines(h).
+// foldHunk returns folds[i] as the fold above hunks[i]. If the last run is
+// hidden, the last hunk has no lines.
 func foldHunk(h *hunk, keep []bool, hidden []Fold) (hunks []*hunk, folds []Fold) {
 	n := len(h.Lines)
 	var cur *hunk
 	var above Fold
 	oldNum, newNum := h.OldStart, h.NewStart
 	i := 0
-	shown := 0 // lines before this index belong to a run that is shown
+	shown := 0
 	for i < n {
 		if !keep[i] && i >= shown {
 			j := i
@@ -76,7 +65,7 @@ func foldHunk(h *hunk, keep []bool, hidden []Fold) (hunks []*hunk, folds []Fold)
 				oldNum, newNum, i = oldNum+fold.Lines, newNum+fold.Lines, j
 				continue
 			}
-			shown = j // the whole run is shown
+			shown = j
 		}
 		if cur == nil {
 			cur = &hunk{OldStart: oldNum, NewStart: newNum}

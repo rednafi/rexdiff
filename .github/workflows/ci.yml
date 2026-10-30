@@ -11,7 +11,6 @@ on:
 permissions:
   contents: read
 
-# On a pull request, a new run cancels the run before it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -39,12 +38,10 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # Each check fails if the files differ from what the tool makes.
       - name: go mod tidy
         run: go mod tidy -diff
       - name: go fix
         run: test -z "$(go fix -diff ./... | tee /dev/stderr)"
-      # golangci-lint also runs the formatters gofmt and gofumpt.
       - uses: golangci/golangci-lint-action@v9
         with:
           # Older releases cannot read the export data of a newer Go.

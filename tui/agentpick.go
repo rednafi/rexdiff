@@ -1,7 +1,5 @@
 package tui
 
-// The agent picker lets the user choose which agent receives the review.
-
 import (
 	"fmt"
 	"slices"
@@ -9,9 +7,6 @@ import (
 	"github.com/rednafi/rexdiff/rex"
 )
 
-// openAgentPicker opens a list of agents for the user to send the review
-// to. The cursor starts on the agent that was used last or, failing that,
-// on the agent in the pane beside rexdiff.
 func (m *model) openAgentPicker(agents []rex.Agent) {
 	ov := newOverlay(overlayAgents, "send to which agent?")
 	ov.agents = agents
@@ -47,8 +42,6 @@ func (m *model) openAgentPicker(agents []rex.Agent) {
 	m.openOverlay(ov)
 }
 
-// agent returns the agent of the agent picker item it. ok is false if it
-// is nil or matches no agent.
 func (ov *overlay) agent(it *overlayItem) (a rex.Agent, ok bool) {
 	if it == nil {
 		return rex.Agent{}, false

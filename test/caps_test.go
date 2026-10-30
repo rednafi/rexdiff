@@ -13,8 +13,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// markdownRepo returns a repository whose only change is README.md, set
-// to text.
 func markdownRepo(t *testing.T, text string) string {
 	t.Helper()
 	repo := newRepo(t)
@@ -23,20 +21,16 @@ func markdownRepo(t *testing.T, text string) string {
 	return repo
 }
 
-// rendered is the flag that shows Markdown rendered from the start.
 var rendered = []string{"-config", `{"markdown_view": "rendered"}`}
 
-// TestMarkdownTooLarge checks that a Markdown file too large to render
-// shows as its source diff, with a note in the title.
 func TestMarkdownTooLarge(t *testing.T) {
 	text := "# Big title\n\n" + strings.Repeat("Some *text* in a paragraph.\n\n", 20000) // about 600 KB
 	tm := start(t, markdownRepo(t, text), opts{args: rendered})
 	tm.waitFor("README.md", "markdown too large to render", "# Big title", "Some *text*")
 }
 
-// TestMarkdownBlockTooLarge checks that a rendered Markdown file shows a
-// block too large to render as its source, and that reference links
-// still resolve in the other blocks.
+// TestMarkdownBlockTooLarge checks that reference links still resolve in
+// the blocks that render.
 func TestMarkdownBlockTooLarge(t *testing.T) {
 	table := "| a | b |\n|---|---|\n" + strings.Repeat("| *x* | y |\n", 7000) // about 80 KB
 	text := "# Title\n\nSee [the docs][Docs].\n\n[docs]: https://example.com/docs\n\n" + table
@@ -47,9 +41,8 @@ func TestMarkdownBlockTooLarge(t *testing.T) {
 	}
 }
 
-// TestMarkdownTooDeep checks that rendered Markdown shows blocks whose
-// quotes or lists nest very deeply as source, at start-up and at any
-// width, instead of freezing while glamour renders them.
+// TestMarkdownTooDeep guards against glamour freezing on deeply nested
+// blocks.
 func TestMarkdownTooDeep(t *testing.T) {
 	text := "# Title\n\n" + strings.Repeat("> ", 100) + "deep quote\n\n" +
 		strings.Repeat("- ", 300) + "deep list\n\nAfter the *lists*.\n"
@@ -60,16 +53,12 @@ func TestMarkdownTooDeep(t *testing.T) {
 			if strings.Contains(s, "# Title") {
 				t.Errorf("the heading shows as source. The screen shows:\n%s", s)
 			}
-			// At 40 columns, the source of the blocks fills more than the
-			// screen.
 			tm.keys(":", "$", "enter")
 			tm.waitFor("After the lists.", "- - -")
 		})
 	}
 }
 
-// nestedList returns a list nested depth levels deep, with each level
-// indented to the text of the item above, which starts with marker.
 func nestedList(marker string, depth int) string {
 	var b strings.Builder
 	for d := range depth {
@@ -78,10 +67,7 @@ func nestedList(marker string, depth int) string {
 	return b.String()
 }
 
-// TestMarkdownDepth checks where rendered Markdown draws the line on
-// nesting: deep but ordinary lists, quotes and code render, while blocks
-// nested more than 12 deep, however they hide it, show as source with a
-// note.
+// TestMarkdownDepth checks the nesting limit. Blocks up to 12 deep render.
 func TestMarkdownDepth(t *testing.T) {
 	const note = "nested too deeply"
 	fence := "```\n" + strings.Repeat(" ", 26) + "deep code 26\n" +
@@ -89,10 +75,10 @@ func TestMarkdownDepth(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		block string
-		deep  bool     // whether the block shows as source with the note
-		whole bool     // whether the block takes in the whole file
-		shows []string // text the screen shows
-		hides []string // text the screen does not show
+		deep  bool
+		whole bool // the block takes in the whole file
+		shows []string
+		hides []string
 	}{
 		{name: "ordered list 9 deep", block: nestedList("1.", 9), shows: []string{"item 8"}},
 		{name: "ordered list 12 deep", block: nestedList("1.", 12), shows: []string{"item 11"}},
@@ -110,12 +96,10 @@ func TestMarkdownDepth(t *testing.T) {
 		{name: "list 300 deep", block: strings.Repeat("- ", 300) + "deep\n", deep: true, shows: []string{"- - -"}},
 		{name: "ordered list 13 deep", block: nestedList("1.", 13), deep: true, shows: []string{"1. item 12"}},
 		{name: "mixed", block: strings.Repeat("> - 1. ", 30) + "deep\n", deep: true, shows: []string{"> - 1. > - 1."}},
-		// A list item ends the code block of the item above, so the list
-		// that follows is not hidden in the fence.
+		// A list item ends the code block of the item above.
 		{name: "list after an unclosed fence", block: "- ```\n" + nestedList("-", 13), deep: true, shows: []string{"- item 12"}},
-		// Indented four columns, the fence is code and opens no block.
-		// Being indented, it joins the heading's block, and the fence takes
-		// in the rest of the file.
+		// An indented fence is code. It joins the heading's block and takes in
+		// the rest of the file.
 		{name: "indented code is not a fence", block: "    ```\n" + strings.Repeat("- ", 20) + "x\n", deep: true, whole: true, shows: []string{"- - -"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -139,10 +123,8 @@ func TestMarkdownDepth(t *testing.T) {
 	}
 }
 
-// TestMarkdownLinkDefsTooLarge checks that link definitions that many
-// references repeat do not freeze rendered Markdown. A file that would
-// take too much work shows as source with a note, and a long definition is
-// not added to the blocks that refer to it.
+// TestMarkdownLinkDefsTooLarge guards against a freeze from many
+// references to link definitions.
 func TestMarkdownLinkDefsTooLarge(t *testing.T) {
 	t.Run("many references", func(t *testing.T) {
 		var b strings.Builder
@@ -167,8 +149,6 @@ func TestMarkdownLinkDefsTooLarge(t *testing.T) {
 	})
 }
 
-// prRepo returns a repository with a GitHub remote and a directory of
-// fake tools whose gh prints a pull request with the given body.
 func prRepo(t *testing.T, body string) (repo, bin string) {
 	t.Helper()
 	repo = newRepo(t)
@@ -188,9 +168,6 @@ func prRepo(t *testing.T, body string) (repo, bin string) {
 	return repo, bin
 }
 
-// TestPRMarkdownTooHard checks that the PR tab shows a body that nests too
-// deeply, or that repeats a long link definition too often, as source
-// instead of freezing.
 func TestPRMarkdownTooHard(t *testing.T) {
 	for name, c := range map[string]struct{ body, note string }{
 		"deep quote": {strings.Repeat("> ", 100) + "deep", "text nested too deeply to render"},
@@ -209,9 +186,8 @@ func TestPRMarkdownTooHard(t *testing.T) {
 	}
 }
 
-// TestPRTooLarge checks that the PR tab cuts long comments, with a note
-// to open the PR, and that thousands of <details> tags in them do not
-// stop the tab from showing.
+// TestPRTooLarge checks that thousands of <details> tags do not stop the
+// PR tab from showing.
 func TestPRTooLarge(t *testing.T) {
 	repo := newRepo(t)
 	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -243,9 +219,6 @@ func TestPRTooLarge(t *testing.T) {
 	}
 }
 
-// TestTallLine checks that page down, half page down and down move
-// through the rows of a wrapped line taller than the screen, and then on
-// to the next line.
 func TestTallLine(t *testing.T) {
 	repo := newRepo(t)
 	testgit.Git(t, repo, "checkout", "--", "long.txt")
@@ -258,8 +231,8 @@ func TestTallLine(t *testing.T) {
 	testgit.WriteFile(t, repo, "a.go", b.String())
 	log := filepath.Join(t.TempDir(), "log")
 	tm := start(t, repo, opts{args: []string{"-log", log}})
-	// A frame that is partly drawn has no footer, a gap in the words, or a
-	// blank last line where the terminal scrolled the old lines up.
+	// A partly drawn frame has no footer or a gap in the words. Or its last
+	// line is blank because the terminal scrolled the old lines up.
 	whole := func(s string) bool {
 		last, _, _ := strings.Cut(lastBodyLine(s), "│")
 		return strings.Contains(s, "q quit") && wordsInOrder(s) && strings.TrimSpace(last) != ""
@@ -269,13 +242,11 @@ func TestTallLine(t *testing.T) {
 	s := tm.waitUntil(func(s string) bool {
 		return strings.Contains(s, "// START") && sameLine(s, "M a.go", "+2 -3") && whole(s)
 	}, "show the start of the line and its counts")
-	// The line takes about 200 rows. Each half page moves the view.
 	for i := 1; !strings.Contains(s, "THE-END"); i++ {
 		if i == 40 {
 			t.Fatalf("40 half pages do not reach the end of the line. The screen shows:\n%s", s)
 		}
 		tm.keys("ctrl+d")
-		// Wait until rexdiff has read the key, and then for its frame.
 		waitFile(t, log, fmt.Sprintf("%d keys", i), func(l string) bool { return strings.Count(l, "msg=key") == i })
 		prev := s
 		s = tm.waitUntil(func(s string) bool { return s != prev && whole(s) }, "move the view")
@@ -291,7 +262,6 @@ func TestTallLine(t *testing.T) {
 	tm.waitCursor("var next")
 }
 
-// lastBodyLine returns the line above the footer of screen s.
 func lastBodyLine(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n "), "\n")
 	if len(lines) < 2 {
@@ -300,8 +270,6 @@ func lastBodyLine(s string) string {
 	return lines[len(lines)-2]
 }
 
-// wordsInOrder reports whether the words w0, w1, … on screen s follow
-// each other with no gap.
 func wordsInOrder(s string) bool {
 	words := regexp.MustCompile(`\bw(\d+)\b`).FindAllStringSubmatch(s, -1)
 	for i := 1; i < len(words); i++ {

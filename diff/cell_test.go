@@ -9,8 +9,6 @@ import (
 	"github.com/rednafi/rexdiff/diff"
 )
 
-// screenRune returns the rune of plain that covers column x. It returns
-// false if x is past the end of the line.
 func screenRune(plain string, x int) (rune, bool) {
 	c := 0
 	for _, r := range plain {
@@ -23,8 +21,6 @@ func screenRune(plain string, x int) (rune, bool) {
 	return 0, false
 }
 
-// plainLine returns line i of d without escape sequences. It fails the
-// test if d has no line i.
 func plainLine(t *testing.T, d *diff.Diff, i int) string {
 	t.Helper()
 	if i < 0 || i >= len(screenLines(d)) {
@@ -33,8 +29,6 @@ func plainLine(t *testing.T, d *diff.Diff, i int) string {
 	return ansi.Strip(screenLines(d)[i])
 }
 
-// column returns the screen column where needle starts in line i of d. If
-// last is true, it uses the last occurrence of needle.
 func column(t *testing.T, d *diff.Diff, i int, needle string, last bool) int {
 	t.Helper()
 	plain := plainLine(t, d, i)
@@ -48,9 +42,6 @@ func column(t *testing.T, d *diff.Diff, i int, needle string, last bool) int {
 	return ansi.StringWidth(plain[:k])
 }
 
-// TestCell checks the source character that [Diff.Cell] returns for
-// various cells, with tabs, a horizontal scroll, split view and a file
-// view.
 func TestCell(t *testing.T) {
 	t.Parallel()
 	const oldSrc, newSrc = "a\n\told_name := 1\n", "a\n\tnew_name := 1\n"
@@ -95,8 +86,6 @@ func TestCell(t *testing.T) {
 		})
 	}
 	ud := u()
-	// A cell inside a tab returns the tab. A cell after the code returns
-	// the line's length.
 	x := column(t, ud, 3, "new", false)
 	if _, _, char, _ := ud.Cell(3, x-1); char != 0 {
 		t.Errorf("the tab: char %d, want 0", char)
@@ -104,22 +93,17 @@ func TestCell(t *testing.T) {
 	if _, _, char, ok := ud.Cell(3, 79); !ok || char != 14 {
 		t.Errorf("after the code: char %d, %v, want 14, true", char, ok)
 	}
-	// Line numbers, signs and hunk headers are not code.
 	for _, c := range []struct{ row, x int }{{3, 0}, {3, 4}, {3, x - 5}, {0, 20}, {9, 20}} {
 		if _, _, _, ok := ud.Cell(c.row, c.x); ok {
 			t.Errorf("Cell(%d, %d) is code, want not code", c.row, c.x)
 		}
 	}
-	// In split view, the old side of an added line is empty.
 	ins := diff.Render("x.go", "a\n", "a\nb\n", diff.Options{Width: 80, Split: true})
 	if _, _, _, ok := ins.Cell(2, 10); ok {
 		t.Error("the empty old side of an insert is code, want not code")
 	}
 }
 
-// TestCellMatchesScreen checks that each code cell shows the character
-// that [Diff.Cell] returns, for each renderer, with cut, scrolled and
-// wrapped lines.
 func TestCellMatchesScreen(t *testing.T) {
 	t.Parallel()
 	var words []string
@@ -144,8 +128,6 @@ func TestCellMatchesScreen(t *testing.T) {
 	}
 }
 
-// checkCells checks that each code cell of d shows the character that
-// [Diff.Cell] returns. src holds the source lines of each side.
 func checkCells(t *testing.T, on string, d *diff.Diff, src map[diff.Side][]string) {
 	t.Helper()
 	checked := 0
@@ -181,8 +163,6 @@ func checkCells(t *testing.T, on string, d *diff.Diff, src map[diff.Side][]strin
 	}
 }
 
-// TestCellGraphemes checks [Diff.Cell] after grapheme clusters made of
-// several code points, in a cut line and in a wrapped line.
 func TestCellGraphemes(t *testing.T) {
 	t.Parallel()
 	for _, g := range []string{"❤️", "👨‍👩‍👧", "🇺🇸"} {
@@ -213,8 +193,6 @@ func TestCellGraphemes(t *testing.T) {
 	}
 }
 
-// TestCellOffsetInWideChar checks that [Diff.Cell] agrees with the screen
-// when the horizontal scroll cuts through a wide character.
 func TestCellOffsetInWideChar(t *testing.T) {
 	t.Parallel()
 	const line = "日本x"
@@ -239,9 +217,6 @@ func TestCellOffsetInWideChar(t *testing.T) {
 	}
 }
 
-// TestLocate checks that Locate finds the screen line and column of a
-// match in a long line, with and without wrapping, in a diff and in a
-// file view.
 func TestLocate(t *testing.T) {
 	t.Parallel()
 	line := "\tstart " + strings.Repeat("word ", 40) + "HIT end"
@@ -250,8 +225,8 @@ func TestLocate(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		o    diff.Options
-		file bool // render a file view instead of a diff
-		row  int  // the first screen line of line
+		file bool
+		row  int
 	}{
 		{"diff", diff.Options{Width: 60}, false, 2},
 		{"diff wrapped", diff.Options{Width: 60, Wrap: true}, false, 2},
@@ -269,8 +244,7 @@ func TestLocate(t *testing.T) {
 				t.Fatal("no lines")
 			}
 			got, col := d.Locate(tt.row, diff.SideNew, at)
-			// The column of the code start, found from the "start" word on
-			// the first screen line.
+			// The tab before "start" shows as four spaces.
 			codeAt := column(t, d, tt.row, "start", false) - len("    ")
 			width := d.CodeWidth(diff.SideNew)
 			if !strings.HasSuffix(tt.name, "wrapped") {

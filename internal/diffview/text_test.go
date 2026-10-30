@@ -6,11 +6,8 @@ import (
 	"github.com/rednafi/rexdiff/internal/diffview"
 )
 
-// TestEscapeInvisible checks that Escape shows invisible characters as
-// their code points, so that none hides or takes a width that the
-// terminal does not show. It also checks that Escape keeps the joiners and
-// variation selectors that emoji and some scripts need, and visible blanks
-// such as U+2800 (Braille pattern blank).
+// Escape must keep the joiners and variation selectors that emoji need.
+// It must also keep visible blanks such as U+2800 (Braille pattern blank).
 func TestEscapeInvisible(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ in, want string }{

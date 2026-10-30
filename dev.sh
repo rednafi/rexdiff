@@ -1,7 +1,6 @@
 #!/bin/sh
-# dev.sh: rebuild rexdiff and (re)open it in the rexreview-test session next
-# to an "agent" pane, recreating whatever is missing. CONFIG (settings as
-# JSON) and ARGS (extra flags) pass through to rexdiff.
+# dev.sh rebuilds rexdiff and opens it in the rexreview-test session, next
+# to an "agent" pane. CONFIG (JSON settings) and ARGS pass to rexdiff.
 set -e
 BIN=/tmp/rexdiff-dev/rexdiff
 cd "$(dirname "$0")" && go build -o $BIN ./cmd/rexdiff
@@ -10,7 +9,6 @@ S=rexreview-test; R=${REXDIFF_DEMO:-/tmp/rexreview-demo}
 has() { rex block inspect "$1" -s $S --json >/dev/null 2>&1; }
 rex ls | grep -q "^$S " || rex new $S --cwd $R -- fish >/dev/null
 has agent || { rex run -s $S --label agent --cwd $R -- fish >/dev/null; sleep 1; }
-# close every pane labelled rexdiff, by id
 for id in $(rex api call -s $S session.list_blocks '{}' | python3 -c 'import json,sys;[print(b["block_id"]) for b in json.load(sys.stdin)["blocks"] if b.get("label")=="rexdiff"]'); do
   rex api call -s $S block.close "{\"block_id\":\"$id\"}" >/dev/null 2>&1 || true
 done

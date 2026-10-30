@@ -17,7 +17,6 @@ import (
 	"github.com/rednafi/rexdiff/rex"
 )
 
-// overlayKind says what an overlay is for.
 type overlayKind int
 
 const (
@@ -30,51 +29,38 @@ const (
 	overlayQuit
 )
 
-// How many rows the page and half-page keys move the cursor in the commit
-// picker and the comment list. The page keys also scroll the search
-// preview by itemsPage rows.
 const (
 	itemsPage = 15
 	itemsHalf = 8
 )
 
-// overlayItem is one row in an overlay's list.
 type overlayItem struct {
 	label  string
-	detail string // dim text shown after the label
-	tag    string // a short marker at the end, for example "current"
-	// id identifies what choosing the row selects, such as a path, ref,
-	// commit or block. In the search, a row without an id cannot have the
-	// cursor.
+	detail string
+	tag    string
+	// In the search, a row without an id cannot have the cursor.
 	id       string
 	line     int  // search only: the line number of a code match
 	isHeader bool // search only: the heading above a file's code matches
 	comment  int  // comment list only: the ID of the comment
 }
 
-// overlay is a modal box that shows a list to choose from, a search or a
-// prompt.
 type overlay struct {
 	kind       overlayKind
 	title      string
 	input      textinput.Model
 	items      []overlayItem
-	shown      []int // the indexes of the items that match the input
+	shown      []int // indexes into items
 	cur        int
 	rangeStart int // commit picker only: the item at the start of the range, or -1
-	// loading is true while the commit picker waits for its commits, and
-	// stop stops the listing of them.
-	loading bool
-	stop    context.CancelFunc
-	agents  []rex.Agent
-	search  searchState
-	// itemsLo is the index of the first visible row, and itemsHi is one
-	// past the last.
+	loading    bool
+	stop       context.CancelFunc
+	agents     []rex.Agent
+	search     searchState
+	// itemsHi is one past the last visible row.
 	itemsLo, itemsHi int
 }
 
-// newOverlay returns a new overlay of the given kind. If the kind has a
-// text input, the input has focus.
 func newOverlay(kind overlayKind, title string) *overlay {
 	ti := textinput.New()
 	ti.Prompt = "› "
@@ -85,8 +71,6 @@ func newOverlay(kind overlayKind, title string) *overlay {
 	return ov
 }
 
-// hasInput reports whether the overlay has a text input. The agent,
-// comment and commit lists and the quit prompt do not.
 func (ov *overlay) hasInput() bool {
 	switch ov.kind {
 	case overlayAgents, overlayComments, overlayCommits, overlayQuit:
@@ -95,14 +79,12 @@ func (ov *overlay) hasInput() bool {
 	return true
 }
 
-// setItems replaces the items and shows those that match the input.
 func (ov *overlay) setItems(items []overlayItem) {
 	ov.items = items
 	ov.filter()
 }
 
-// filter shows the items that match the input. The search shows all of
-// its items, because they are already matches.
+// filter shows all items in the search, because they are already matches.
 func (ov *overlay) filter() {
 	q := ov.input.Value()
 	ov.shown = ov.shown[:0]
@@ -120,7 +102,6 @@ func (ov *overlay) filter() {
 	ov.cur = min(ov.cur, max(len(ov.shown)-1, 0))
 }
 
-// curItem returns the item at the cursor, or nil.
 func (ov *overlay) curItem() *overlayItem {
 	if ov.cur < 0 || ov.cur >= len(ov.shown) {
 		return nil
@@ -128,8 +109,6 @@ func (ov *overlay) curItem() *overlayItem {
 	return &ov.items[ov.shown[ov.cur]]
 }
 
-// move moves the list cursor by d rows, skipping rows that cannot have the
-// cursor and stopping at the ends.
 func (ov *overlay) move(d int) {
 	step := 1
 	if d < 0 {
@@ -147,23 +126,17 @@ func (ov *overlay) move(d int) {
 	}
 }
 
-// canHaveCursor reports whether row i of the list can have the cursor. In
-// the search, file headings and the "… more" row cannot.
 func (ov *overlay) canHaveCursor(i int) bool {
 	return ov.kind != overlaySearch || ov.items[ov.shown[i]].id != ""
 }
 
-// openOverlay shows ov and sends key presses to it. It ends any drag, so
-// that releasing the button does not open the comment box behind the
-// overlay.
+// openOverlay ends any drag. Then the button release does not open the
+// comment box behind the overlay.
 func (m *model) openOverlay(ov *overlay) {
 	m.overlay, m.mode = ov, modeOverlay
 	m.drag = dragState{}
 }
 
-// closeOverlay closes the overlay and sends key presses to the panes
-// again. Closing the search stops the background highlighting of its
-// preview.
 func (m *model) closeOverlay() {
 	if ov := m.overlay; ov != nil && ov.stop != nil {
 		ov.stop()
@@ -178,23 +151,19 @@ func (m *model) closeOverlay() {
 	m.stopGrep()
 }
 
-// openInput opens a prompt of the given kind, with value as its initial
-// text.
 func (m *model) openInput(kind overlayKind, title, value string) {
 	ov := newOverlay(kind, title)
 	ov.input.SetValue(value)
 	m.openOverlay(ov)
 }
 
-// openQuit asks the user to confirm quitting, which discards the comments.
 func (m *model) openQuit() {
 	title := plural(m.comments.Len(), "unsent comment") + " will be lost"
 	m.openOverlay(newOverlay(overlayQuit, title))
 }
 
-// updateOverlay handles a key press while an overlay is open. In the
-// search, it renders the preview of the selected result right away, so
-// that the screen is drawn again while its colours arrive.
+// updateOverlay renders the search preview at once. Then the screen draws
+// again while its colours arrive.
 func (m *model) updateOverlay(msg tea.KeyPressMsg) tea.Cmd {
 	cmd := m.updateOverlayKey(msg)
 	if ov := m.overlay; ov != nil && ov.kind == overlaySearch {
@@ -203,7 +172,6 @@ func (m *model) updateOverlay(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
-// updateOverlayKey does the work of updateOverlay.
 func (m *model) updateOverlayKey(msg tea.KeyPressMsg) tea.Cmd {
 	ov, k := m.overlay, overlayKeys
 	switch ov.kind {
@@ -249,8 +217,6 @@ func (m *model) updateOverlayKey(msg tea.KeyPressMsg) tea.Cmd {
 		if !isLineKey(msg) {
 			return nil
 		}
-		// "$" replaces any number, and a digit typed after "$" starts a
-		// new number.
 		if msg.Text == "$" || (msg.Text != "" && ov.input.Value() == "$") {
 			ov.input.SetValue("")
 		}
@@ -264,16 +230,14 @@ func (m *model) updateOverlayKey(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
-// isCursorKey reports whether msg matches the cursor binding b. In an
-// overlay with a text input, the letter keys of b type text instead.
+// isCursorKey ignores the letter keys of b in an overlay with a text
+// input. These keys type text.
 func (ov *overlay) isCursorKey(msg tea.KeyPressMsg, b key.Binding) bool {
 	return key.Matches(msg, b) && (!ov.hasInput() || !slices.Contains(letterMoveKeys, msg.String()))
 }
 
-// updateQuit handles a key press in the quit prompt. The QuitDiscard key
-// quits. The Quit key does nothing, so that holding q down does not quit.
-// The Send and Copy keys close the prompt and send or copy the comments.
-// Any other key just closes the prompt.
+// updateQuit ignores the Quit key, so that holding q down does not quit.
+// Only QuitDiscard quits.
 func (m *model) updateQuit(msg tea.KeyPressMsg) tea.Cmd {
 	k := m.keys
 	switch {
@@ -292,9 +256,6 @@ func (m *model) updateQuit(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// updateItems handles a key press in an overlay without a text input. In
-// the agent picker, the digits 1 to 9 move the cursor to that agent; only
-// Enter sends.
 func (m *model) updateItems(msg tea.KeyPressMsg) {
 	ov, s := m.overlay, msg.String()
 	digit := len(s) == 1 && s[0] >= '1' && s[0] <= '9'
@@ -305,7 +266,6 @@ func (m *model) updateItems(msg tea.KeyPressMsg) {
 	}
 }
 
-// inputChanged updates the overlay after its input text changes.
 func (m *model) inputChanged() tea.Cmd {
 	ov := m.overlay
 	switch ov.kind {
@@ -317,8 +277,6 @@ func (m *model) inputChanged() tea.Cmd {
 	return nil
 }
 
-// choose acts on the selected item or on the input text, depending on the
-// kind of overlay.
 func (m *model) choose() tea.Cmd {
 	ov := m.overlay
 	it := ov.curItem()
@@ -373,12 +331,10 @@ func (m *model) choose() tea.Cmd {
 	return nil
 }
 
-// searchInner returns the width of the search box inside its border and
-// padding.
 func (m *model) searchInner() int { return m.w - 8 }
 
-// overlayBox renders the overlay box and returns its screen position.
-// Row i of the list is at line itemsY+i of the box, which mouse clicks use.
+// overlayBox puts row i of the list at line itemsY+i of the box. Mouse
+// clicks use this.
 func (m *model) overlayBox() (box string, x, y, itemsY int) {
 	ov := m.overlay
 	w := min(max(m.w*2/3, 50), m.w-4)
@@ -386,7 +342,6 @@ func (m *model) overlayBox() (box string, x, y, itemsY int) {
 		w = m.searchInner() + 4
 	}
 	inner := w - 4
-	// The title takes one line, which itemsY accounts for.
 	lines := []string{truncate(headerStyle.Render(ov.title), inner)}
 	switch ov.kind {
 	case overlayQuit:
@@ -425,15 +380,12 @@ func (m *model) overlayBox() (box string, x, y, itemsY int) {
 	return box, x, y, itemsY
 }
 
-// quitHint returns the key hints for the quit prompt.
 func (m *model) quitHint() string {
 	k, n := m.keys, m.comments.Len()
 	return fmt.Sprintf("%s quit (%d pending) · esc cancel · %s send %d · %s copy",
 		firstKey(k.QuitDiscard), n, firstKey(k.Send), n, firstKey(k.Copy))
 }
 
-// overlayItems renders at most limit rows of the overlay's list, inner
-// columns wide. start is the index of the first rendered row.
 func (m *model) overlayItems(inner, limit int) (rows []string, start int) {
 	ov := m.overlay
 	maxRows := min(len(ov.shown), max(limit, 1))
@@ -473,8 +425,7 @@ func (m *model) overlayItems(inner, limit int) (rows []string, start int) {
 	case len(ov.shown) == 0 && ov.kind == overlayCommits:
 		rows = append(rows, dimStyle.Render("  no commits yet"))
 	case len(ov.shown) == 0 && ov.kind == overlaySearch:
-		// An empty code search query matches nothing, which is not worth
-		// reporting.
+		// Do not report that an empty code search matches nothing.
 		if !ov.search.grep || ov.input.Value() != "" {
 			rows = append(rows, dimStyle.Render("  no matches"))
 		}

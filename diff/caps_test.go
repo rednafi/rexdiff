@@ -9,18 +9,14 @@ import (
 	"github.com/rednafi/rexdiff/diff"
 )
 
-// longLine returns a line of n bytes of Java keywords and words, which
-// the Java lexer is slow on.
+// longLine returns n bytes that the Java lexer is slow on.
 func longLine(n int) string {
 	return strings.Repeat("public static lorem ipsum ", n/26+1)[:n]
 }
 
-// keywordColour is the escape sequence of a Java keyword.
 const keywordColour = "\x1b[35m"
 
-// TestLongLinePlain checks that Render and RenderFile draw a line too long
-// to highlight without colours, and the short lines around it with them,
-// with and without wrapping. Highlighting the line would take about 30 s.
+// TestLongLinePlain uses a line that takes about 30 s to highlight.
 func TestLongLinePlain(t *testing.T) {
 	t.Parallel()
 	long := longLine(100_000)

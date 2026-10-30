@@ -12,17 +12,15 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// fakeRexCLI is the fake rex command that the test scripts use.
 const fakeRexCLI = `#!/bin/sh
 printf '%s\n' "$*" >> "$WORK/rex.log"
 if [ -n "$REX_FAIL" ]; then echo 'no Rex server' >&2; exit 1; fi
 echo 'config reloaded'
 `
 
-// TestScripts runs the scripts in testdata/script with the rexdiff binary
-// and a fake rex. The fake rex appends its arguments to $WORK/rex.log and
-// fails if $REX_FAIL is set. If REXDIFF_REX is the path of a real rex,
-// $REALREX is set to that path and the condition [realrex] is true.
+// TestScripts runs testdata/script with a fake rex. The fake rex appends
+// its arguments to $WORK/rex.log. It fails if $REX_FAIL is set. If
+// REXDIFF_REX names a real rex, $REALREX is set and [realrex] is true.
 func TestScripts(t *testing.T) {
 	bin := filepath.Dir(binary(t))
 	realRex := os.Getenv("REXDIFF_REX")

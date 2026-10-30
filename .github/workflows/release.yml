@@ -26,8 +26,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # GoReleaser uploads the files to the release and pushes
-    # Casks/rexdiff.rb to master with GITHUB_TOKEN.
+    # GoReleaser pushes Casks/rexdiff.rb to master.
     permissions:
       contents: write
     steps:

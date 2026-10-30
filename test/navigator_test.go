@@ -10,8 +10,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// manyFiles is a repository with navigatorFiles committed files, f00.txt to
-// f59.txt, each with an uncommitted new first line.
 var manyFiles = testgit.NewFixture(func(tb testing.TB, dir string) {
 	tb.Helper()
 	testgit.InitRepo(tb, dir)
@@ -25,20 +23,14 @@ var manyFiles = testgit.NewFixture(func(tb testing.TB, dir string) {
 	}
 })
 
-// navigatorFiles is the number of files in manyFiles.
 const navigatorFiles = 60
 
-// fileName returns the name of file i in manyFiles.
 func fileName(i int) string { return fmt.Sprintf("f%02d.txt", i) }
 
-// content returns the uncommitted first line of file i in manyFiles.
 func content(i int) string { return fmt.Sprintf("content of file %02d", i) }
 
-// navigatorRow returns the text of the file list row for file i.
 func navigatorRow(i int) string { return "M " + fileName(i) }
 
-// newManyFiles returns the path of a new copy of the manyFiles
-// repository. The path contains no symbolic links.
 func newManyFiles(t *testing.T) string {
 	t.Helper()
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
@@ -50,7 +42,6 @@ func newManyFiles(t *testing.T) string {
 	return dir
 }
 
-// rowY returns the screen line of s on which text first appears, or -1.
 func rowY(s, text string) int {
 	if _, y, ok := position(s, text); ok {
 		return y
@@ -58,8 +49,6 @@ func rowY(s, text string) int {
 	return -1
 }
 
-// shownFiles returns the indices of the first and last files of manyFiles
-// that the file list on the screen s shows, or -1 and -1 if it shows none.
 func shownFiles(s string) (first, last int) {
 	first, last = -1, -1
 	for i := range navigatorFiles {
@@ -73,16 +62,12 @@ func shownFiles(s string) (first, last int) {
 	return first, last
 }
 
-// TestNavigatorWheelClick checks that after scrolling the file list with
-// the wheel, a click opens the file under the pointer without scrolling
-// the list again. It also checks that j and k scroll the list by one row
-// only when the cursor moves past its top or bottom edge, and that the
-// list keeps its scroll position when hidden and shown again.
+// TestNavigatorWheelClick checks that a click after a wheel scroll does
+// not scroll the list again.
 func TestNavigatorWheelClick(t *testing.T) {
 	tm := start(t, newManyFiles(t), opts{height: 20})
 	tm.waitFor(navigatorRow(0), content(0))
-	// The wheel scrolls the list but does not move the cursor. Ten wheel
-	// steps of three rows each put file 30 at the top.
+	// Each wheel step scrolls three rows.
 	tm.wheel(navigatorRow(0), 10)
 	s := tm.waitUntil(func(s string) bool {
 		first, _ := shownFiles(s)
@@ -99,12 +84,11 @@ func TestNavigatorWheelClick(t *testing.T) {
 		return strings.Contains(s, content(40)) && rowY(s, navigatorRow(40)) == y
 	}, fmt.Sprintf("open file 40 with its row on line %d", y))
 
-	// Inside the visible rows, the cursor moves and the list stays put.
-	// Past the top or bottom row, the list scrolls by one row.
+	// The list scrolls by one row only past the top or bottom row.
 	for _, step := range []struct {
 		key         string
-		from, to    int // the cursor position before and after the keys
-		first, last int // the first and last files shown afterwards
+		from, to    int
+		first, last int // files shown afterwards
 	}{
 		{key: "k", from: 40, to: first, first: first, last: last},
 		{key: "k", from: first, to: first - 1, first: first - 1, last: last - 1},
@@ -124,7 +108,6 @@ func TestNavigatorWheelClick(t *testing.T) {
 			return strings.Contains(s, content(step.to)) && f == step.first && l == step.last
 		}, fmt.Sprintf("open file %d with files %d to %d in the list", step.to, step.first, step.last))
 	}
-	// After the list is hidden and shown again, it shows the same rows.
 	tm.keys("z")
 	tm.waitGone(navigatorRow(first))
 	tm.keys("z")
@@ -134,9 +117,6 @@ func TestNavigatorWheelClick(t *testing.T) {
 	}, fmt.Sprintf("show files %d to %d in the list", first, last))
 }
 
-// TestMainWheelClick checks that after scrolling the main pane with the
-// wheel, a click puts the cursor on the line under the pointer without
-// scrolling the pane.
 func TestMainWheelClick(t *testing.T) {
 	tm := start(t, newRepo(t), opts{height: 20})
 	tm.click("M long.txt", 1)
@@ -145,8 +125,7 @@ func TestMainWheelClick(t *testing.T) {
 	tm.waitCursor("line 20")
 	tm.keys(":", "1", "enter")
 	tm.waitFor(" first")
-	// Five wheel steps of three rows each put line 16 at the top of the
-	// code, below the header and the first line.
+	// Each wheel step scrolls three rows.
 	tm.wheel(" first", 5)
 	s := tm.waitUntil(func(s string) bool {
 		return strings.Contains(s, "line 16") && !strings.Contains(s, "line 15")
@@ -158,9 +137,6 @@ func TestMainWheelClick(t *testing.T) {
 	}, fmt.Sprintf("put the cursor on line 25, on line %d", y))
 }
 
-// TestWideNameCut checks that a file list row with a cut name of wide
-// characters still shows the whole line count, for list widths of either
-// parity, so that the cut falls both between and inside wide characters.
 func TestWideNameCut(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	testgit.InitRepo(t, repo)
@@ -185,11 +161,8 @@ func TestWideNameCut(t *testing.T) {
 	}
 }
 
-// TestWideTitleCut checks that the main pane title with a cut path of wide
-// characters fits in the pane and keeps its line count, for widths of
-// either parity, so that the cut falls both between and inside wide
-// characters. A title that is too wide pushes the file list to the right,
-// so the end of its rows falls off the screen.
+// TestWideTitleCut uses both parities to cut between and inside wide
+// characters. A title too wide pushes the file list off the screen.
 func TestWideTitleCut(t *testing.T) {
 	for _, name := range []string{strings.Repeat("中文", 30) + ".txt", strings.Repeat("😀", 60) + ".md"} {
 		repo := filepath.Join(t.TempDir(), "repo")

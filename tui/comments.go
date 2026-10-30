@@ -1,8 +1,5 @@
 package tui
 
-// The comment list shows every comment. From it the user can jump to a
-// comment, edit or delete it, or send or copy all the comments.
-
 import (
 	"fmt"
 	"strings"
@@ -11,8 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// openComments opens the comment list, or shows a message if there are no
-// comments.
 func (m *model) openComments() {
 	if m.comments.Len() == 0 {
 		m.flash("no comments yet")
@@ -23,8 +18,6 @@ func (m *model) openComments() {
 	m.openOverlay(ov)
 }
 
-// setCommentItems fills ov with one item per comment and puts the number
-// of comments in its title.
 func (m *model) setCommentItems(ov *overlay) {
 	ov.title = fmt.Sprintf("Comments (%d)", m.comments.Len())
 	var items []overlayItem
@@ -44,9 +37,6 @@ func (m *model) setCommentItems(ov *overlay) {
 	ov.setItems(items)
 }
 
-// updateComments handles a key press in the comment list. Enter jumps to
-// the selected comment. The page and half-page keys move the cursor as in
-// the commit picker.
 func (m *model) updateComments(msg tea.KeyPressMsg) tea.Cmd {
 	ov, k := m.overlay, m.keys
 	it := ov.curItem()
@@ -72,7 +62,6 @@ func (m *model) updateComments(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, k.Copy):
 		m.copyComments()
 	case key.Matches(msg, k.Edit) && it != nil:
-		// A comment made on a different diff cannot be edited here.
 		c := m.comments.Find(it.comment)
 		if c == nil || !m.commentOnCurRev(c) {
 			return nil
@@ -99,8 +88,6 @@ func (m *model) updateComments(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// commentsHint returns the key hints for the comment list. The edit key
-// is listed only if the user can edit the selected comment.
 func (m *model) commentsHint() string {
 	k := m.keys
 	edit := ""

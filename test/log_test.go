@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// TestLogPrivate checks that -log creates a log file that only the user can
-// read, and that the log names the keys that the user presses but not the
-// text typed into the comment box or the find bar.
+// TestLogPrivate checks that only the user can read the log. The log names
+// the keys but not the text typed into the comment box or the find bar.
 func TestLogPrivate(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "log")
 	tm := start(t, newRepo(t), opts{args: []string{"-log", log}})

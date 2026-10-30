@@ -6,23 +6,18 @@ import (
 	"slices"
 )
 
-// splitLine is one row of the split layout. A nil field means that side
-// has no line.
+// A nil field means no line on that side.
 type splitLine struct {
 	old *diffLine
 	new *diffLine
 }
 
-// hunkToSplit pairs the lines of h for the split layout. An equal line
-// appears on both sides. A deleted line is paired with the next unpaired
-// added line, unless an equal line comes first. Any other added line
-// appears alone on the new side, in its original position.
+// hunkToSplit pairs a deleted line with the next unpaired added line,
+// unless an equal line comes first.
 func hunkToSplit(h *hunk) []splitLine {
 	lines := slices.Clone(h.Lines)
 	out := make([]splitLine, 0, len(lines))
-	taken := make([]bool, len(lines)) // added lines already paired with a deleted line
-	// next is the index where the search for an added line to pair starts.
-	// Every line before it is either already paired or not an added line.
+	taken := make([]bool, len(lines))
 	next := 0
 	for i := range lines {
 		ul := &lines[i]

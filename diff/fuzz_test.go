@@ -13,12 +13,9 @@ import (
 	"github.com/rednafi/rexdiff/diff"
 )
 
-// paths are file names that select the syntax highlighting in the fuzz
-// tests.
 var paths = []string{"x.go", "x.py", "x.txt", "x.md", "x.html", "x.json", "Makefile", "x"}
 
-// hostile holds file contents that could attack a terminal or break the
-// layout.
+// hostile holds content that can attack a terminal or break the layout.
 var hostile = []string{
 	"",
 	"\n",
@@ -40,23 +37,17 @@ var hostile = []string{
 	"no newline at end",
 }
 
-// sgr matches the colour escape sequences that the renderer writes.
 var sgr = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
 
-// isUnsafeControl reports whether r is a control character other than a
-// tab or a newline.
 func isUnsafeControl(r rune) bool {
 	return r != '\t' && r != '\n' && unicode.IsControl(r)
 }
 
-// isBidiControl reports whether r is a bidirectional control character,
-// which can reorder the text that a terminal shows.
 func isBidiControl(r rune) bool {
 	return r == '\u061c' || r == '\u200e' || r == '\u200f' ||
 		r >= '\u202a' && r <= '\u202e' || r >= '\u2066' && r <= '\u2069'
 }
 
-// fuzzOptions builds Options from fuzz inputs.
 func fuzzOptions(layout, width, scrollX uint8, colored bool) diff.Options {
 	o := diff.Options{
 		Split:   layout&1 != 0,
@@ -73,9 +64,6 @@ func fuzzOptions(layout, width, scrollX uint8, colored bool) diff.Options {
 	return o
 }
 
-// checkLines checks that d has one line for each row, that each line fits
-// the width in o, and that no line contains control characters other than
-// colour sequences.
 func checkLines(t *testing.T, d *diff.Diff, o diff.Options) {
 	t.Helper()
 	if len(screenLines(d)) != len(d.Rows) {
@@ -97,10 +85,8 @@ func checkLines(t *testing.T, d *diff.Diff, o diff.Options) {
 	}
 }
 
-// checkSameText checks that two renders of the same diff show the same
-// rows and text when their lines are read in opposite orders. The colours
-// can differ: a long line that misses its highlighting time limit shows
-// plain.
+// checkSameText ignores colours. A long line that misses its highlighting
+// time limit shows plain.
 func checkSameText(t *testing.T, a, b *diff.Diff) {
 	t.Helper()
 	want := screenLines(a)
@@ -114,9 +100,6 @@ func checkSameText(t *testing.T, a, b *diff.Diff) {
 	}
 }
 
-// checkRows checks that each row refers to existing lines, that line
-// numbers increase, and that a continued row repeats the lines of the row
-// above.
 func checkRows(t *testing.T, rows []diff.Row, oldText, newText string) {
 	t.Helper()
 	oldCount, newCount := len(diff.SplitLines(oldText)), len(diff.SplitLines(newText))
@@ -143,9 +126,6 @@ func checkRows(t *testing.T, rows []diff.Row, oldText, newText string) {
 	}
 }
 
-// FuzzRender checks that the output of Render is well formed, that a lazy
-// render matches it, and that CountLines agrees with a comment's diff
-// lines.
 func FuzzRender(f *testing.F) {
 	for i, s := range hostile {
 		f.Add(uint8(i), "a\nb\n", s, uint8(i), uint8(i*7), uint8(i%3), i%2 == 0)
@@ -166,7 +146,6 @@ func FuzzRender(f *testing.F) {
 		checkSameText(t, d, diff.Render(paths[int(p)%len(paths)], oldSrc, newSrc, o))
 		checkRows(t, d.Rows, oldSrc, newSrc)
 		if o.Width == 0 && o.ScrollX == 0 && !strings.Contains(oldSrc+newSrc, "…") {
-			// Without a width limit, no line is cut.
 			for i, l := range screenLines(d) {
 				cut := strings.Contains(ansi.Strip(l), "…")
 				if cut && d.Rows[i].Kind != diff.KindHunk {
@@ -197,10 +176,6 @@ func FuzzRender(f *testing.F) {
 	})
 }
 
-// FuzzRenderApply checks that a diff with every fold expanded changes the
-// old text into the new one: its rows list every old line and every new
-// line once and in order, and each equal row joins two identical lines,
-// line endings included.
 func FuzzRenderApply(f *testing.F) {
 	for _, s := range hostile {
 		f.Add("a\nb\n", s)
@@ -247,8 +222,6 @@ func FuzzRenderApply(f *testing.F) {
 	})
 }
 
-// FuzzSnippetSameInLayouts checks that a comment gets the same diff lines
-// from the split layout as from the unified layout.
 func FuzzSnippetSameInLayouts(f *testing.F) {
 	f.Add(oldText, newText)
 	f.Add("a\nb\nc\nd\n", "x\nb\ny\nz\nd\n")
@@ -265,9 +238,6 @@ func FuzzSnippetSameInLayouts(f *testing.F) {
 	})
 }
 
-// FuzzRenderFile checks that the output of RenderFile is well formed, that
-// a lazy render matches it, and that it has one non-continued row for each
-// source line.
 func FuzzRenderFile(f *testing.F) {
 	for i, s := range hostile {
 		f.Add(uint8(i), s, uint8(i), uint8(i*7), uint8(i%3), i%2 == 0)
@@ -298,9 +268,6 @@ func FuzzRenderFile(f *testing.F) {
 	})
 }
 
-// FuzzCountLines checks that CountLines returns zero for equal texts, the
-// full line count against an empty text, and otherwise counts no larger
-// than the texts' line counts.
 func FuzzCountLines(f *testing.F) {
 	for _, s := range hostile {
 		f.Add(s, "a\n")
@@ -326,8 +293,6 @@ func FuzzCountLines(f *testing.F) {
 	})
 }
 
-// FuzzComments checks that the review text and comment locations contain
-// no control characters.
 func FuzzComments(f *testing.F) {
 	for i, s := range hostile {
 		f.Add("a\nb\nc\n", s, "a.go", s, uint8(i), uint8(i%3))

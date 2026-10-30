@@ -9,8 +9,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/search"
 )
 
-// TestFiles checks the order, limit and total count of the files that
-// Files returns.
 func TestFiles(t *testing.T) {
 	t.Parallel()
 	paths := []string{"a.go", "b.go", "c/d.go", "main.go"}
@@ -33,7 +31,6 @@ func TestFiles(t *testing.T) {
 		{name: "fuzzy", q: "dgo", paths: paths, limit: 50, want: []string{"c/d.go"}, wantTotal: 1},
 		{name: "recent does not rank a query", q: "go", paths: paths, recent: []string{"main.go"}, limit: 2, want: []string{"a.go", "b.go"}, wantTotal: 4},
 		{name: "no match", q: "zzz", paths: paths, limit: 50, wantTotal: 0},
-		// A query returns at most limit files, but counts every match.
 		{name: "query limit", q: "f", paths: many, limit: search.MaxFiles, want: many[:search.MaxFiles], wantTotal: 60},
 	}
 	for _, tt := range tests {
@@ -48,7 +45,6 @@ func TestFiles(t *testing.T) {
 	}
 }
 
-// TestMatches checks smart-case matching.
 func TestMatches(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -76,7 +72,6 @@ func TestMatches(t *testing.T) {
 	}
 }
 
-// TestIndex checks the offset of the first smart-case match.
 func TestIndex(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -97,14 +92,11 @@ func TestIndex(t *testing.T) {
 	}
 }
 
-// longFind returns a line of about 2 MB and a 1001-byte query that
-// almost matches it everywhere, the slowest input for a naive search.
+// longFind is the slowest input for a naive search.
 func longFind() (text, query string) {
 	return strings.Repeat("a", 2_000_000), strings.Repeat("a", 1000) + "b"
 }
 
-// TestIndexLong checks a query that almost matches a long line at every
-// offset.
 func TestIndexLong(t *testing.T) {
 	t.Parallel()
 	text, query := longFind()
@@ -116,8 +108,6 @@ func TestIndexLong(t *testing.T) {
 	}
 }
 
-// BenchmarkMatchesLong measures a search in a long line, as the find bar
-// does in a minified file.
 func BenchmarkMatchesLong(b *testing.B) {
 	text, query := longFind()
 	for _, q := range []string{query, strings.ToUpper(query)} {
@@ -129,8 +119,6 @@ func BenchmarkMatchesLong(b *testing.B) {
 	}
 }
 
-// TestIndices checks that Indices returns the indices of the matching
-// labels, best match first.
 func TestIndices(t *testing.T) {
 	t.Parallel()
 	labels := []string{"main feat", "dev", "feature x"}

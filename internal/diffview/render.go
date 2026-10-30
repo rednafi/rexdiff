@@ -14,15 +14,13 @@ import (
 )
 
 const (
-	leadingMarksWidth = 2   // the width of a mark, such as markAdded
-	lineNumPadding    = 1   // the spaces on each side of a line number
-	ellipsis          = "…" // marks where a line is cut off
+	leadingMarksWidth = 2
+	lineNumPadding    = 1 // spaces on each side of a line number
+	ellipsis          = "…"
 )
 
-// The marks shown before the code on each line. A changed line has a bar
-// in its colour, or + or - with [View.Signs].
 const (
-	markNone    = "  " // an equal line, a missing line, or a continued line
+	markNone    = "  "
 	markBar     = "▎ "
 	markAdded   = "+ "
 	markDeleted = "- "
@@ -33,11 +31,11 @@ type Kind int
 
 // The kinds of row.
 const (
-	KindHunk    Kind = iota // a hunk header, with no source line
-	KindEqual               // a line that is the same on both sides
-	KindAdded               // a line that exists only on the new side
-	KindDeleted             // a line that exists only on the old side
-	KindChanged             // a deleted line next to an added line, in split view
+	KindHunk Kind = iota
+	KindEqual
+	KindAdded
+	KindDeleted
+	KindChanged // a deleted line next to an added line, in split view
 )
 
 // Side identifies one version of a file.
@@ -45,15 +43,12 @@ type Side int
 
 // The two sides of a file.
 const (
-	SideOld Side = iota // the version before the change
-	SideNew             // the version after the change
+	SideOld Side = iota
+	SideNew
 )
 
-// Row describes the source lines that one rendered line shows. Old and New
-// are 1-based line numbers, or 0 if the row has no line on that side.
-// Continued is true if the row continues the line above it because of
-// wrapping. For a hunk header, Fold is the run of hidden equal lines above
-// the header.
+// Row describes one rendered line. Old and New are 1-based, or 0 for no
+// line. For a hunk header, Fold is the fold above it.
 type Row struct {
 	Kind      Kind
 	Old, New  int
@@ -61,7 +56,7 @@ type Row struct {
 	Fold      Fold
 }
 
-// Line returns the row's line number on the given side.
+// Line returns the row's line number on side.
 func (r Row) Line(side Side) int {
 	if side == SideOld {
 		return r.Old
@@ -69,21 +64,16 @@ func (r Row) Line(side Side) int {
 	return r.New
 }
 
-// item is one row of the diff before it is rendered to screen lines: a
-// hunk header, a line in the unified layout, or a pair of lines in the
-// split layout.
 type item struct {
 	row            Row
 	header         int       // the hunk index for a header, or -1
-	line           *diffLine // the line, in the unified layout
-	pair           splitLine // the pair of lines, in the split layout
-	oldNum, newNum int       // the line numbers of the line or pair
+	line           *diffLine // unified layout only
+	pair           splitLine // split layout only
+	oldNum, newNum int
 }
 
-// items returns the items of the layout in order: each hunk's header,
-// followed by its lines.
 func (v *View) items() []item {
-	n := len(v.hunks) // one header per hunk, and at most one item per line
+	n := len(v.hunks)
 	for _, h := range v.hunks {
 		n += len(h.Lines)
 	}
@@ -127,7 +117,6 @@ func (v *View) items() []item {
 	return out
 }
 
-// itemLines renders it as screen lines.
 func (v *View) itemLines(it *item) []string {
 	switch {
 	case it.header >= 0 && v.split:
@@ -140,8 +129,6 @@ func (v *View) itemLines(it *item) []string {
 	return v.unifiedLines(it)
 }
 
-// unifiedLines renders the line of it in the unified layout. Each screen
-// line has the old and new line numbers, followed by the code.
 func (v *View) unifiedLines(it *item) []string {
 	nums := func(ls lineStyle, oldNum, newNum string) string {
 		return lineNum(ls, oldNum, v.oldNumDigits) +
@@ -162,8 +149,6 @@ func (v *View) unifiedLines(it *item) []string {
 	return v.codeLines(ls, num, blank, mark, l.Content, v.codeWidth)
 }
 
-// splitLines renders the pair of lines of it in the split layout, with the
-// old line on the left and the new line on the right.
 func (v *View) splitLines(it *item) []string {
 	l := it.pair
 	left, leftFill := v.splitSide(l.old, it.oldNum, v.oldNumDigits, v.codeWidth)
@@ -177,11 +162,8 @@ func (v *View) splitLines(it *item) []string {
 	return lines
 }
 
-// newWidth returns the code width of the new side in the split layout.
 func (v *View) newWidth() int { return v.codeWidth + btoi(v.extraColOnNew) }
 
-// itemHeight returns the number of screen lines that itemLines renders
-// for it. It does not render lines that fit in the width.
 func (v *View) itemHeight(it *item) int {
 	switch {
 	case it.header >= 0 || !v.wrap:
@@ -192,8 +174,6 @@ func (v *View) itemHeight(it *item) int {
 	return v.partCount(it.line, v.codeWidth)
 }
 
-// partCount returns the number of screen lines that line l needs when
-// wrapped to width cells. A nil l needs one line.
 func (v *View) partCount(l *diffLine, width int) int {
 	if l == nil {
 		return 1
@@ -202,19 +182,16 @@ func (v *View) partCount(l *diffLine, width int) int {
 	if Fits(content, width) {
 		return 1
 	}
-	// codeLines breaks the line where WrapParts breaks its plain text, so
-	// the count needs no highlighting.
+	// codeLines breaks where WrapParts breaks the plain text, so the count
+	// needs no highlighting.
 	return len(WrapParts(plainCode(content), width))
 }
 
-// plainCode returns the code line content escaped and without colours, as
-// highlightCode returns it when it cannot highlight.
+// plainCode matches what highlightCode returns when it cannot highlight.
 func plainCode(content string) string { return Escape(strings.ReplaceAll(content, "\r", CRSymbol)) }
 
-// Fits reports whether line s, after escaping, fits in width cells both
-// with and without colours. It returns false if any grapheme cluster has
-// more than one rune, because colour codes between the runes can change
-// its width.
+// Fits reports whether escaped s fits in width cells, with or without
+// colours. Colours can widen a multi-rune cluster, so it gives false.
 func Fits(s string, width int) bool {
 	width = max(width, 1)
 	if len(s) <= width && isPrintableASCII(s) {
@@ -231,9 +208,6 @@ func Fits(s string, width int) bool {
 	return true
 }
 
-// isPrintableASCII reports whether s contains only printable ASCII
-// characters. Each byte of such a string is one cell wide, and [Escape]
-// leaves it unchanged.
 func isPrintableASCII(s string) bool {
 	for i := range len(s) {
 		if s[i] < ' ' || s[i] > '~' {
@@ -243,7 +217,6 @@ func isPrintableASCII(s string) bool {
 	return true
 }
 
-// unifiedHeader renders the divider line of hunk i in the unified layout.
 func (v *View) unifiedHeader(i int) string {
 	div := v.style.dividerLine
 	header := ansi.Truncate(v.headerText(i), v.fullCodeWidth, ellipsis)
@@ -252,20 +225,13 @@ func (v *View) unifiedHeader(i int) string {
 		div.code.Width(v.fullCodeWidth).Render(header)
 }
 
-// splitHeader renders the divider line of hunk i in the split layout. The
-// header starts on the left side and can extend across the right side.
 func (v *View) splitHeader(i int) string {
 	div := v.style.dividerLine
-	// The header spans both code columns and the new line numbers.
 	width := 2*v.fullCodeWidth + btoi(v.extraColOnNew) + v.newNumDigits + lineNumPadding*2
 	return div.num.Render(pad(ellipsis, v.oldNumDigits)) +
 		div.code.Width(width).Render(ansi.Truncate(v.headerText(i), width, ellipsis))
 }
 
-// splitSide renders line l, with line number n, on one side of the split
-// layout, returning one string per screen line. A nil l means the line is
-// missing on this side. fill renders an empty screen line, used when the
-// other side has more lines.
 func (v *View) splitSide(l *diffLine, n, digits, width int) (lines []string, fill func() string) {
 	ls, mark, content := v.style.missingLine, markNone, ""
 	if l != nil {
@@ -281,7 +247,6 @@ func (v *View) splitSide(l *diffLine, n, digits, width int) (lines []string, fil
 	return v.codeLines(ls, num, noNum, mark, content, width), fill
 }
 
-// splitKind returns the row kind of l in the split layout.
 func splitKind(l splitLine) Kind {
 	switch {
 	case l.old != nil && l.new != nil && l.old.Kind == KindEqual:
@@ -294,7 +259,6 @@ func splitKind(l splitLine) Kind {
 	return KindAdded
 }
 
-// fillTo appends lines rendered by fill until lines has n lines.
 func fillTo(lines []string, n int, fill func() string) []string {
 	if len(lines) >= n {
 		return lines
@@ -302,7 +266,6 @@ func fillTo(lines []string, n int, fill func() string) []string {
 	return append(lines, slices.Repeat([]string{fill()}, n-len(lines))...)
 }
 
-// kindStyle returns the style and mark for a line of kind k.
 func (v *View) kindStyle(k Kind) (lineStyle, string) {
 	switch k {
 	case KindAdded:
@@ -313,7 +276,6 @@ func (v *View) kindStyle(k Kind) (lineStyle, string) {
 	return v.style.equalLine, markNone
 }
 
-// mark returns sign if v shows signs, and the bar otherwise.
 func (v *View) mark(sign string) string {
 	if v.signs {
 		return sign
@@ -321,15 +283,10 @@ func (v *View) mark(sign string) string {
 	return markBar
 }
 
-// lineNum renders the line number n in a column that is digits cells wide.
 func lineNum(ls lineStyle, n string, digits int) string {
 	return ls.num.Render(pad(n, digits))
 }
 
-// codeLines renders one source line as nums, then mark, then the code in
-// width cells. Without wrapping, it cuts off a long line. With wrapping,
-// the line continues on more screen lines, which show blank instead of
-// nums and no mark.
 func (v *View) codeLines(ls lineStyle, nums, blank, mark, content string, width int) []string {
 	content = strings.TrimSuffix(content, "\n")
 	code := v.highlightCode(content, ls.code.GetBackground())
@@ -359,9 +316,8 @@ func (v *View) codeLines(ls lineStyle, nums, blank, mark, content string, width 
 			nums, mark = blank, markNone
 		}
 		if v.width <= 0 && !v.wrap {
-			// With no width limit nothing is cut. Colours can make a
-			// cluster of runes measure wider than its plain text, so the
-			// line is padded, not cut, to width.
+			// Colours can make a cluster of runes measure wider than its
+			// plain text. So pad to width, and do not cut.
 			pad := strings.Repeat(" ", max(width-ansi.StringWidth(p), 0))
 			lines[i] = nums + ls.mark.Render(mark) + ls.code.Render(p+pad)
 			continue
@@ -371,12 +327,8 @@ func (v *View) codeLines(ls lineStyle, nums, blank, mark, content string, width 
 	return lines
 }
 
-// WrapLine wraps a line to width cells and returns the screen lines.
-// plain is the text of the line, escaped, and code is the same text with
-// colours. The lines break where [WrapParts] breaks plain, so their number
-// does not depend on the colours, which can change the width of a
-// grapheme cluster of several runes. If code does not hold the text of
-// plain with only escape sequences added, the lines have no colours.
+// WrapLine wraps code, the coloured form of plain, where [WrapParts]
+// breaks plain. If code does not match plain, the lines have no colours.
 func WrapLine(plain, code string, width int) []string {
 	parts := WrapParts(plain, width)
 	if code != plain {
@@ -387,16 +339,11 @@ func WrapLine(plain, code string, width int) []string {
 	return parts
 }
 
-// colourParts returns parts, the screen lines that wrapping took from
-// plain in order, with the colours that code gives their text. Each line
-// starts with the escape sequences in effect at its first character, and
-// ends with a reset if any are in effect at its end. ok is false if code
-// is not plain with escape sequences added.
+// colourParts starts each part with the escape sequences in effect, and
+// ends it with a reset if needed.
 func colourParts(plain, code string, parts []string) (out []string, ok bool) {
-	pos, i := 0, 0 // the bytes of plain and code read so far
-	var sgr string // the escape sequences since the last reset
-	// escapes reads the escape sequences at code[i:], and writes them to b
-	// if b is not nil.
+	pos, i := 0, 0 // bytes of plain and code read so far
+	var sgr string // escape sequences since the last reset
 	escapes := func(b *strings.Builder) {
 		for i < len(code) && code[i] == ansi.ESC {
 			seq, _, n, _ := ansi.DecodeSequence(code[i:], ansi.NormalState, nil)
@@ -411,8 +358,6 @@ func colourParts(plain, code string, parts []string) (out []string, ok bool) {
 			i += n
 		}
 	}
-	// text reads the next byte of plain from code, writing it to b if b
-	// is not nil. It reports whether code has that byte there.
 	text := func(b *strings.Builder) bool {
 		escapes(b)
 		if i >= len(code) || code[i] != plain[pos] {
@@ -451,19 +396,15 @@ func colourParts(plain, code string, parts []string) (out []string, ok bool) {
 	return out, true
 }
 
-// WrapParts wraps the highlighted code to width cells and returns the
-// screen lines.
+// WrapParts wraps code to width cells.
 func WrapParts(code string, width int) []string {
-	// lipgloss.Wrap can leave a leading space on a full line, so hard-wrap
-	// the result again.
+	// lipgloss.Wrap can leave a leading space on a full line.
 	w := max(width, 1)
 	return strings.Split(ansi.Hardwrap(lipgloss.Wrap(code, w, ""), w, true), "\n")
 }
 
-// headerText returns the header text of hunk i, for example
-// "  ⋯ 12 unmodified lines  @@ -15,7 +15,8 @@ ". It includes the size of
-// the fold above the hunk if the fold hides lines, and the hunk range if
-// the hunk has lines. It ends with a space.
+// headerText returns, for example,
+// "  ⋯ 12 unmodified lines  @@ -15,7 +15,8 @@ ". Each part is optional.
 func (v *View) headerText(i int) string {
 	h, s := v.hunks[i], ""
 	if fold := v.folds[i]; fold.Lines > 0 {
@@ -475,14 +416,11 @@ func (v *View) headerText(i int) string {
 	return s + hunkHeader(h)
 }
 
-// hunkHeader returns the range header of hunk h, for example
-// "  @@ -1,3 +1,4 @@ ".
 func hunkHeader(h *hunk) string {
 	oldCount, newCount := hunkLineCounts(h)
 	return fmt.Sprintf("  @@ -%d,%d +%d,%d @@ ", h.OldStart, oldCount, h.NewStart, newCount)
 }
 
-// hunkLineCounts returns the number of old and new lines in hunk h.
 func hunkLineCounts(h *hunk) (oldCount, newCount int) {
 	for _, l := range h.Lines {
 		oldCount, newCount = l.next(oldCount, newCount)

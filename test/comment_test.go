@@ -13,13 +13,8 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// review is the review text that rexdiff produces for the comment "hi"
-// on the first change in a.go.
 const review = "a.go:4 (removed)\n-\treturn 1\nhi"
 
-// comment moves to the first change in the current file, adds a comment
-// with the given text, and waits until it is shown. In the fixture, the
-// first file is a.go.
 func comment(tm *term, text string) {
 	tm.t.Helper()
 	tm.keys("]", "c")
@@ -28,10 +23,7 @@ func comment(tm *term, text string) {
 	tm.waitFor("💬 " + text)
 }
 
-// TestCommentList checks that a comment appears on its line and in the
-// comment list, that n and N move to the next and previous comment, and
-// that the list can edit and delete comments. Editing a comment keeps its
-// position in the list, and saving empty text keeps the old text.
+// TestCommentList also checks that saving empty text keeps the old text.
 func TestCommentList(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	comment(tm, "hi")
@@ -44,7 +36,7 @@ func TestCommentList(t *testing.T) {
 	tm.waitCursor("return x")
 	tm.keys("N")
 	tm.waitCursor("return 1")
-	tm.keys("c", "z", "enter") // a second comment on the same line
+	tm.keys("c", "z", "enter")
 	tm.waitFor("💬 z")
 	tm.keys("l")
 	tm.waitFor("Comments (2)", "a.go:4 (removed)  hi")
@@ -56,8 +48,7 @@ func TestCommentList(t *testing.T) {
 	if _, other, _ := position(s, "(removed)  z"); edited > other {
 		t.Errorf("the edit moves the comment down. The screen shows:\n%s", s)
 	}
-	// The flash message after the edit hides the draft badge, so wait for
-	// the comment box's key hints instead.
+	// The flash message hides the draft badge, so wait for the key hints.
 	tm.keys("e")
 	tm.waitFor("enter save")
 	tm.keys(slices.Repeat([]string{"bs"}, len("hi more"))...)
@@ -68,8 +59,6 @@ func TestCommentList(t *testing.T) {
 	tm.waitGone("Comments (", "💬")
 }
 
-// TestCommentListPages checks that the page and half-page keys move the
-// cursor in the comment list.
 func TestCommentListPages(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	testgit.InitRepo(t, repo)
@@ -98,8 +87,6 @@ func TestCommentListPages(t *testing.T) {
 	}
 }
 
-// TestCommentDrag checks that dragging over the line numbers starts a
-// comment on that range of lines.
 func TestCommentDrag(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.drag(" 1  1 ", " 3  3 ")
@@ -108,20 +95,15 @@ func TestCommentDrag(t *testing.T) {
 	tm.waitGone("✎ a.go:1-3")
 }
 
-// TestCommentBox checks that the comment box accepts more than one line,
-// that esc discards a new comment, and that a comment started on a v
-// selection covers the whole range and is not interrupted by e.
 func TestCommentBox(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
-	// Check the draft badge first, because the flash message after adding
-	// a comment hides it.
+	// The flash message after adding a comment hides the draft badge.
 	tm.keys("]", "j", "c", "x")
 	tm.waitFor("✎ a.go:4 ")
 	tm.keys("esc")
 	tm.waitGone("✎")
 	tm.keys("k", "c", "a", "ctrl+j", "b", "enter")
 	tm.waitFor("💬 a", "b")
-	// e does nothing while a selection is active.
 	tm.keys("j", "v", "j", "e", "c")
 	if s := tm.waitFor("enter save"); strings.Contains(s, "editor failed") {
 		t.Errorf("e with a selection opens the editor. The screen shows:\n%s", s)
@@ -130,8 +112,6 @@ func TestCommentBox(t *testing.T) {
 	tm.waitFor("a.go:4-5  r")
 }
 
-// TestCommentBoxAtBottom checks that a comment box opened on the last line
-// of the pane is shown in full, below the existing comments on that line.
 func TestCommentBoxAtBottom(t *testing.T) {
 	tm := start(t, newRepo(t), opts{height: 16})
 	tm.keys("f", ":", "$", "enter")
@@ -142,9 +122,7 @@ func TestCommentBoxAtBottom(t *testing.T) {
 	tm.waitFor("💬 a", "│ x", "│ y", "│ z", "enter save")
 }
 
-// TestSend checks that s, S, and s in the quit prompt paste the review
-// into the agent and move the focus to it. A comment that is edited while
-// the paste is in progress is kept.
+// TestSend also checks that a comment edited during the paste is kept.
 func TestSend(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -181,8 +159,6 @@ func TestSend(t *testing.T) {
 	tm.waitFor("sent 1 comment to agent", "💬 hi edit")
 }
 
-// TestSendWithoutAgent checks that outside Rex, s shows a "not in Rex"
-// message and keeps the comment.
 func TestSendWithoutAgent(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	comment(tm, "hi")
@@ -191,8 +167,6 @@ func TestSendWithoutAgent(t *testing.T) {
 	tm.waitFor("💬 hi")
 }
 
-// TestAgentPicker checks that with two agents, s asks which agent to send
-// to, a digit moves the cursor to that agent, and enter sends.
 func TestAgentPicker(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -209,8 +183,6 @@ func TestAgentPicker(t *testing.T) {
 	rex.expectCalls(t, `block.event {"block_id":"block:cc"`)
 }
 
-// TestAgentElsewhere checks that the last-turn scope says so when no
-// agent is working in the repository.
 func TestAgentElsewhere(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -220,8 +192,6 @@ func TestAgentElsewhere(t *testing.T) {
 	tm.waitFor("no agent works here")
 }
 
-// TestCopy checks that y, Y, and y in the quit prompt copy the review to
-// the clipboard and clear the comments.
 func TestCopy(t *testing.T) {
 	bin := clipboard(t)
 	clip := filepath.Join(bin, "clip")
@@ -239,12 +209,9 @@ func TestCopy(t *testing.T) {
 	}
 }
 
-// TestMouse checks that clicking a file opens it, that a triple click or a
-// drag over code copies the text, and that the wheel scrolls without
-// selecting anything.
 func TestMouse(t *testing.T) {
 	// The fake pbcopy takes longer than the gap between the clicks of a
-	// triple click, and the triple click must still copy the line.
+	// triple click. The triple click must still copy the line.
 	slow := `sleep 0.5; cat > "${0%/*}/clip"` + "\n"
 	bin := tools(t, map[string]string{"pbcopy": slow, "wl-copy": slow})
 	clip := filepath.Join(bin, "clip")
@@ -270,12 +237,10 @@ func TestMouse(t *testing.T) {
 	tm.waitGone(" first")
 }
 
-// TestQuit checks that q asks for confirmation when there are unsent
-// comments, that esc cancels, and that Q in the prompt quits.
 func TestQuit(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	comment(tm, "hi")
-	tm.keys("Q", "q") // Q does nothing outside the quit prompt
+	tm.keys("Q", "q")
 	tm.waitFor("1 unsent comment will be lost",
 		"Q quit (1 pending) · esc cancel · s send 1 · y copy")
 	tm.keys("esc")
@@ -287,9 +252,6 @@ func TestQuit(t *testing.T) {
 	}
 }
 
-// TestCommentStays checks that a comment keeps its line number and stays
-// fresh when the agent edits other lines, and is marked stale once the
-// file no longer has changes.
 func TestCommentStays(t *testing.T) {
 	repo := newRepo(t)
 	tm := start(t, repo, opts{})
@@ -311,9 +273,7 @@ func TestCommentStays(t *testing.T) {
 }
 
 // TestCommentStaleMoved checks that a comment does not follow its code
-// when the agent adds lines above it: the comment stays on its line
-// number, is marked stale below the code and in the comment list, and the
-// copied review marks it stale with the code it was made on.
+// when lines are added above it. The review keeps the original code.
 func TestCommentStaleMoved(t *testing.T) {
 	bin := clipboard(t)
 	clip := filepath.Join(bin, "clip")
@@ -335,9 +295,6 @@ func TestCommentStaleMoved(t *testing.T) {
 	waitFile(t, clip, "the review", func(s string) bool { return s == want })
 }
 
-// TestCommentStaleGone checks that a comment on lines past the new end of
-// a shorter file is marked stale in the comment list and still sent, and
-// that enter in the list goes to the nearest line.
 func TestCommentStaleGone(t *testing.T) {
 	bin := clipboard(t)
 	clip := filepath.Join(bin, "clip")
@@ -364,16 +321,15 @@ func TestCommentStaleGone(t *testing.T) {
 	waitFile(t, clip, "the review", func(s string) bool { return s == want })
 }
 
-// TestCommentStaleWhileOpen checks that a comment written while the agent
-// rewrites the file keeps the code that was on its line when the comment
-// box opened, and is marked stale once the new file shows.
+// TestCommentStaleWhileOpen checks that a comment keeps the code from when
+// the box opened, if the file changes while the box is open.
 func TestCommentStaleWhileOpen(t *testing.T) {
 	bin := clipboard(t)
 	clip := filepath.Join(bin, "clip")
 	repo := newRepo(t)
 	log := filepath.Join(t.TempDir(), "log")
 	tm := start(t, repo, opts{path: bin, env: clipEnv, args: []string{"-log", log}})
-	tm.keys("]", "j", "c") // a comment on x := 2, line 4
+	tm.keys("]", "j", "c")
 	tm.waitFor("enter save")
 	testgit.WriteFile(t, repo, "a.go",
 		"package a\n\nfunc A() int {\n\ty := 3\n\treturn y\n}\n")
@@ -391,8 +347,6 @@ func TestCommentStaleWhileOpen(t *testing.T) {
 	waitFile(t, clip, "the review", func(s string) bool { return s == want })
 }
 
-// TestEditorInPane checks that inside Rex, e opens a terminal editor at
-// the cursor line in a new Rex pane.
 func TestEditorInPane(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -404,8 +358,6 @@ func TestEditorInPane(t *testing.T) {
 	tm.waitFor("opened a.go")
 }
 
-// TestWindowEditor checks that e starts a GUI editor from $VISUAL at the
-// cursor line, and that the editor setting overrides the choice of editor.
 func TestWindowEditor(t *testing.T) {
 	bin := tools(t, map[string]string{
 		"code": `printf '%s\n' "$@" > "${0%/*}/code"` + "\n",
@@ -427,16 +379,12 @@ func TestWindowEditor(t *testing.T) {
 	})
 }
 
-// TestNoEditor checks that when no editor is configured, e shows how to
-// set one.
 func TestNoEditor(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("]", "j", "e")
 	tm.waitFor(`editor failed: no editor: set "editor" in rexdiff.lua, $EDITOR, or git's core.editor`)
 }
 
-// TestCopyHangs checks that when the clipboard tool hangs, the copy fails,
-// the comment is kept, and rexdiff still responds to keys.
 func TestCopyHangs(t *testing.T) {
 	hang := "exec sleep 60\n"
 	bin := tools(t, map[string]string{"pbcopy": hang, "wl-copy": hang})
@@ -449,9 +397,7 @@ func TestCopyHangs(t *testing.T) {
 	tm.waitFor("⋯ 32 unmodified lines")
 }
 
-// TestCommentPaste checks that a pasted \r\n or lone \r is a single line
-// break in the comment box, and that the box scrolls to the cursor after
-// a long paste.
+// TestCommentPaste checks that a pasted \r\n or lone \r is one line break.
 func TestCommentPaste(t *testing.T) {
 	tm := start(t, newRepo(t), opts{width: 100, height: 20})
 	tm.keys("]", "c")
@@ -476,9 +422,6 @@ func TestCommentPaste(t *testing.T) {
 	tm.waitFor("pasted 20")
 }
 
-// TestCommentStaleInFile checks that a comment in the Files tab is marked
-// stale when the agent adds a line above it, and fresh again when the
-// line comes back.
 func TestCommentStaleInFile(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	testgit.InitRepo(t, repo)
@@ -504,9 +447,8 @@ func TestCommentStaleInFile(t *testing.T) {
 	tm.waitFor("💬 hi")
 }
 
-// TestCommentStaleInFileFromChanges checks that a comment made in the
-// Files tab is marked stale in the comment list, and copied as stale, when
-// the agent adds a line above it while the Changes tab is shown.
+// TestCommentStaleInFileFromChanges adds the line while the Changes tab
+// shows.
 func TestCommentStaleInFileFromChanges(t *testing.T) {
 	bin := clipboard(t)
 	clip := filepath.Join(bin, "clip")
@@ -542,9 +484,8 @@ func TestCommentStaleInFileFromChanges(t *testing.T) {
 	})
 }
 
-// TestSendLong checks that a review that Rex would refuse as one paste,
-// a comment of 30,000 bytes that Rex encodes as 180,000 because it escapes
-// <, & and >, is pasted in several parts that join to the review.
+// TestSendLong checks that a long review goes in parts. Rex escapes <, &
+// and >, so 30,000 bytes become 180,000.
 func TestSendLong(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)

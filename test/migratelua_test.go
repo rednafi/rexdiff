@@ -11,10 +11,8 @@ import (
 	"testing"
 )
 
-// TestMigrateLuaAtStart checks that when rexdiff starts in Rex, it
-// restores an edited rexdiff_toggle.lua, keeps the user's rexdiff.lua and
-// reloads the Rex config. It must leave alone a rexdiff_toggle.lua that
-// runs a different rexdiff binary, and must not create a missing one.
+// TestMigrateLuaAtStart checks that a start must not touch a
+// rexdiff_toggle.lua for a different binary, or create a missing one.
 func TestMigrateLuaAtStart(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -72,10 +70,8 @@ func TestMigrateLuaAtStart(t *testing.T) {
 	}
 }
 
-// TestMigrateLuaFromV027 checks that the first start after an update from
-// 0.2.7 keeps the user's settings in rexdiff.lua, moves the action code to
-// rexdiff_toggle.lua, and reloads the Rex config once. With a real rex, it
-// also checks that Rex accepts the new config.
+// TestMigrateLuaFromV027 checks that the settings stay and the action code
+// moves to rexdiff_toggle.lua.
 func TestMigrateLuaFromV027(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -116,7 +112,6 @@ func TestMigrateLuaFromV027(t *testing.T) {
 	}
 }
 
-// read returns the content of the file at path.
 func read(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -126,8 +121,6 @@ func read(t *testing.T, path string) string {
 	return string(b)
 }
 
-// write writes content to the file at path, replacing any existing
-// content.
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

@@ -9,14 +9,12 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// lineStyle holds the styles of the parts of one kind of line.
 type lineStyle struct {
 	num  lipgloss.Style
 	mark lipgloss.Style
 	code lipgloss.Style
 }
 
-// style holds the style of each kind of line.
 type style struct {
 	dividerLine lineStyle
 	missingLine lineStyle
@@ -25,7 +23,6 @@ type style struct {
 	deletedLine lineStyle
 }
 
-// Colours from the terminal's ANSI palette, as Lip Gloss colours.
 const (
 	ansiRed     = "1"
 	ansiGreen   = "2"
@@ -40,20 +37,17 @@ const (
 const (
 	tintDark     = 0.16 // added and deleted lines on a dark background
 	tintLight    = 0.13 // added and deleted lines on a light background
-	tintNum      = 1.7  // multiplies the tint for the line numbers of those lines
+	tintNum      = 1.7  // multiplier for the line numbers of those lines
 	shadeDivider = 0.07 // hunk headers, towards the foreground
 	shadeMissing = 0.03 // the empty side of a split row, towards the foreground
 )
 
-// The tint colours used when the terminal does not report its green or
-// red.
+// Tints for when the terminal does not report its green or red.
 const (
 	fallbackGreen = "#2ea043"
 	fallbackRed   = "#f85149"
 )
 
-// terminalStyle builds the style for [View.Theme] from the terminal's
-// colours.
 func terminalStyle(bg, fg, green, red color.Color, dark bool) style {
 	none := lipgloss.NoColor{}
 	green = cmp.Or(green, lipgloss.Color(fallbackGreen))
@@ -75,13 +69,9 @@ func terminalStyle(bg, fg, green, red color.Color, dark bool) style {
 		return mix(bg, fg, t)
 	}
 	plain := lipgloss.NewStyle()
-	// num returns the style of a line number: right-aligned, with a space
-	// on each side.
 	num := func(s lipgloss.Style) lipgloss.Style {
 		return s.Padding(0, lineNumPadding).Align(lipgloss.Right)
 	}
-	// changed returns the style of an added or deleted line, tinted
-	// towards c.
 	changed := func(text string, c color.Color) lineStyle {
 		textStyle := plain.Foreground(lipgloss.Color(text))
 		return lineStyle{
@@ -111,11 +101,10 @@ func terminalStyle(bg, fg, green, red color.Color, dark bool) style {
 	}
 }
 
-// mix blends colour a towards b by the amount t, from 0 to 1.
 func mix(a, b color.Color, t float64) color.Color {
 	ar, ag, ab, _ := a.RGBA()
 	br, bg, bb, _ := b.RGBA()
-	// RGBA has 16 bits for each channel. Divide by 257 to get 8 bits.
+	// RGBA has 16 bits for each channel. Dividing by 257 gives 8 bits.
 	f := func(x, y uint32) uint8 { return uint8((float64(x)*(1-t) + float64(y)*t) / 257) }
 	return color.RGBA{R: f(ar, br), G: f(ag, bg), B: f(ab, bb), A: 255}
 }

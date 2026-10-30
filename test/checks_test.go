@@ -8,8 +8,7 @@ import (
 )
 
 // TestPRManyChecks checks that the PR tab counts every check, not only the
-// 100 that it keeps, and names the failures past the first 100 checks:
-// gh reports 100 passing checks and then 150 failing ones.
+// 100 that it keeps. It must name the failures past the first 100.
 func TestPRManyChecks(t *testing.T) {
 	repo := newRepo(t)
 	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -26,7 +25,6 @@ done
 printf ']}'
 `,
 	})
-	// The terminal is tall enough for the whole list.
 	tm := start(t, repo, opts{path: bin, height: 120})
 	tm.keys("3")
 	s := tm.waitFor("Many checks #7", "checks: ✓ 100  ✗ 150  ◌ 0",

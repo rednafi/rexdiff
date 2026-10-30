@@ -14,8 +14,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// comment returns a comment with the given text on all rows of the diff
-// between oldText and newText.
 func comment(path string, side diff.Side, oldText, newText, text string) diff.Comment {
 	rows := diff.Render(path, oldText, newText, diff.Options{}).Rows
 	c := diff.NewComment(path, side, rows, oldText, newText)
@@ -23,23 +21,17 @@ func comment(path string, side diff.Side, oldText, newText, text string) diff.Co
 	return c
 }
 
-// commentOn returns a comment on lines start to end of src, the content of
-// the file at path, using rows from [diff.RenderFile].
 func commentOn(path string, side diff.Side, src string, start, end int) diff.Comment {
 	rows := diff.RenderFile(path, src, diff.FileOptions{}).Rows
 	return diff.NewComment(path, side, rows[start-1:end], src, src)
 }
 
-// review returns the output of [diff.Comments.Review] for a set that holds
-// only c.
 func review(c diff.Comment) string {
 	var cs diff.Comments
 	cs.Add(c)
 	return cs.Review("", nil)
 }
 
-// TestReview checks the text that Review writes: the prompt, then each
-// comment's location, diff lines and text, sorted by path.
 func TestReview(t *testing.T) {
 	t.Parallel()
 	var cs diff.Comments
@@ -69,8 +61,6 @@ func TestReview(t *testing.T) {
 	}
 }
 
-// TestReviewContinuedRows checks Review for a comment that covers only
-// continued rows.
 func TestReviewContinuedRows(t *testing.T) {
 	t.Parallel()
 	oldSrc, newSrc := "", strings.Repeat("word ", 20)+"\n"
@@ -91,7 +81,6 @@ func TestReviewContinuedRows(t *testing.T) {
 	}
 }
 
-// TestComments checks Add, Find, At, EndingAt, Count and Delete.
 func TestComments(t *testing.T) {
 	t.Parallel()
 	var cs diff.Comments
@@ -114,8 +103,6 @@ func TestComments(t *testing.T) {
 	if got := cs.EndingAt(anchor, "a.go", diff.SideOld, 4); len(got) != 1 || got[0] != b {
 		t.Errorf("EndingAt(a.go, Old, 4) = %v, want [%v]", got, b)
 	}
-	// A comment shows only in the same kind of view and at the same
-	// revision.
 	for _, other := range []diff.Anchor{{}, {InDiff: true, Rev: "a..b"}} {
 		if c := cs.At(other, "a.go", diff.SideNew, 3); c != nil {
 			t.Errorf("At(%+v, a.go, New, 3) = %v, want nil", other, c)
@@ -142,15 +129,12 @@ func TestComments(t *testing.T) {
 	}
 }
 
-// TestNewComment checks the line range and the Review text of comments
-// created from the rows of a change, in both layouts and on both sides.
 func TestNewComment(t *testing.T) {
 	t.Parallel()
 	oldSrc := "a\nb\nc\nd\n"
 	newSrc := "a\nB\nC\nd\n"
 	for _, split := range []bool{false, true} {
 		rows := diff.Render("x.txt", oldSrc, newSrc, diff.Options{Split: split}).Rows
-		// The rows from "a" to "d", after the hunk header.
 		lo := slices.IndexFunc(rows, isEqual)
 		for _, side := range []diff.Side{diff.SideNew, diff.SideOld} {
 			c := diff.NewComment("x.txt", side, rows[lo:], oldSrc, newSrc)
@@ -167,7 +151,6 @@ func TestNewComment(t *testing.T) {
 					split, side, got, want)
 			}
 		}
-		// A comment on only the added lines gets its range from the new side.
 		var ins []diff.Row
 		for _, r := range rows {
 			if r.Kind == diff.KindAdded || r.Kind == diff.KindChanged {
@@ -179,7 +162,6 @@ func TestNewComment(t *testing.T) {
 			t.Errorf("split %v, the new lines: %+v, want lines 2-3", split, got)
 		}
 	}
-	// A comment on only a hunk header has no lines.
 	rows := diff.Render("x.txt", oldSrc, newSrc, diff.Options{}).Rows
 	hunk := rows[:slices.IndexFunc(rows, isEqual)]
 	got := diff.NewComment("x.txt", diff.SideNew, hunk, oldSrc, newSrc)
@@ -188,8 +170,6 @@ func TestNewComment(t *testing.T) {
 	}
 }
 
-// TestSnippetIsTheRealDiff checks that a comment's diff lines match the
-// output of git diff, including tabs, in both layouts.
 func TestSnippetIsTheRealDiff(t *testing.T) {
 	t.Parallel()
 	oldSrc := "func a() {\n\treturn 1\n}\n"
@@ -224,8 +204,6 @@ func TestSnippetIsTheRealDiff(t *testing.T) {
 	}
 }
 
-// TestReviewStale checks that Review marks the comments that stale
-// reports after their location, and leaves the others as they are.
 func TestReviewStale(t *testing.T) {
 	t.Parallel()
 	var cs diff.Comments
@@ -239,23 +217,20 @@ func TestReviewStale(t *testing.T) {
 	}
 }
 
-// TestCommentMoved checks that Moved reports a comment whose lines hold
-// other code or are past the end of the file, and not one whose code is
-// still on its lines.
 func TestCommentMoved(t *testing.T) {
 	t.Parallel()
 	src := "a\nb\nc\nd\n"
-	c := commentOn("x.txt", diff.SideNew, src, 2, 3) // b and c
+	c := commentOn("x.txt", diff.SideNew, src, 2, 3)
 	tests := []struct {
 		text string
 		want bool
 	}{
 		{src, false},
-		{"a\r\nb\r\nc\r\n", false},  // CRLF line endings, d removed
-		{"a\nb\nc", false},          // no newline at the end
-		{"new\na\nb\nc\nd\n", true}, // a line added above
+		{"a\r\nb\r\nc\r\n", false}, // CRLF line endings, d removed
+		{"a\nb\nc", false},
+		{"new\na\nb\nc\nd\n", true},
 		{"a\nb\nC\nd\n", true},
-		{"a\nb\n", true}, // c removed: line 3 is past the end
+		{"a\nb\n", true},
 		{"", true},
 	}
 	for _, tt := range tests {
@@ -268,9 +243,8 @@ func TestCommentMoved(t *testing.T) {
 	}
 }
 
-// TestCommentsJSON checks that a JSON round trip keeps each comment's
-// anchor. It also checks reading a file from an older rexdiff, which has a
-// stale field and no anchor, and the effect of SetRev.
+// TestCommentsJSON also reads a file from an older rexdiff. That file has a
+// stale field and no anchor.
 func TestCommentsJSON(t *testing.T) {
 	t.Parallel()
 	var cs diff.Comments
@@ -317,9 +291,6 @@ func TestCommentsJSON(t *testing.T) {
 	}
 }
 
-// TestCommentsJSONLatin1 checks that a comment on a file that is not
-// UTF-8, such as a Latin-1 file, survives a JSON round trip, with invalid
-// bytes replaced by U+FFFD.
 func TestCommentsJSONLatin1(t *testing.T) {
 	t.Parallel()
 	const path = "caf\xe9.txt"

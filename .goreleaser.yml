@@ -23,14 +23,11 @@ checksum:
 changelog:
   use: github
 
-# The release workflow runs when someone publishes a release on GitHub.
-# GoReleaser adds the files to that release. It does not make a new one,
-# and it keeps the notes.
+# Add the files to the published GitHub release and keep its notes.
 release:
   mode: keep-existing
 
-# Each release writes Casks/rexdiff.rb to this repo. The release workflow
-# gives GITHUB_TOKEN the write access for it.
+# The release workflow gives GITHUB_TOKEN write access for Casks/rexdiff.rb.
 homebrew_casks:
   - repository:
       owner: rednafi

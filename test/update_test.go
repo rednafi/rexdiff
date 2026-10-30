@@ -21,10 +21,8 @@ import (
 	"testing/fstest"
 )
 
-// release starts a fake GitHub release server whose latest release is
-// tag, with an archive of the binary at bin and its checksum. If tampered,
-// the checksum does not match the archive. It returns the URL of the
-// latest release.
+// release returns the URL of the latest release on a fake GitHub server.
+// If tampered, the checksum does not match the archive.
 func release(t *testing.T, tag, bin string, tampered bool) string {
 	t.Helper()
 	binData, err := os.ReadFile(bin)
@@ -65,10 +63,7 @@ func release(t *testing.T, tag, bin string, tampered bool) string {
 	return srv.URL + "/latest"
 }
 
-// TestUpdate checks that U replaces the binary with the latest release
-// and starts it in the same terminal, keeping the user's comments.
 func TestUpdate(t *testing.T) {
-	// Build the old and new versions in parallel.
 	var next string
 	var nextErr error
 	var wg sync.WaitGroup
@@ -95,9 +90,8 @@ func TestUpdate(t *testing.T) {
 	}
 }
 
-// TestUpdateBadChecksum checks that when the archive of the latest
-// release does not match its checksum, U shows the error and rexdiff keeps
-// running. The tests of update check that the binary stays the same.
+// TestUpdateBadChecksum checks that rexdiff keeps running. The tests of
+// update check that the binary stays the same.
 func TestUpdateBadChecksum(t *testing.T) {
 	bin, err := build(t.Context(), t.TempDir(), "0.1.0")
 	if err != nil {
@@ -112,12 +106,6 @@ func TestUpdateBadChecksum(t *testing.T) {
 	tm.waitFor("Files (6)")
 }
 
-// headState writes a resume state file, like the one rexdiff saves before
-// an update, and returns its path. The state shows long.txt with the
-// cursor on row 3 and a sideways scroll of xoff, the file list on the left
-// with a width of 50, and the fold at line 20 expanded. Line 20 has an
-// unsent comment. hidden hides the file list, and focus gives it the
-// focus.
 func headState(t *testing.T, xoff int, hidden, focus bool) string {
 	t.Helper()
 	h := fnv.New64a()
@@ -139,10 +127,6 @@ func headState(t *testing.T, xoff int, hidden, focus bool) string {
 	return path
 }
 
-// TestResumeState checks that rexdiff restores every part of the resume
-// state that it saves before an update: the file, cursor, sideways
-// scroll, expanded fold, comment, and the position, width, visibility and
-// focus of the file list.
 func TestResumeState(t *testing.T) {
 	t.Run("shown", func(t *testing.T) {
 		path := headState(t, 0, false, true)
@@ -158,7 +142,6 @@ func TestResumeState(t *testing.T) {
 			t.Errorf("the file list rows %q, want a width of 50", ls)
 		}
 		tm.waitCursor("line 2") // row 3, after the header and the first change
-		// The file list has the focus, so k selects the previous file.
 		tm.keys("k")
 		tm.waitFor("a.go  +2 -1")
 	})

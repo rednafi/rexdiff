@@ -13,9 +13,9 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// repoFixture is a repository with one commit on main and one on the
-// branch feat, which is checked out. It has uncommitted edits to a.go and
-// to the first and last lines of long.txt, and an ignored directory out/.
+// repoFixture has one commit on main and one on feat, which is checked
+// out. It has uncommitted edits to a.go and to the first and last lines of
+// long.txt. The directory out/ is ignored.
 var repoFixture = testgit.NewFixture(func(tb testing.TB, dir string) {
 	tb.Helper()
 	testgit.InitRepo(tb, dir)
@@ -36,7 +36,6 @@ var repoFixture = testgit.NewFixture(func(tb testing.TB, dir string) {
 		"first\n"+numbered("line", 2, 39)+"last\n")
 })
 
-// numbered returns the lines "<word> <n>" for each n from first to last.
 func numbered(word string, first, last int) string {
 	var b strings.Builder
 	for n := first; n <= last; n++ {
@@ -45,8 +44,7 @@ func numbered(word string, first, last int) string {
 	return b.String()
 }
 
-// newRepo returns the path of a new copy of the fixture repository. The
-// path contains no symbolic links, so it matches the root that git
+// newRepo resolves symbolic links so the path matches the root that git
 // reports.
 func newRepo(t *testing.T) string {
 	t.Helper()
@@ -59,19 +57,13 @@ func newRepo(t *testing.T) string {
 	return dir
 }
 
-// fakeRex is a fake rex command for the session S, with rexdiff in the
-// block block:self and agents working in the test repository. It logs
-// each call and prints responses from the templates in testdata/rex,
-// filled in with the test's values. "rex events" prints the lines that
-// the test adds. If the FIFO named gate exists, a paste waits until the
-// test writes to it.
+// fakeRex is a fake rex for the session S, with rexdiff in block:self. If
+// the FIFO gate exists, a paste waits until the test writes to it.
 type fakeRex struct {
 	dir    string
-	blocks []string // the JSON for each block
+	blocks []string // JSON
 }
 
-// newRex returns a fake rex with an idle agent pi in the block block:pi,
-// whose working directory is repo.
 func newRex(t *testing.T, repo string) *fakeRex {
 	t.Helper()
 	r := &fakeRex{dir: t.TempDir()}
@@ -94,8 +86,6 @@ esac
 	return r
 }
 
-// recorded returns the content of the template file name in testdata/rex,
-// with each placeholder in oldNew replaced by the value that follows it.
 func recorded(t *testing.T, name string, oldNew ...string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "rex", name))
@@ -105,7 +95,6 @@ func recorded(t *testing.T, name string, oldNew ...string) string {
 	return strings.TrimSpace(strings.NewReplacer(oldNew...).Replace(string(b)))
 }
 
-// addBlock adds a terminal block with the given ID and label.
 func (r *fakeRex) addBlock(t *testing.T, block, label string) {
 	t.Helper()
 	r.blocks = append(r.blocks, recorded(t, "block.json", "{{ID}}", block, "{{LABEL}}", label))
@@ -113,16 +102,12 @@ func (r *fakeRex) addBlock(t *testing.T, block, label string) {
 	r.write(t, "inspect."+label, recorded(t, "inspect.json", "{{ID}}", block, "{{LABEL}}", label))
 }
 
-// addAgent adds a terminal block with the given label in which the agent
-// app runs and is idle.
 func (r *fakeRex) addAgent(t *testing.T, block, label, app string) {
 	t.Helper()
 	r.addBlock(t, block, label)
 	r.status(t, block, app, "idle")
 }
 
-// status sets the state of the agent app in block. It returns the
-// placeholder values, so the caller can fill in other templates with them.
 func (r *fakeRex) status(t *testing.T, block, app, state string) []string {
 	t.Helper()
 	values := []string{
@@ -133,8 +118,6 @@ func (r *fakeRex) status(t *testing.T, block, app, state string) []string {
 	return values
 }
 
-// write writes content and a newline to the file name in the fake's
-// directory.
 func (r *fakeRex) write(t *testing.T, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(r.dir, name), []byte(content+"\n"), 0o644); err != nil {
@@ -142,7 +125,6 @@ func (r *fakeRex) write(t *testing.T, name, content string) {
 	}
 }
 
-// add appends line to the file name in the fake's directory.
 func (r *fakeRex) add(t *testing.T, name, line string) {
 	t.Helper()
 	f, err := os.OpenFile(filepath.Join(r.dir, name), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
@@ -158,8 +140,6 @@ func (r *fakeRex) add(t *testing.T, name, line string) {
 	}
 }
 
-// calls returns the arguments of each call to the fake rex so far, one
-// call per line.
 func (r *fakeRex) calls(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(r.dir, "calls"))
@@ -169,7 +149,6 @@ func (r *fakeRex) calls(t *testing.T) string {
 	return string(b)
 }
 
-// expectCalls waits until the calls to the fake rex contain all of wants.
 func (r *fakeRex) expectCalls(t *testing.T, wants ...string) {
 	t.Helper()
 	var calls string
@@ -178,16 +157,12 @@ func (r *fakeRex) expectCalls(t *testing.T, wants ...string) {
 	})
 }
 
-// setState sets the state of the agent pi and sends the matching status
-// event.
 func (r *fakeRex) setState(t *testing.T, state string) {
 	t.Helper()
 	values := r.status(t, "block:pi", "pi", state)
 	r.add(t, "events", recorded(t, "event.json", values...))
 }
 
-// tools writes a fake program for each entry in bodies to a new directory
-// and returns the directory, for use as opts.path.
 func tools(t *testing.T, bodies map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -197,8 +172,6 @@ func tools(t *testing.T, bodies map[string]string) string {
 	return dir
 }
 
-// clipboard returns a directory with a fake pbcopy and wl-copy, for use
-// as opts.path. Both write their input to the file clip in that directory.
 func clipboard(t *testing.T) string {
 	t.Helper()
 	const body = `cat > "${0%/*}/clip"` + "\n"
@@ -208,7 +181,6 @@ func clipboard(t *testing.T) string {
 // clipEnv makes rexdiff use the fake wl-copy on Linux too.
 var clipEnv = []string{"WAYLAND_DISPLAY=w"}
 
-// lines returns the lines of s that contain text.
 func lines(s, text string) []string {
 	var out []string
 	for l := range strings.Lines(s) {

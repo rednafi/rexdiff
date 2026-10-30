@@ -12,9 +12,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// TestFilesTab checks that the Files tab lists every file, expands and
-// collapses an ignored directory, opens a file, and that m switches a
-// Markdown file to rendered view.
 func TestFilesTab(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("2")
@@ -31,9 +28,6 @@ func TestFilesTab(t *testing.T) {
 	tm.waitFor("Title", "Some text.")
 }
 
-// TestFilesTabDeleted checks that the Files tab leaves out a tracked file
-// that was deleted from the working tree, while the Changes tab still
-// shows the deletion.
 func TestFilesTabDeleted(t *testing.T) {
 	repo := newRepo(t)
 	if err := os.Remove(filepath.Join(repo, "docs", "guide.txt")); err != nil {
@@ -46,9 +40,6 @@ func TestFilesTabDeleted(t *testing.T) {
 	tm.waitGone("guide.txt")
 }
 
-// TestInvisibleNames checks that the file list shows a zero-width space,
-// a byte order mark and a right-to-left override in a file name as
-// escapes.
 func TestInvisibleNames(t *testing.T) {
 	repo := newRepo(t)
 	testgit.WriteFile(t, repo, "zero\u200bwidth.txt", "a\n")
@@ -58,10 +49,6 @@ func TestInvisibleNames(t *testing.T) {
 	tm.waitFor(`"zero\u200bwidth.txt"`, `"\ufeffbom.txt"`, `"evil\u202etxt.exe"`)
 }
 
-// TestMarkdownSetting checks that the markdown_view setting shows Markdown
-// rendered from the start. It also checks, in rendered view, the change
-// bars on changed blocks, comments and copying on a block, and moving to
-// the next comment with n.
 func TestMarkdownSetting(t *testing.T) {
 	repo := newRepo(t)
 	testgit.WriteFile(t, repo, "README.md", "# Title\n\nGone.\n\nSome text.\n\n<!-- a -->\n")
@@ -106,9 +93,8 @@ func TestMarkdownSetting(t *testing.T) {
 	tm.waitCursor("New text on three lines.")
 }
 
-// TestMarkdownHunks checks that ] and [ in rendered Markdown visit every
-// changed block in turn, including the marker of a removed block, and do
-// not get stuck at that marker.
+// TestMarkdownHunks checks that ] and [ do not get stuck at the marker of
+// a removed block.
 func TestMarkdownHunks(t *testing.T) {
 	repo, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -119,7 +105,7 @@ func TestMarkdownHunks(t *testing.T) {
 	for n := 1; n <= 30; n++ {
 		fmt.Fprintf(&old, "## Section %d\n\nParagraph %d text.\n\n", n, n)
 		if n == 25 {
-			fmt.Fprintf(&cur, "## Section %d\n\n", n) // paragraph 25 is removed
+			fmt.Fprintf(&cur, "## Section %d\n\n", n)
 			continue
 		}
 		word := "text"
@@ -147,9 +133,6 @@ func TestMarkdownHunks(t *testing.T) {
 	}
 }
 
-// TestSearch checks that / finds files by name and lines by content,
-// shows a preview that the mouse wheel scrolls, and opens a changed file
-// in the Changes tab at the matching line.
 func TestSearch(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("/")
@@ -168,8 +151,6 @@ func TestSearch(t *testing.T) {
 	tm.waitCursor("line 7")
 }
 
-// TestLiveReload checks that the Changes tab picks up an edit, a new file
-// and a removed file without any key press.
 func TestLiveReload(t *testing.T) {
 	repo := newRepo(t)
 	tm := start(t, repo, opts{})
@@ -184,8 +165,8 @@ func TestLiveReload(t *testing.T) {
 	tm.waitFor("Changes (2)")
 }
 
-// TestRemoveAfterRefresh checks that the Changes tab drops a file that
-// was added, shown by r, and removed before the next check of the watcher.
+// TestRemoveAfterRefresh checks that the Changes tab drops a file that r
+// showed and that went before the next watcher check.
 func TestRemoveAfterRefresh(t *testing.T) {
 	repo := newRepo(t)
 	log := filepath.Join(t.TempDir(), "log")
@@ -203,8 +184,6 @@ func TestRemoveAfterRefresh(t *testing.T) {
 	tm.waitFor("Changes (2)")
 }
 
-// TestReloadStorm checks that after many quick writes to a file, as an
-// agent makes, the Changes tab shows the content of the last write.
 func TestReloadStorm(t *testing.T) {
 	repo := newRepo(t)
 	tm := start(t, repo, opts{})
@@ -216,8 +195,6 @@ func TestReloadStorm(t *testing.T) {
 	tm.waitFor("return 200 }", "Changes (12)")
 }
 
-// TestLastTurn checks that the last-turn scope shows the changes made
-// while the agent was working.
 func TestLastTurn(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -227,16 +204,14 @@ func TestLastTurn(t *testing.T) {
 	// rexdiff follows agent states only after it has listed the agents once.
 	tm.waitFor("waiting for the first turn", "send → 1 agent")
 	rex.setState(t, "working")
-	// Wait until rexdiff has taken the snapshot that starts the turn.
 	waitFile(t, log, "a turn start message", func(s string) bool { return strings.Contains(s, "msg=\"turn start\"") })
 	testgit.WriteFile(t, repo, "turn.go", "package a\n")
 	rex.setState(t, "idle")
 	tm.waitFor("Changes (1)", "turn.go", "pi")
 }
 
-// TestTurnRaced checks that when a file is written just before a turn
-// starts, the last-turn scope says that it could not snapshot the turn,
-// because the snapshot may already include that write.
+// TestTurnRaced checks a write just before a turn starts. The snapshot
+// can include that write, so the last-turn scope reports it.
 func TestTurnRaced(t *testing.T) {
 	repo := newRepo(t)
 	rex := newRex(t, repo)
@@ -248,10 +223,6 @@ func TestTurnRaced(t *testing.T) {
 	tm.waitFor("the last turn started before rexdiff could snapshot it")
 }
 
-// TestPR checks the PR tab: the pull request with its checks and comment
-// ages, collapsible details blocks, o and links opening in the url_opener
-// command, scope keys that leave the tab alone, a link with an unsupported
-// scheme, and r to reload.
 func TestPR(t *testing.T) {
 	repo := newRepo(t)
 	testgit.Git(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -310,8 +281,6 @@ EOF
 	tm.waitFor("Add b again #7")
 }
 
-// TestNoPR checks that the PR tab explains why it shows no pull request:
-// the repository has no remote, or the forge tool is not installed.
 func TestNoPR(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("3")

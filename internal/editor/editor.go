@@ -1,6 +1,5 @@
-// Package editor chooses the user's text editor and builds the sh command
-// that opens a file at a given line. It also reports whether the editor
-// opens its own window or runs in the terminal.
+// Package editor builds the sh command that opens a file at a line in the
+// user's editor.
 package editor
 
 import (
@@ -15,24 +14,22 @@ import (
 
 // Command is a command that opens a file at a given line.
 type Command struct {
-	Script  string // the command, for sh -c
-	Program string // the first word of the command, or "" if there is none
-	Window  bool   // the editor opens its own window instead of running in the terminal
+	Script  string // for sh -c
+	Program string
+	Window  bool // the editor opens its own window, not in the terminal
 }
 
 // Sources holds the places that can name the editor, in the order that
 // CommandFor tries them.
 type Sources struct {
-	Template string // the editor command from the settings
-	Visual   string // $VISUAL
-	Editor   string // $EDITOR
+	Template string // from the settings
+	Visual   string
+	Editor   string
 	Git      string // core.editor
 }
 
-// CommandFor returns the command that opens file at line. It uses
-// s.Template if it is not empty. Otherwise it uses the first non-blank
-// value of s.Visual, s.Editor and s.Git. The error messages are written
-// for the user.
+// CommandFor returns the command that opens file at line. The error
+// messages are for the user.
 func CommandFor(s Sources, file string, line int) (Command, error) {
 	var c Command
 	if s.Template != "" {
@@ -50,9 +47,6 @@ func CommandFor(s Sources, file string, line int) (Command, error) {
 	return c, nil
 }
 
-// fromTemplate returns the command that opens file at line using the
-// user's command template. It replaces {file} and {line}. If template has
-// no {file}, the file is added at the end.
 func fromTemplate(template, file string, line int) Command {
 	r := strings.NewReplacer("{file}", shellQuote(file), "{line}", strconv.Itoa(line))
 	script := r.Replace(template)
@@ -62,9 +56,6 @@ func fromTemplate(template, file string, line int) Command {
 	return Command{Script: script, Program: program(template), Window: dialectOf(template).window}
 }
 
-// fromEditor returns the command that opens file at line using an editor
-// command such as $EDITOR. It adds the file and line in the form that the
-// editor expects.
 func fromEditor(command, file string, line int) Command {
 	d := dialectOf(command)
 	n, f := strconv.Itoa(line), shellQuote(file)
@@ -85,10 +76,8 @@ func fromEditor(command, file string, line int) Command {
 	return Command{Script: command + " " + args, Program: program(command), Window: d.window}
 }
 
-// shellQuote quotes s as a single word for sh.
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
-// lineArg is the way an editor accepts the line number to open at.
 type lineArg int
 
 const (
@@ -99,17 +88,13 @@ const (
 	argFlag                  // --line 42 file
 )
 
-// dialect describes how an editor accepts the line number, and whether it
-// opens a window.
 type dialect struct {
 	line   lineArg
 	window bool
 }
 
-// dialects maps the program names of known editors to their dialects.
 var dialects = knownDialects()
 
-// knownDialects builds the dialects table.
 func knownDialects() map[string]dialect {
 	d := map[string]dialect{}
 	add := func(dl dialect, names ...string) {
@@ -121,7 +106,6 @@ func knownDialects() map[string]dialect {
 	// Emacs may or may not open a window. Both work in a pane.
 	add(dialect{argPlus, false}, "emacs", "emacsclient")
 	add(dialect{argSuffix, false}, "hx", "helix", "fresh")
-	// MacVim, gVim, BBEdit and gedit open a window.
 	add(dialect{argPlus, true}, "mvim", "gvim", "bbedit", "gedit")
 	add(dialect{argGoto, true},
 		"code", "code-insiders", "codium", "vscodium", "cursor", "windsurf", "positron")
@@ -135,9 +119,6 @@ func knownDialects() map[string]dialect {
 	return d
 }
 
-// dialectOf returns the dialect for the program in command. An unknown
-// editor is assumed to accept +line and run in the terminal. A --wait or
-// --block flag marks an editor that opens a window.
 func dialectOf(command string) dialect {
 	d := dialect{line: argPlus}
 	if known, ok := dialects[filepath.Base(program(command))]; ok {
@@ -150,8 +131,6 @@ func dialectOf(command string) dialect {
 	return d
 }
 
-// program returns the first word of command. A quoted word can contain
-// spaces, for example "/Applications/Visual Studio Code.app/.../code".
 func program(command string) string {
 	command = strings.TrimSpace(command)
 	for _, q := range []string{`"`, "'"} {

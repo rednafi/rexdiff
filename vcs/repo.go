@@ -1,10 +1,5 @@
 // Package vcs reads the changes in a git repository and finds the pull
 // request for its current branch.
-//
-// A [Repo] compares trees, identified by their git tree object IDs.
-// [Repo.SnapshotTree] records the working tree as a tree object, and
-// [Repo.Diff] returns the files that differ between two trees. [Open]
-// takes the environment as a value, as in [exec.Cmd.Env].
 package vcs
 
 import (
@@ -30,72 +25,51 @@ import (
 	"github.com/rednafi/rexdiff/internal/proc"
 )
 
-// emptyTree is the ID of the tree that has no files.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-// Size limits for one version of a file. They keep the diff and the view
-// of a file fast. [Repo.Diff] applies them to the old and new versions
-// separately, and [Repo.ReadFile] to the file it reads.
 const (
 	maxFileSize = 2_000_000 // bytes
 	maxLines    = 50_000
 )
 
-// Limits for a whole diff. [Repo.Diff] keeps the text of both versions of
-// every changed file, so without a limit a large change could fill the
-// memory.
+// Limits for a whole diff, so a large change cannot fill the memory.
 const (
-	// maxDiffBytes is the most text, old and new versions together, that
-	// Diff reads. A caller can hold two diffs while it reloads.
-	maxDiffBytes = 128 << 20
-	// maxChangedFiles is the most changed files that Diff returns.
+	maxDiffBytes    = 128 << 20 // old and new text together
 	maxChangedFiles = 20_000
 )
 
 var (
 	// ErrBinary means that a file is binary.
 	ErrBinary = errors.New("binary file")
-	// ErrTooBig means that a file is larger than 2,000,000 bytes or has
-	// more than 50,000 lines.
-	ErrTooBig = errors.New("file too large")
-	// errDiffTooBig means that the changed files together are larger than
-	// maxDiffBytes, so [Repo.Diff] does not read this one. It wraps
-	// ErrTooBig.
+	// ErrTooBig means that a file has too many bytes or lines.
+	ErrTooBig     = errors.New("file too large")
 	errDiffTooBig = fmt.Errorf("changes too large: %w", ErrTooBig)
-	// errNoCommits means that HEAD does not point to a commit yet, as in a
-	// new repository.
-	errNoCommits = errors.New("no commits yet")
+	errNoCommits  = errors.New("no commits yet")
 )
 
 // Repo is a git repository.
 type Repo struct {
 	root  string
-	index string   // the path of the repository's real index
-	env   []string // the environment for git and the forge tools
+	index string
+	env   []string
 
-	// snapLock guards the private index of SnapshotTree and the fields
-	// below it. Sending acquires it and receiving releases it, so a waiting
-	// caller can give up when its ctx ends.
+	// snapLock guards the private index and the fields below. It is a
+	// channel, so a waiting caller can stop when its ctx ends.
 	snapLock chan struct{}
-	snapDir  string // the directory of the private index, or "" before the first snapshot
-	snapSeed string // the size and modification time of the real index when it was last copied
+	snapDir  string // "" before the first snapshot
+	snapSeed string // size and mtime of the real index at the last copy
 	closed   bool
 
-	// blobs caches the objects that the last Diff read, keyed by object
-	// ID. blobMu guards blobs.
+	// blobs caches the objects that the last Diff read, by object ID.
 	blobMu sync.Mutex
 	blobs  map[string]blob
 
-	// maxDiffBytes is the limit that Diff applies. Tests lower it.
-	maxDiffBytes int
+	maxDiffBytes int // tests lower it
 }
 
-// errClosed is the error that SnapshotTree returns after Close.
 var errClosed = errors.New("the repository is closed")
 
-// Open returns the repository that contains dir. The repository runs git
-// and the forge tools with the environment env, and looks them up in the
-// PATH from env. Open does not modify env.
+// Open returns the repository that contains dir.
 func Open(ctx context.Context, env []string, dir string) (*Repo, error) {
 	// git receives the root directory in PWD, which must be absolute.
 	abs, err := filepath.Abs(dir)
@@ -106,9 +80,8 @@ func Open(ctx context.Context, env []string, dir string) (*Repo, error) {
 		root: abs, env: env, snapLock: make(chan struct{}, 1),
 		maxDiffBytes: maxDiffBytes,
 	}
-	// Ask for each path with a separate git command, because a path can
-	// contain a newline. A path can also end with a space, so remove only
-	// the final newline.
+	// A path can contain a newline or end with a space. So use one git
+	// command per path and remove only the final newline.
 	root, err := r.run(ctx, nil, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return nil, err
@@ -124,8 +97,7 @@ func Open(ctx context.Context, env []string, dir string) (*Repo, error) {
 	return r, nil
 }
 
-// Close removes the temporary files that [Repo.SnapshotTree] creates. If a
-// SnapshotTree call is running, Close waits for it to finish.
+// Close removes the temporary files. It waits for a running SnapshotTree.
 func (r *Repo) Close() error {
 	r.snapLock <- struct{}{}
 	defer func() { <-r.snapLock }()
@@ -140,13 +112,10 @@ func (r *Repo) Close() error {
 // Root returns the top directory of the working tree.
 func (r *Repo) Root() string { return r.root }
 
-// run runs git in the root directory and returns its standard output. env
-// holds extra variables on top of the repository's environment.
 func (r *Repo) run(ctx context.Context, env []string, args ...string) (string, error) {
 	return r.runInput(ctx, env, nil, args...)
 }
 
-// runInput is like run, but git reads its standard input from in.
 func (r *Repo) runInput(ctx context.Context, env []string, in io.Reader, args ...string) (string, error) {
 	cmd, stderr := r.command(ctx, env, "git", args...)
 	cmd.Stdin = in
@@ -157,9 +126,6 @@ func (r *Repo) runInput(ctx context.Context, env []string, in io.Reader, args ..
 	return out, nil
 }
 
-// command returns a command that runs the program name with args in the
-// root directory. env holds extra variables on top of the repository's
-// environment. The returned buffer collects the standard error.
 func (r *Repo) command(ctx context.Context, env []string, name string, args ...string) (*exec.Cmd, *bytes.Buffer) {
 	// Set PWD, as exec does when Env is nil. Concat does not modify r.env.
 	env = slices.Concat(r.env, []string{"PWD=" + r.root}, env)
@@ -170,9 +136,6 @@ func (r *Repo) command(ctx context.Context, env []string, name string, args ...s
 	return cmd, &stderr
 }
 
-// output runs cmd and returns its standard output. The error includes the
-// first line of standard error, or the cause of ctx if ctx ended. It wraps
-// the process error, so callers can check the exit code.
 func output(ctx context.Context, cmd *exec.Cmd, stderr *bytes.Buffer) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
@@ -181,8 +144,6 @@ func output(ctx context.Context, cmd *exec.Cmd, stderr *bytes.Buffer) (string, e
 	return string(out), nil
 }
 
-// isExitOne reports whether err comes from a process that exited with
-// status 1.
 func isExitOne(err error) bool {
 	ee, ok := errors.AsType[*exec.ExitError](err)
 	return ok && ee.ExitCode() == 1
@@ -205,15 +166,13 @@ func (r *Repo) Tree(ctx context.Context, rev string) (string, error) {
 	return r.ResolveRev(ctx, rev+"^{tree}")
 }
 
-// HeadTree returns the tree ID of HEAD. If HEAD is a branch with no
-// commits yet, as in a new repository, it returns the empty tree.
+// HeadTree returns the tree ID of HEAD, or the empty tree if it has none.
 func (r *Repo) HeadTree(ctx context.Context) (string, error) {
 	t, err := r.Tree(ctx, "HEAD")
 	if err == nil {
 		return t, nil
 	}
-	// rev-parse exits with status 1 if HEAD does not point to a commit yet.
-	// A broken HEAD, for example one whose commit is missing, is an error.
+	// rev-parse exits 1 only if HEAD has no commit yet, not if it is broken.
 	_, rerr := r.run(ctx, nil, "rev-parse", "-q", "--verify", "HEAD")
 	if isExitOne(rerr) {
 		return emptyTree, nil
@@ -221,14 +180,12 @@ func (r *Repo) HeadTree(ctx context.Context) (string, error) {
 	return "", err
 }
 
-// ParentTree returns the tree ID of the first parent of the commit rev.
-// If rev has no parent, it returns the empty tree.
+// ParentTree returns the tree of the first parent of rev, or the empty tree.
 func (r *Repo) ParentTree(ctx context.Context, rev string) (string, error) {
 	c, err := r.ResolveRev(ctx, rev+"^{commit}")
 	if err != nil {
 		return "", err
 	}
-	// The output lists the parents, one per line.
 	out, err := r.run(ctx, nil, "rev-parse", c+"^@")
 	if err != nil {
 		return "", err
@@ -240,8 +197,7 @@ func (r *Repo) ParentTree(ctx context.Context, rev string) (string, error) {
 	return r.Tree(ctx, first)
 }
 
-// MergeBaseTree returns the tree ID of the commit that
-// [Repo.MergeBaseCommit] returns.
+// MergeBaseTree returns the tree ID of [Repo.MergeBaseCommit].
 func (r *Repo) MergeBaseTree(ctx context.Context, base string) (string, error) {
 	c, err := r.MergeBaseCommit(ctx, base)
 	if err != nil {
@@ -250,14 +206,11 @@ func (r *Repo) MergeBaseTree(ctx context.Context, base string) (string, error) {
 	return r.Tree(ctx, c)
 }
 
-// MergeBaseCommit returns the best common ancestor commit of base and
-// HEAD, as git merge-base finds it. If HEAD has no commits yet, it returns
-// an error that says so. If git exits with another error, the error wraps
-// the [*exec.ExitError] of git.
+// MergeBaseCommit returns the merge base commit of base and HEAD. Other
+// git errors wrap the [*exec.ExitError] of git.
 func (r *Repo) MergeBaseCommit(ctx context.Context, base string) (string, error) {
 	out, err := r.run(ctx, nil, "merge-base", "--end-of-options", base, "HEAD")
 	if err != nil {
-		// rev-parse exits with status 1 if HEAD does not point to a commit.
 		if _, rerr := r.run(ctx, nil, "rev-parse", "-q", "--verify", "HEAD"); isExitOne(rerr) {
 			return "", errNoCommits
 		}
@@ -266,12 +219,8 @@ func (r *Repo) MergeBaseCommit(ctx context.Context, base string) (string, error)
 	return strings.TrimSpace(out), nil
 }
 
-// SnapshotTree writes the tracked and untracked files in the working tree
-// as a tree object and returns its ID. It skips ignored files and files
-// that git cannot add, such as a nested repository with no commits. It
-// uses a private index, so the real index does not change. [Repo.Close]
-// removes the private index. Only one SnapshotTree call runs at a time; if
-// ctx ends while a call waits for another, it returns the cause of ctx.
+// SnapshotTree writes the working tree as a tree object and returns its ID.
+// It does not change the real index.
 func (r *Repo) SnapshotTree(ctx context.Context) (string, error) {
 	select {
 	case r.snapLock <- struct{}{}:
@@ -303,10 +252,8 @@ func (r *Repo) SnapshotTree(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// privateIndex returns the environment variable that points git at the
-// private index. It copies the real index again whenever the real index
-// changes, and creates a new directory if the old one was deleted. The
-// caller must hold snapLock.
+// privateIndex copies the real index again when it changes. The caller
+// must hold snapLock.
 func (r *Repo) privateIndex() ([]string, error) {
 	seed := ""
 	if info, err := os.Stat(r.index); err == nil {
@@ -330,9 +277,7 @@ func (r *Repo) privateIndex() ([]string, error) {
 	return []string{"GIT_INDEX_FILE=" + filepath.Join(r.snapDir, "index")}, nil
 }
 
-// removeIgnored removes from the private index in env the files that git
-// now ignores and that the real index does not track. "git add -A" does
-// not remove such files, for example after a .gitignore file changes.
+// removeIgnored is necessary, because "git add -A" keeps newly ignored files.
 func (r *Repo) removeIgnored(ctx context.Context, env []string) error {
 	ignored := []string{"ls-files", "-z", "-c", "-i", "--exclude-standard"}
 	out, err := r.run(ctx, env, ignored...)
@@ -362,14 +307,12 @@ func (r *Repo) removeIgnored(ctx context.Context, env []string) error {
 	return err
 }
 
-// copyIndex copies the real index to dst. If there is no real index, it
-// does nothing. The copy keeps the modification time of the original,
-// because git uses it to detect files that changed in the same second as
-// the index was written.
+// copyIndex keeps the modification time of the original. Git uses it to
+// find files that changed in the same second as the index was written.
 func (r *Repo) copyIndex(dst string) error {
 	info, err := os.Stat(r.index)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil // a new repository has no index
+		return nil
 	}
 	if err != nil {
 		return err
@@ -384,8 +327,7 @@ func (r *Repo) copyIndex(dst string) error {
 	return os.Chtimes(dst, time.Time{}, info.ModTime())
 }
 
-// FileStatus is the kind of change to a file. Its value is the status
-// letter that git uses, for example 'A'.
+// FileStatus is the git status letter of a change, for example 'A'.
 type FileStatus byte
 
 // The values of FileStatus that [Repo.Diff] returns.
@@ -395,45 +337,34 @@ const (
 	StatusDeleted  FileStatus = 'D'
 	StatusRenamed  FileStatus = 'R'
 
-	// statusTypeChange is a change of file type, for example from a regular
-	// file to a symbolic link. [Repo.Diff] reports it as [StatusModified].
 	statusTypeChange FileStatus = 'T'
 )
 
-// File is a file that differs between two trees. OldText and NewText are
-// its content in the old and new tree. They are empty if the file is
-// binary, too big, or missing from that tree. For a submodule, each
-// version is the single line "Subproject commit <id>".
+// File is a file that differs between two trees. For a submodule, each
+// version is the line "Subproject commit <id>".
 type File struct {
 	Path             string
-	OldPath          string // the old path of a renamed file
+	OldPath          string // set only for a rename
 	Status           FileStatus
 	OldText, NewText string
-	// Err tells why OldText and NewText are empty: ErrBinary if a version
-	// contains a NUL byte, ErrTooBig if a version is too big, and an error
-	// that wraps ErrTooBig if the files before it already hold too much
-	// text. Err is nil if the file was read. A version larger than
-	// 2,000,000 bytes gives ErrTooBig even if it is binary.
+	// Err is ErrBinary, or wraps ErrTooBig, when the texts are empty.
 	Err error
 }
 
-// gitlink is the mode of a submodule in a tree.
 const gitlink = "160000"
 
-// TooManyFilesError is the error that [Repo.Diff] returns when more than
-// 20,000 files differ.
+// TooManyFilesError means that too many files differ.
 type TooManyFilesError struct {
-	Count int // the number of files that differ
+	Count int
 }
 
-// Error returns the number of files and says that they are too many.
+// Error returns the number of changed files.
 func (e *TooManyFilesError) Error() string {
 	return fmt.Sprintf("%d files changed, too many to show", e.Count)
 }
 
 // Diff returns the files that differ between oldTree and newTree, sorted
-// by path. If more than 20,000 files differ, it reads none of them and
-// returns a [*TooManyFilesError].
+// by path. If too many files differ, it returns a [*TooManyFilesError].
 func (r *Repo) Diff(ctx context.Context, oldTree, newTree string) ([]File, error) {
 	out, err := r.run(ctx, nil,
 		"diff", "--raw", "-z", "--no-abbrev", "--find-renames",
@@ -445,8 +376,8 @@ func (r *Repo) Diff(ctx context.Context, oldTree, newTree string) ([]File, error
 	// followed by its path. A rename is followed by the old and new paths.
 	fields := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
 	var files []File
-	var ids []string // the old and new object ID of each file, or "" if there is none
-	var blobs []blob // the content for each entry of ids
+	var ids []string // old and new object ID of each file, or ""
+	var blobs []blob
 	for len(fields) >= 2 {
 		meta := strings.Fields(strings.TrimPrefix(fields[0], ":"))
 		if len(meta) != 5 {
@@ -464,7 +395,7 @@ func (r *Repo) Diff(ctx context.Context, oldTree, newTree string) ([]File, error
 		if len(files) > maxChangedFiles {
 			return nil, &TooManyFilesError{Count: len(files) + countRecords(fields)}
 		}
-		for k := range 2 { // the old side, then the new side
+		for k := range 2 {
 			id, b := diffSide(meta[k], meta[2+k])
 			ids = append(ids, id)
 			blobs = append(blobs, b)
@@ -488,9 +419,7 @@ func (r *Repo) Diff(ctx context.Context, oldTree, newTree string) ([]File, error
 	return files, nil
 }
 
-// diffSide returns the ID of the object to read for one side of a diff,
-// given the mode and ID from git diff. If there is no object to read, it
-// returns "" and a blob that already holds the content, if any.
+// diffSide returns "" if there is no object to read.
 func diffSide(mode, id string) (string, blob) {
 	switch {
 	case strings.Trim(id, "0") == "": // this side has no file
@@ -501,8 +430,7 @@ func diffSide(mode, id string) (string, blob) {
 	return id, blob{}
 }
 
-// use returns the content of b. If b is binary or too big, use sets
-// f.Err. ErrBinary takes priority over ErrTooBig.
+// use sets f.Err from b. ErrBinary takes priority over ErrTooBig.
 func (f *File) use(b blob) string {
 	if f.Err == nil || errors.Is(b.err, ErrBinary) {
 		f.Err = cmp.Or(b.err, f.Err)
@@ -510,19 +438,13 @@ func (f *File) use(b blob) string {
 	return b.data
 }
 
-// blob is the content of an object. If the object is binary or too big,
-// data is empty and err is ErrBinary or ErrTooBig. read is true if git
-// returned the object, and false if the object is missing or was not
-// read.
 type blob struct {
 	data string
 	err  error
-	read bool
-	size int // the size of the object, if read
+	read bool // false if the object is missing or was not read
+	size int
 }
 
-// kept returns the number of bytes that b counts for in the limit of a
-// diff: the size of the object, or 0 if it is too big to keep.
 func (b blob) kept() int {
 	if b.size > maxFileSize {
 		return 0
@@ -530,11 +452,7 @@ func (b blob) kept() int {
 	return b.size
 }
 
-// countRecords returns the number of files in the rest of the output of
-// git diff --raw -z, split at NUL bytes. Each file is a field of metadata
-// followed by its path, or by two paths for a rename or a copy. It reads
-// the fields in that order rather than looking for the ':' that starts the
-// metadata, because a path can also start with ':'.
+// countRecords does not look for ':', because a path can start with ':'.
 func countRecords(fields []string) int {
 	n := 0
 	for len(fields) > 0 {
@@ -549,8 +467,7 @@ func countRecords(fields []string) int {
 	return n
 }
 
-// fromCache copies into blobs[i] the object ids[i] if the previous Diff
-// read it. It returns the IDs still to read, with "" for the others.
+// fromCache returns the IDs still to read, with "" for cached ones.
 func (r *Repo) fromCache(ids []string, blobs []blob) (fresh []string) {
 	r.blobMu.Lock()
 	defer r.blobMu.Unlock()
@@ -563,8 +480,6 @@ func (r *Repo) fromCache(ids []string, blobs []blob) (fresh []string) {
 	return fresh
 }
 
-// keepCache makes the cache hold the objects of ids that were read, and
-// no others.
 func (r *Repo) keepCache(ids []string, blobs []blob) {
 	next := make(map[string]blob, len(ids))
 	for i, id := range ids {
@@ -577,14 +492,11 @@ func (r *Repo) keepCache(ids []string, blobs []blob) {
 	r.blobMu.Unlock()
 }
 
-// readLimited is like readBlobs, but it reuses the objects that the
-// previous call read, and keeps the text within r.maxDiffBytes. blobs
-// holds the old and new version of each file in turn. If the objects do
-// not fit, limitTotal chooses the files to leave out, so that they are
-// the same each time, and readLimited reads the rest.
+// readLimited keeps the text within r.maxDiffBytes. limitTotal chooses
+// the files to leave out, so the same files are left out each time.
 func (r *Repo) readLimited(ctx context.Context, ids []string, blobs []blob) error {
 	fresh := r.fromCache(ids, blobs)
-	var left atomic.Int64 // the bytes that the fresh objects can take
+	var left atomic.Int64
 	left.Store(int64(r.maxDiffBytes))
 	for _, b := range blobs {
 		left.Add(-int64(b.kept()))
@@ -607,12 +519,7 @@ func (r *Repo) readLimited(ctx context.Context, ids []string, blobs []blob) erro
 	return r.readBlobs(ctx, fresh, blobs, nil)
 }
 
-// limitTotal keeps the text that Diff holds within r.maxDiffBytes. blobs
-// holds the old and new version of each file in turn, and fresh the IDs
-// that are still to be read. Going through the files in order, limitTotal
-// gives both versions of each file that does not fit the error
-// errDiffTooBig, and removes them from fresh so that they are not read.
-// It asks git for the sizes of the fresh objects.
+// In limitTotal, blobs holds the old and new version of each file in turn.
 func (r *Repo) limitTotal(ctx context.Context, fresh []string, blobs []blob) error {
 	sizes, err := r.sizes(ctx, fresh)
 	if err != nil {
@@ -623,7 +530,7 @@ func (r *Repo) limitTotal(ctx context.Context, fresh []string, blobs []blob) err
 		size := 0
 		for k := i; k < i+2; k++ {
 			size += blobs[k].kept()
-			if sizes[k] <= maxFileSize { // a larger object is not kept
+			if sizes[k] <= maxFileSize {
 				size += sizes[k]
 			}
 		}
@@ -638,12 +545,11 @@ func (r *Repo) limitTotal(ctx context.Context, fresh []string, blobs []blob) err
 	return nil
 }
 
-// sizes returns the size in bytes of each object ids[i], or 0 if ids[i]
-// is "" or the object is missing.
+// sizes returns 0 for an empty ID or a missing object.
 func (r *Repo) sizes(ctx context.Context, ids []string) ([]int, error) {
 	sizes := make([]int, len(ids))
 	var in strings.Builder
-	var asked []int // the indices of the objects asked for
+	var asked []int
 	for i, id := range ids {
 		if id != "" {
 			in.WriteString(id)
@@ -658,7 +564,6 @@ func (r *Repo) sizes(ctx context.Context, ids []string) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Each line is "<oid> <type> <size>", or "<oid> missing".
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 	if len(lines) != len(asked) {
 		return nil, fmt.Errorf("git cat-file: %d lines for %d objects", len(lines), len(asked))
@@ -671,18 +576,11 @@ func (r *Repo) sizes(ctx context.Context, ids []string) ([]int, error) {
 	return sizes, nil
 }
 
-// errNoRoom means that the objects did not fit in the bytes left for
-// them.
 var errNoRoom = errors.New("no room left for the objects")
 
-// readBlobs reads the object ids[i] into blobs[i] for each non-empty
-// ids[i]. It does not keep the content of an object larger than
-// maxFileSize. If left is not nil, each object takes its size from left,
-// and readBlobs fails with errNoRoom once left would fall below zero. It
-// splits a large batch across several git processes, because
-// decompressing objects is slow.
+// readBlobs uses several git processes, because decompressing is slow.
 func (r *Repo) readBlobs(ctx context.Context, ids []string, blobs []blob, left *atomic.Int64) error {
-	var batch []int // the indices of the objects to read
+	var batch []int
 	for i, id := range ids {
 		if id != "" {
 			batch = append(batch, i)
@@ -702,16 +600,11 @@ func (r *Repo) readBlobs(ctx context.Context, ids []string, blobs []blob, left *
 	return errors.Join(errs...)
 }
 
-// Limits for the parallel reads in readBlobs. Each git process reads at
-// least minCatFileBatch objects, and at most maxCatFiles processes run at
-// once.
 const (
 	minCatFileBatch = 128
 	maxCatFiles     = 8
 )
 
-// catFile reads the object ids[i] into blobs[i] for each i in batch,
-// using one git process. left is as in readBlobs.
 func (r *Repo) catFile(ctx context.Context, ids []string, batch []int, blobs []blob, left *atomic.Int64) error {
 	if len(batch) == 0 {
 		return nil
@@ -743,22 +636,19 @@ func (r *Repo) catFile(ctx context.Context, ids []string, batch []int, blobs []b
 	return nil
 }
 
-// errShort means that the output of git cat-file ended too early.
 var errShort = errors.New("short output")
 
-// readBatch reads the output of "git cat-file --batch" into blobs[i] for
-// each i in batch. For each object, the output is either
-// "<oid> <type> <size>\n<content>\n" or a single line that ends with
-// "missing" or "ambiguous". left is as in readBlobs.
+// readBatch reads "<oid> <type> <size>\n<content>\n" records. A missing or
+// ambiguous object has only one line.
 func readBatch(r *bufio.Reader, batch []int, blobs []blob, left *atomic.Int64) error {
-	buf := make([]byte, 32<<10) // the copy buffer, reused for every object
+	buf := make([]byte, 32<<10)
 	for _, i := range batch {
 		hdr, err := r.ReadString('\n')
 		if err != nil {
 			return errShort
 		}
 		f := strings.Fields(hdr)
-		if len(f) != 3 { // "<id> missing" or "<id> ambiguous"
+		if len(f) != 3 {
 			continue
 		}
 		n, err := strconv.Atoi(f[2])
@@ -777,7 +667,6 @@ func readBatch(r *bufio.Reader, batch []int, blobs []blob, left *atomic.Int64) e
 		if left != nil && left.Add(-int64(n)) < 0 {
 			return errNoRoom
 		}
-		// Read the content straight into the string, without an extra copy.
 		var b strings.Builder
 		b.Grow(n)
 		if k, _ := io.CopyBuffer(&b, io.LimitReader(r, int64(n)), buf); k != int64(n) {
@@ -796,12 +685,9 @@ func readBatch(r *bufio.Reader, batch []int, blobs []blob, left *atomic.Int64) e
 	return nil
 }
 
-// isBinary reports whether s contains a NUL byte.
 func isBinary(s string) bool { return strings.Contains(s, "\x00") }
 
-// isTooBig reports whether any of the versions is larger than maxFileSize
-// bytes or has more than maxLines lines. A final line without a newline
-// counts as a line, as in diff.Lines.
+// isTooBig counts a final line without a newline, as diff.Lines does.
 func isTooBig(versions ...string) bool {
 	for _, s := range versions {
 		lines := strings.Count(s, "\n")
@@ -815,11 +701,8 @@ func isTooBig(versions ...string) bool {
 	return false
 }
 
-// ReadFile reads the file at path in the working tree. The path is relative
-// to the root. ReadFile reads only regular files inside the root, including
-// through symbolic links that stay inside it. For anything else, such as a
-// directory or a named pipe, it returns an error. If the file is binary or
-// too big, ReadFile returns ErrBinary or ErrTooBig.
+// ReadFile reads the regular file at path, relative to the root. It does
+// not follow symbolic links out of the root.
 func (r *Repo) ReadFile(path string) (string, error) {
 	root, err := os.OpenRoot(r.root)
 	if err != nil {
@@ -830,8 +713,7 @@ func (r *Repo) ReadFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Do not read a device or a named pipe, because the read can block or
-	// never end.
+	// A device or a named pipe can block the read forever.
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("%q is not a regular file", path)
 	}
@@ -852,28 +734,24 @@ func (r *Repo) ReadFile(path string) (string, error) {
 	}
 }
 
-// Contains reports whether dir is the root or a directory below it. It
-// follows symbolic links, so on macOS /tmp and /private/tmp are the same.
-// Contains does not run git, so it does not detect nested repositories.
+// Contains reports whether dir is the root or below it. It does not run
+// git, so it does not see nested repositories.
 func (r *Repo) Contains(dir string) bool {
 	dir = evalSymlinks(dir)
 	return dir == r.root || strings.HasPrefix(dir, r.root+string(filepath.Separator))
 }
 
-// Owns reports whether dir is in the working tree of r and not in another
-// repository or worktree below the root. It reports false for a relative
-// dir. Owns runs git only if [Repo.Contains] reports true. An error means
-// that git could not run, so the answer is unknown.
+// Owns reports whether dir is in the working tree of r and not in a
+// nested repository. An error means that the answer is unknown.
 func (r *Repo) Owns(ctx context.Context, dir string) (bool, error) {
 	if !filepath.IsAbs(dir) || !r.Contains(dir) {
 		return false, nil
 	}
 	cmd, stderr := r.command(ctx, nil, "git", "-C", dir, "rev-parse", "--show-toplevel")
 	out, err := output(ctx, cmd, stderr)
-	// If a signal killed git, for example because ctx ended, the answer is
-	// unknown. Only a normal exit means that dir is not in a working tree.
+	// Only a normal exit means that dir is not in a working tree.
 	if ee, ok := errors.AsType[*exec.ExitError](err); ok && ee.Exited() {
-		return false, nil // dir is not in any working tree
+		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("git rev-parse: %w", err)
@@ -882,8 +760,6 @@ func (r *Repo) Owns(ctx context.Context, dir string) (bool, error) {
 	return top != "" && evalSymlinks(top) == r.root, nil
 }
 
-// evalSymlinks returns p with its symbolic links resolved, or p unchanged
-// if that fails.
 func evalSymlinks(p string) string {
 	if q, err := filepath.EvalSymlinks(p); err == nil {
 		return q

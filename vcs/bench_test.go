@@ -9,10 +9,7 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// BenchmarkDiff measures Diff on 1,000 changed files of 500 lines each.
-// The cold case opens a new Repo each time, so Diff reads every object.
-// The warm case repeats the Diff on the same Repo, so every object comes
-// from the cache.
+// In BenchmarkDiff, only the warm case uses the cache.
 func BenchmarkDiff(b *testing.B) {
 	dir := b.TempDir()
 	testgit.InitRepo(b, dir)

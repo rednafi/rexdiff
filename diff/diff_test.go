@@ -17,7 +17,6 @@ const (
 	newText = "a\nB\nc\nd\n"
 )
 
-// screenLines returns every screen line of d, first to last.
 func screenLines(d *diff.Diff) []string {
 	var lines []string
 	for i := range len(d.Rows) {
@@ -26,8 +25,6 @@ func screenLines(d *diff.Diff) []string {
 	return lines
 }
 
-// snippet returns the diff lines that [diff.Comments.Review] writes for a
-// comment on rows.
 func snippet(rows []diff.Row, oldText, newText string) []string {
 	var cs diff.Comments
 	cs.Add(diff.NewComment("x", diff.SideNew, rows, oldText, newText))
@@ -35,10 +32,8 @@ func snippet(rows []diff.Row, oldText, newText string) []string {
 	return lines[1 : len(lines)-1] // drop the location and the empty comment text
 }
 
-// isEqual reports whether r is a [diff.KindEqual] row.
 func isEqual(r diff.Row) bool { return r.Kind == diff.KindEqual }
 
-// kinds returns one character for each row's kind, for example "@=-+=+".
 func kinds(rows []diff.Row) string {
 	var b strings.Builder
 	for _, r := range rows {
@@ -47,14 +42,11 @@ func kinds(rows []diff.Row) string {
 	return b.String()
 }
 
-// renderer is a named way to render two versions of a file.
 type renderer struct {
 	name   string
 	render func(o diff.Options) *diff.Diff
 }
 
-// renderers returns renderers for the unified diff and the split diff of
-// oldText and newText, and for the file view of newText.
 func renderers(oldText, newText string) []renderer {
 	return []renderer{
 		{"unified", func(o diff.Options) *diff.Diff {
@@ -70,9 +62,6 @@ func renderers(oldText, newText string) []renderer {
 	}
 }
 
-// TestRenderRowsFollowLines checks the row of each line, that there is one
-// line for each row and that lines fit the width, in each layout and
-// theme.
 func TestRenderRowsFollowLines(t *testing.T) {
 	t.Parallel()
 	const width = 80
@@ -140,9 +129,8 @@ func TestRenderRowsFollowLines(t *testing.T) {
 	}
 }
 
-// TestRenderKinds checks the row kinds of a diff. Equal versions produce
-// no rows. Replacing a tab with spaces counts as a change, as it does in
-// CountLines and git.
+// TestRenderKinds treats a tab replaced with spaces as a change, as
+// CountLines and git do.
 func TestRenderKinds(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ old, new, want string }{
@@ -158,13 +146,10 @@ func TestRenderKinds(t *testing.T) {
 	}
 }
 
-// TestRenderLineEnding checks that a change to only the line ending is
-// shown, with ^M at the end of the CRLF line. An unchanged CRLF line is
-// shown as equal, without ^M.
 func TestRenderLineEnding(t *testing.T) {
 	t.Parallel()
 	d := diff.Render("x.txt", "a\nb\r\nc\r\n", "a\r\nb\nc\r\n", diff.Options{Width: 80})
-	var got []string // the kind and last word of each row
+	var got []string
 	for i, r := range d.Rows {
 		words := strings.Fields(plainLine(t, d, i))
 		got = append(got, fmt.Sprintf("%c %s", "@=+-~"[r.Kind], words[len(words)-1]))
@@ -175,8 +160,6 @@ func TestRenderLineEnding(t *testing.T) {
 	}
 }
 
-// TestRenderTabsAndOffset checks that a tab is shown as spaces and that
-// ScrollX scrolls the code.
 func TestRenderTabsAndOffset(t *testing.T) {
 	t.Parallel()
 	d := diff.Render("x.go", "", "\tx := 1\n", diff.Options{Width: 80})
@@ -190,14 +173,9 @@ func TestRenderTabsAndOffset(t *testing.T) {
 	}
 }
 
-// TestMarks checks the bar or sign at the start of the code on each line,
-// in both layouts.
 func TestMarks(t *testing.T) {
 	t.Parallel()
 	const oldSrc, newSrc = "a\nb\nc\n", "a\nB\nc\n"
-	// By default a bar marks a changed line, and Signs uses + and -
-	// instead. The mark is two cells wide in both cases, so the columns
-	// stay in place.
 	theme := diff.Theme{
 		Background: color.Black,
 		Green:      color.RGBA{G: 0xff, A: 0xff},
@@ -206,7 +184,7 @@ func TestMarks(t *testing.T) {
 	tests := []struct {
 		name  string
 		o     diff.Options
-		lines []string // lines below the hunk header, without colours
+		lines []string
 	}{
 		{"unified bar", diff.Options{Width: 40}, []string{
 			" 1  1   a", " 2    ▎ b", "    2 ▎ B", " 3  3   c",
@@ -239,20 +217,16 @@ func TestMarks(t *testing.T) {
 					t.Errorf("line %d = %q, want %q", i+1, got, want)
 				}
 			}
-			// Each mark has the colour of its line: ANSI red for the deleted
-			// line, then ANSI green for the added line.
 			got := markColors(screenLines(d)[1:])
 			if !slices.Equal(got, []string{"31", "32"}) {
 				t.Errorf("the marks have colours %q, want 31 and 32", got)
 			}
 		})
 	}
-	// When the code is scrolled to the right, an ellipsis follows the bar.
 	d := diff.Render("x.txt", "", "abcdefgh\n", diff.Options{Width: 40, ScrollX: 2})
 	if got := plainLine(t, d, 1); !strings.Contains(got, "▎…cdefgh") {
 		t.Errorf("offset: line = %q, want ▎…cdefgh", got)
 	}
-	// A comment's review text uses + and - with either kind of mark.
 	for _, signs := range []bool{false, true} {
 		d := diff.Render("x.txt", oldSrc, newSrc, diff.Options{Width: 40, Signs: signs})
 		got := snippet(d.Rows[2:5], oldSrc, newSrc)
@@ -262,9 +236,6 @@ func TestMarks(t *testing.T) {
 	}
 }
 
-// markColors returns the foreground colour code, such as "31", of each
-// bar, + or - in lines, in order. It reads the code from the SGR sequence
-// before the mark.
 func markColors(lines []string) []string {
 	var out []string
 	for _, l := range lines {
@@ -282,17 +253,11 @@ func markColors(lines []string) []string {
 	return out
 }
 
-// TestSideAt checks the side of various columns, and whether each column
-// is on a line number.
 func TestSideAt(t *testing.T) {
 	t.Parallel()
-	// The unified layout has old line numbers like " 1 ", then new line
-	// numbers, then the code.
 	u := diff.Render("x.go", oldText, newText, diff.Options{Width: 80})
-	// The split layout has old numbers, old code, new numbers and new code.
 	split := diff.Options{Split: true, Width: 80}
 	s := diff.Render("x.go", oldText, newText, split)
-	// The file view has line numbers, then the code.
 	f := diff.RenderFile("x.go", oldText, diff.FileOptions{Width: 80})
 	tests := []struct {
 		name     string
@@ -323,7 +288,6 @@ func TestSideAt(t *testing.T) {
 	}
 }
 
-// TestCountLines checks the counts of added and deleted lines.
 func TestCountLines(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -344,10 +308,9 @@ func TestCountLines(t *testing.T) {
 	}
 }
 
-// TestManySpreadEdits checks that a file with many changes spread through
-// it gets a diff of just those changes, as git finds. The diff of a
-// 10,000-line file with 100 one-line edits once marked thousands of equal
-// lines as changed. The 50,000-line files use the fast diff.
+// TestManySpreadEdits covers a past bug. A 10,000-line file with 100
+// one-line edits marked thousands of equal lines as changed. The
+// 50,000-line files use the fast diff.
 func TestManySpreadEdits(t *testing.T) {
 	t.Parallel()
 	for _, size := range []struct{ lines, edits int }{{10_000, 100}, {10_000, 1000}, {50_000, 100}, {50_000, 1000}} {
@@ -368,7 +331,6 @@ func TestManySpreadEdits(t *testing.T) {
 			if a, d := diff.CountLines(oldSrc, newSrc); a != want || d != want {
 				t.Errorf("CountLines = +%d -%d, want +%d -%d", a, d, want, want)
 			}
-			// Only the rows are needed, so the lines are not rendered.
 			u := diff.Render("x.txt", oldSrc, newSrc, diff.Options{Width: 80})
 			if a, d := countKind(u.Rows, diff.KindAdded), countKind(u.Rows, diff.KindDeleted); a != want || d != want {
 				t.Errorf("unified: %d added and %d deleted rows, want %d and %d", a, d, want, want)
@@ -381,7 +343,6 @@ func TestManySpreadEdits(t *testing.T) {
 	}
 }
 
-// countKind returns the number of rows of kind k.
 func countKind(rows []diff.Row, k diff.Kind) int {
 	n := 0
 	for _, r := range rows {
@@ -392,8 +353,6 @@ func countKind(rows []diff.Row, k diff.Kind) int {
 	return n
 }
 
-// TestFewValues checks that the counts of a large diff of lines with few
-// distinct values match the rows of its rendered diff.
 func TestFewValues(t *testing.T) {
 	t.Parallel()
 	oldSrc, newSrc := fewValues(25_000)
@@ -404,7 +363,6 @@ func TestFewValues(t *testing.T) {
 	}
 }
 
-// TestRenderFile checks the line numbers and rows of a rendered file.
 func TestRenderFile(t *testing.T) {
 	t.Parallel()
 	src := "package x\n\nfunc f() {\n\treturn\n}\n"
@@ -425,8 +383,6 @@ func TestRenderFile(t *testing.T) {
 	}
 }
 
-// TestWrap checks that a wrapped long line shows all of its text and fits
-// the width.
 func TestWrap(t *testing.T) {
 	t.Parallel()
 	long := "x := []string{" + strings.Repeat(`"word", `, 12) + "}"
@@ -452,7 +408,6 @@ func TestWrap(t *testing.T) {
 				if r.New == 2 {
 					text.WriteString(ansi.Strip(l))
 				}
-				// A continued row has the same source lines as the row above.
 				prev := d.Rows[max(i-1, 0)]
 				sameLines := prev.Old == r.Old && prev.New == r.New
 				if r.Continued && !sameLines {
@@ -467,7 +422,6 @@ func TestWrap(t *testing.T) {
 				t.Errorf("wrapped lines = \n%s\nwant all of:\n%s",
 					text.String(), long)
 			}
-			// Wrapping does not change a comment's diff lines.
 			got, want := snippet(d.Rows, oldSrc, newSrc), snippet(cut.Rows, oldSrc, newSrc)
 			if !slices.Equal(got, want) {
 				t.Errorf("snippet with wrap = %q, want %q", got, want)
@@ -476,15 +430,12 @@ func TestWrap(t *testing.T) {
 	}
 }
 
-// TestCache checks that renders sharing a [diff.Cache] return the same
-// lines as renders without one, as the scroll offset, language and content
-// change.
 func TestCache(t *testing.T) {
 	t.Parallel()
 	const src = "def f(): # a comment\n\treturn 1\n"
 	tests := []struct {
 		path, old, new string
-		file           bool // use RenderFile on new
+		file           bool
 		offset         int
 	}{
 		{path: "a.go", old: src, new: src + "x\n"},
@@ -514,8 +465,6 @@ func TestCache(t *testing.T) {
 	}
 }
 
-// TestNoNewline checks that a changed last line without a line ending is
-// marked, and that an unchanged one is not.
 func TestNoNewline(t *testing.T) {
 	t.Parallel()
 	const mark = `\ No newline at end of file`

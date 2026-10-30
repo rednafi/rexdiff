@@ -20,9 +20,6 @@ import (
 	"github.com/rednafi/rexdiff/rex"
 )
 
-// client writes a fake rex script with the given body to a new directory.
-// It returns a client for the block block:self in the session S that runs
-// the script, and the directory.
 func client(t *testing.T, body string) (*rex.Client, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -40,9 +37,6 @@ func client(t *testing.T, body string) (*rex.Client, string) {
 	return c, dir
 }
 
-// fakeRex returns a client that runs a fake rex script with canned
-// responses. The script appends each call to the file "calls" in its
-// directory, and for "rex events" it prints the file "events".
 func fakeRex(t *testing.T) (*rex.Client, string) {
 	t.Helper()
 	script := `printf "%s\n" "$*" >> "${0%/*}/calls"
@@ -86,9 +80,6 @@ esac
 	return client(t, script)
 }
 
-// TestAgents checks that Agents returns only the terminal blocks whose
-// program reports an app name, leaves out the client's own block, and
-// fills in the window label and working directory.
 func TestAgents(t *testing.T) {
 	t.Parallel()
 	c, _ := fakeRex(t)
@@ -117,9 +108,6 @@ func TestAgents(t *testing.T) {
 	}
 }
 
-// TestCommands checks the rex commands that ResolveBlock, Paste, Focus,
-// Split and SetLabel run, and the error that ResolveBlock returns for an
-// unknown block.
 func TestCommands(t *testing.T) {
 	t.Parallel()
 	c, dir := fakeRex(t)
@@ -166,22 +154,15 @@ func TestCommands(t *testing.T) {
 	}
 }
 
-// blockEvent returns a "rex events --json" line for an event with the
-// given name and payload in block.
 func blockEvent(block, name, payload string) string {
 	return `{"type":"session_event","payload":{"session_id":"S",` +
 		`"event":{"type":"block_event","payload":{"block_id":"` + block +
 		`","name":"` + name + `","payload":` + payload + `}}}}`
 }
 
-// TestEvents checks that Events reports changes to the program's own
-// status, with the time from Rex, and closed blocks, and ignores sub-agent
-// statuses and lines that are not JSON. It also checks that Events sends a
-// Reconnect event after rex stops and then reports the events again.
 func TestEvents(t *testing.T) {
 	t.Parallel()
-	// synctest uses a fake clock, so the test does not wait 2 seconds for
-	// rex to restart.
+	// synctest fakes the clock, so the test does not wait for rex to restart.
 	synctest.Test(t, func(t *testing.T) {
 		c, dir := fakeRex(t)
 		events := strings.Join([]string{
@@ -209,7 +190,6 @@ func TestEvents(t *testing.T) {
 			{Block: "block:pi", Closed: true},
 		}
 		want := slices.Concat(once, []rex.Event{{Reconnect: true}}, once)
-		// Stop Events once it has reported every expected event.
 		ctx, cancel := context.WithCancelCause(t.Context())
 		defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
 		errAll := errors.New("the test has all the events")
@@ -228,8 +208,6 @@ func TestEvents(t *testing.T) {
 	})
 }
 
-// TestNew checks that New returns nil and false when REX_SESSION is
-// missing or empty.
 func TestNew(t *testing.T) {
 	t.Parallel()
 	for _, env := range [][]string{nil, {"REX_SESSION=S", "REX_SESSION="}} {
@@ -239,8 +217,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-// TestConfigPath checks that ConfigPath prefers REX_CONFIG, then
-// XDG_CONFIG_HOME, then HOME.
 func TestConfigPath(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -258,15 +234,12 @@ func TestConfigPath(t *testing.T) {
 	}
 }
 
-// TestReloadConfigOutsideRex checks that, outside a Rex terminal,
-// ReloadConfig runs the rex binary inside the Rex Server app.
 func TestReloadConfigOutsideRex(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "darwin" {
 		t.Skip("the Rex server app is on macOS")
 	}
-	// Outside a Rex terminal, for example when brew runs rexdiff,
-	// REX_BIN_DIR is not set and rex is not in PATH.
+	// Outside Rex, as under brew, REX_BIN_DIR is not set and PATH has no rex.
 	home := t.TempDir()
 	env := []string{"HOME=" + home, "REX_BIN_DIR=", "PATH=" + t.TempDir()}
 	dir := filepath.Join(home, "Library", "Application Support", "com.superlogical.rex", "RexServer", "Versions", "Current", "Rex Server.app", "Contents", "MacOS")
@@ -287,8 +260,6 @@ func TestReloadConfigOutsideRex(t *testing.T) {
 	}
 }
 
-// TestErrorKeepsCause checks that when rex fails, the error has rex's
-// message and wraps the [*exec.ExitError].
 func TestErrorKeepsCause(t *testing.T) {
 	t.Parallel()
 	c, _ := client(t, "echo 'Error: no Rex server' >&2\nexit 3\n")
@@ -300,21 +271,16 @@ func TestErrorKeepsCause(t *testing.T) {
 	}
 }
 
-// TestPasteLong checks that Paste sends a text that Rex would refuse in one
-// message as several paste events, in order, each well under Rex's limit
-// of 65,536 bytes once encoded, and that the parts join to the text. Each
-// part holds whole characters and, as the lines are short, ends after a
-// newline.
+// TestPasteLong uses a text that Rex refuses in one message.
 func TestPasteLong(t *testing.T) {
 	t.Parallel()
-	// Each call saves its last argument, the JSON arguments, to a file.
+	// Each call saves its last argument, the JSON, to a file.
 	c, dir := client(t, `d="${0%/*}"
 n=$(ls "$d" | grep -c '^call')
 for last; do :; done
 printf '%s' "$last" > "$d/call$n"
 `)
-	// Rex escapes each of <, & and > as 6 bytes, so this text of 150 KB
-	// takes 600 KB once encoded. The other characters take 1 to 6 bytes.
+	// Rex escapes <, & and > as 6 bytes each.
 	text := strings.Repeat("<&>\n", 12_500) + strings.Repeat("日本é\u2028\x01\"\\\t\n", 5000) + "日本"
 	if err := c.Paste(t.Context(), "block:pi", text); err != nil {
 		t.Fatal(err)
@@ -358,8 +324,6 @@ printf '%s' "$last" > "$d/call$n"
 	}
 }
 
-// TestPastePartFails checks that when a part after the first fails, Paste
-// returns a PasteError that says how many parts were pasted.
 func TestPastePartFails(t *testing.T) {
 	t.Parallel()
 	c, _ := client(t, `d="${0%/*}"

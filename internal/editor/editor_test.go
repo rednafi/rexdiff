@@ -6,8 +6,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/editor"
 )
 
-// TestCommands checks the command that CommandFor builds for each editor,
-// and whether it reports that the editor opens a window.
 func TestCommands(t *testing.T) {
 	t.Parallel()
 	const abs = "/r/a b.go"
@@ -16,13 +14,11 @@ func TestCommands(t *testing.T) {
 		script           string
 		window           bool
 	}{
-		// The editor command from the settings has its placeholders filled in.
 		{template: "/opt/homebrew/bin/nvim +{line} {file}", script: `/opt/homebrew/bin/nvim +12 '/r/a b.go'`},
 		{template: "code -g {file}:{line}", script: `code -g '/r/a b.go':12`, window: true},
 		{template: "zed {file}:{line}", script: `zed '/r/a b.go':12`, window: true},
 		{template: "open -a Zed {file}", script: `open -a Zed '/r/a b.go'`, window: true},
 		{template: "myeditor --at {line}", script: `myeditor --at 12 '/r/a b.go'`},
-		// An editor from the environment gets the line in the form it expects.
 		{editor: "nvim", script: `nvim +12 '/r/a b.go'`},
 		{editor: "/usr/bin/vim -u NONE", script: `/usr/bin/vim -u NONE +12 '/r/a b.go'`},
 		{editor: "micro", script: `micro +12 '/r/a b.go'`},
@@ -32,12 +28,9 @@ func TestCommands(t *testing.T) {
 		{editor: "subl", script: `subl '/r/a b.go:12'`, window: true},
 		{editor: "idea", script: `idea --line 12 '/r/a b.go'`, window: true},
 		{editor: "mvim", script: `mvim +12 '/r/a b.go'`, window: true},
-		// A quoted path can contain spaces.
 		{editor: `"/Apps/VS Code.app/bin/code" -w`, script: `"/Apps/VS Code.app/bin/code" -w -g '/r/a b.go:12'`, window: true},
 		{editor: `'/my apps/nvim'`, script: `'/my apps/nvim' +12 '/r/a b.go'`},
-		// An unknown editor gets +line and is assumed to run in the terminal.
 		{editor: "vim.basic", script: `vim.basic +12 '/r/a b.go'`},
-		// A --wait flag shows that an unknown editor opens a window.
 		{editor: "myeditor --wait", script: `myeditor --wait +12 '/r/a b.go'`, window: true},
 	}
 	for _, tt := range tests {
@@ -49,8 +42,6 @@ func TestCommands(t *testing.T) {
 	}
 }
 
-// TestCommandProgram checks the program name that CommandFor finds in a
-// command. An empty quoted word names no program.
 func TestCommandProgram(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ command, want string }{
@@ -75,8 +66,6 @@ func TestCommandProgram(t *testing.T) {
 	}
 }
 
-// TestCommandForOrder checks that CommandFor prefers the settings, then
-// $VISUAL, $EDITOR and core.editor, and that it skips blank values.
 func TestCommandForOrder(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

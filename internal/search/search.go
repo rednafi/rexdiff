@@ -1,22 +1,17 @@
-// Package search finds the files shown on the search screen and the lines
-// shown in the find bar.
+// Package search finds files for the search screen and lines for the find
+// bar.
 package search
 
 import "github.com/sahilm/fuzzy"
 
-// Limits on the number of results. A "… more" row shows that there are
-// more.
+// Limits on the number of results.
 const (
-	// MaxFiles is the maximum number of files that the search shows.
-	MaxFiles = 50
-	// MaxGrepLines is the maximum number of matching lines that the search
-	// shows.
+	MaxFiles     = 50
 	MaxGrepLines = 200
 )
 
-// Files returns up to limit paths that match query, best match first, and
-// the total number of matches. If query is empty, it returns the paths in
-// recent first, in their order, followed by the other paths.
+// Files returns up to limit paths that match query and the total number of
+// matches. If query is empty, recent paths come first.
 func Files(paths, recent []string, query string, limit int) (hits []string, total int) {
 	if query == "" {
 		return recentFirst(paths, recent, limit), len(paths)
@@ -28,8 +23,7 @@ func Files(paths, recent []string, query string, limit int) (hits []string, tota
 	return hits, len(ms)
 }
 
-// Indices returns the indices of the labels that match query, best match
-// first. It uses the same fuzzy matching as [Files].
+// Indices returns the indices of the labels that match query, best first.
 func Indices(query string, labels []string) []int {
 	ms := fuzzy.Find(query, labels)
 	indices := make([]int, len(ms))
@@ -39,15 +33,12 @@ func Indices(query string, labels []string) []int {
 	return indices
 }
 
-// recentFirst returns up to limit paths: the paths in recent first, in
-// their order, followed by the other paths. It goes through paths once,
-// and stops once it has found every recent path and enough others.
 func recentFirst(paths, recent []string, limit int) []string {
 	isRecent := make(map[string]bool, len(recent))
 	for _, p := range recent {
 		isRecent[p] = true
 	}
-	found := make(map[string]bool, len(recent)) // the recent paths in paths
+	found := make(map[string]bool, len(recent))
 	var others []string
 	for _, p := range paths {
 		if len(found) == len(isRecent) && len(others) >= limit {

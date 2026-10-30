@@ -9,10 +9,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
-// FuzzPlain checks that Plain removes every control character except tabs
-// and newlines and every bidi control, that Plain is idempotent, and that
-// Quote returns valid UTF-8 with no invisible characters: no control or
-// format characters, line or paragraph separators or fillers.
 func FuzzPlain(f *testing.F) {
 	for _, s := range []string{
 		"a\x00b\n",

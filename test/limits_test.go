@@ -11,7 +11,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// fastImport runs git fast-import in repo with stream as its input.
 func fastImport(t *testing.T, repo, stream string) {
 	t.Helper()
 	cmd := proc.Command(t.Context(), testgit.ToolEnv(t), "git", "fast-import", "--quiet")
@@ -22,10 +21,8 @@ func fastImport(t *testing.T, repo, stream string) {
 	}
 }
 
-// TestTooManyChanges checks that the Changes tab names the number of
-// changed files, without listing them, when there are too many. The
-// files are committed but missing from the working tree, so the test
-// writes no files.
+// TestTooManyChanges commits the files without writing them to the working
+// tree.
 func TestTooManyChanges(t *testing.T) {
 	repo := newRepo(t)
 	head := strings.TrimSpace(testgit.Git(t, repo, "rev-parse", "HEAD"))
@@ -42,8 +39,6 @@ func TestTooManyChanges(t *testing.T) {
 	tm.waitFor("20003 files changed — too many to show", "Changes (20003)")
 }
 
-// TestCommitPickerLimit checks that the commit picker lists at most 1,000
-// commits over the base, and says so in its title.
 func TestCommitPickerLimit(t *testing.T) {
 	repo := newRepo(t)
 	head := strings.TrimSpace(testgit.Git(t, repo, "rev-parse", "HEAD"))
@@ -60,23 +55,17 @@ func TestCommitPickerLimit(t *testing.T) {
 	tm.waitFor("commits · newest 1000 over main", "c 00999")
 }
 
-// TestFindQueryLimit checks that the find bar stops taking characters
-// once the query holds 256.
 func TestFindQueryLimit(t *testing.T) {
 	tm := start(t, newRepo(t), opts{})
 	tm.keys("f", "ctrl+f")
 	tm.paste(strings.Repeat("x", 300))
 	tm.waitFor("find xxxxxxxx", "no matches")
-	// If the query held more than 256 characters, some would remain.
 	tm.keys(slices.Repeat([]string{"bs"}, 256)...)
 	tm.typed("line 3")
 	tm.waitUntil(func(s string) bool { return sameLine(s, "find line 3", " 11") },
 		"count 11 lines")
 }
 
-// TestFindInLongLine checks that find shows a match far into a long line:
-// by scrolling sideways, or when lines wrap and the line is taller than
-// the screen, by scrolling down through it.
 func TestFindInLongLine(t *testing.T) {
 	for _, wrap := range []string{"off", "on"} {
 		t.Run("wrap="+wrap, func(t *testing.T) {
@@ -95,9 +84,6 @@ func TestFindInLongLine(t *testing.T) {
 	}
 }
 
-// TestClickFindBarShortScreen checks that on a screen too short for the
-// body, a click on the find bar does not count as a click on the code
-// above it, which would move the cursor.
 func TestClickFindBarShortScreen(t *testing.T) {
 	tm := start(t, newRepo(t), opts{height: 4})
 	tm.keys("ctrl+f")
@@ -110,7 +96,6 @@ func TestClickFindBarShortScreen(t *testing.T) {
 	}
 }
 
-// cursorLine returns the line of s with the cursor ▶, or "".
 func cursorLine(s string) string {
 	for l := range strings.Lines(s) {
 		if strings.Contains(l, "▶") {
@@ -120,9 +105,6 @@ func cursorLine(s string) string {
 	return ""
 }
 
-// TestCursorShortScreen checks that on a screen with room for only one
-// row of code, the cursor row stays on screen after each key that moves
-// the cursor.
 func TestCursorShortScreen(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	testgit.InitRepo(t, repo)

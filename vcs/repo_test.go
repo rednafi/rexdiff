@@ -19,10 +19,8 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// testRepo is the fixture repository that openTestRepo copies. It has two
-// commits: "init" on main and "b" on the branch feat, which is checked
-// out. The working tree has an uncommitted edit, an untracked file, and
-// ignored files.
+// testRepo has "init" on main and "b" on feat, which is checked out. It
+// also has an edit, an untracked file and ignored files.
 var testRepo = testgit.NewFixture(func(tb testing.TB, dir string) {
 	tb.Helper()
 	testgit.InitRepo(tb, dir)
@@ -44,33 +42,24 @@ var testRepo = testgit.NewFixture(func(tb testing.TB, dir string) {
 	testgit.WriteFile(tb, dir, "build/out", "x\n")
 })
 
-// openTestRepo copies testRepo to a new directory and returns the opened
-// repository and its directory. The repository uses the environment from
-// [testgit.ToolEnv].
 func openTestRepo(t *testing.T) (*vcs.Repo, string) {
 	t.Helper()
 	return openTestRepoEnv(t, testgit.ToolEnv(t))
 }
 
-// openTestRepoEnv is like openTestRepo, but the repository uses the
-// environment env.
 func openTestRepoEnv(t *testing.T, env []string) (*vcs.Repo, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "a repo ") // the trailing space must survive
 	testRepo.Copy(t, dir)
 
-	// Open a subdirectory, from which Open must find the root.
 	return openEnv(t, filepath.Join(dir, "build"), env), dir
 }
 
-// open opens the repository at dir with the environment from
-// [testgit.ToolEnv], and closes it when the test ends.
 func open(t *testing.T, dir string) *vcs.Repo {
 	t.Helper()
 	return openEnv(t, dir, testgit.ToolEnv(t))
 }
 
-// openEnv is like open, but the repository uses the environment env.
 func openEnv(t *testing.T, dir string, env []string) *vcs.Repo {
 	t.Helper()
 	r, err := vcs.Open(t.Context(), env, dir)
@@ -81,9 +70,7 @@ func openEnv(t *testing.T, dir string, env []string) *vcs.Repo {
 	return r
 }
 
-// gitLink returns an environment whose PATH holds only a new directory,
-// and the path of a symbolic link to git in that directory. A test removes
-// the link to make git unavailable to a repository that is already open.
+// gitLink lets a test remove git from the PATH of an open repository.
 func gitLink(t *testing.T) (env []string, link string) {
 	t.Helper()
 	bin := t.TempDir()
@@ -91,7 +78,6 @@ func gitLink(t *testing.T) (env []string, link string) {
 	return append(testgit.Env(), "PATH="+bin), filepath.Join(bin, "git")
 }
 
-// removeGit removes the link to git that gitLink created.
 func removeGit(t *testing.T, link string) {
 	t.Helper()
 	if err := os.Remove(link); err != nil {
@@ -99,7 +85,6 @@ func removeGit(t *testing.T, link string) {
 	}
 }
 
-// snapshot returns the ID of a tree that records the working tree.
 func snapshot(t *testing.T, r *vcs.Repo) string {
 	t.Helper()
 	tree, err := r.SnapshotTree(t.Context())
@@ -109,7 +94,6 @@ func snapshot(t *testing.T, r *vcs.Repo) string {
 	return tree
 }
 
-// head returns the ID of the tree of HEAD.
 func head(t *testing.T, r *vcs.Repo) string {
 	t.Helper()
 	tree, err := r.HeadTree(t.Context())
@@ -119,7 +103,6 @@ func head(t *testing.T, r *vcs.Repo) string {
 	return tree
 }
 
-// parent returns the tree ID of the first parent of rev.
 func parent(t *testing.T, r *vcs.Repo, rev string) string {
 	t.Helper()
 	tree, err := r.ParentTree(t.Context(), rev)
@@ -129,7 +112,6 @@ func parent(t *testing.T, r *vcs.Repo, rev string) string {
 	return tree
 }
 
-// changes returns the files that differ between oldTree and newTree.
 func changes(t *testing.T, r *vcs.Repo, oldTree, newTree string) []vcs.File {
 	t.Helper()
 	fs, err := r.Diff(t.Context(), oldTree, newTree)
@@ -139,8 +121,6 @@ func changes(t *testing.T, r *vcs.Repo, oldTree, newTree string) []vcs.File {
 	return fs
 }
 
-// names returns the status letter and path of each file, separated by
-// spaces, for example "Aa.txt Mb.txt".
 func names(fs []vcs.File) string {
 	var n []string
 	for _, f := range fs {
@@ -149,15 +129,11 @@ func names(fs []vcs.File) string {
 	return strings.Join(n, " ")
 }
 
-// uncommitted returns, in the format of names, the files that differ
-// between HEAD and the working tree.
 func uncommitted(t *testing.T, r *vcs.Repo) string {
 	t.Helper()
 	return names(changes(t, r, head(t, r), snapshot(t, r)))
 }
 
-// paths returns the path of each entry, with "!" in front of ignored
-// paths.
 func paths(es []vcs.Entry) []string {
 	var out []string
 	for _, e := range es {
@@ -170,10 +146,6 @@ func paths(es []vcs.Entry) []string {
 	return out
 }
 
-// TestScopes checks the changes that each review scope shows: uncommitted
-// changes, the branch since its merge base, the last agent turn, and a
-// single commit. It also checks that a snapshot does not change the real
-// index.
 func TestScopes(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -201,8 +173,6 @@ func TestScopes(t *testing.T) {
 		t.Errorf("MergeBaseTree(nosuchbranch) = %v, want the error of git", err)
 	}
 
-	// At the start of a turn, rexdiff takes a snapshot, and then the agent
-	// edits a file.
 	testgit.WriteFile(t, dir, "new.txt", "untracked\nmore\n")
 	tf := changes(t, r, now, snapshot(t, r))
 	if got := names(tf); got != "Mnew.txt" || tf[0].NewText != "untracked\nmore\n" {
@@ -226,15 +196,12 @@ func TestScopes(t *testing.T) {
 	if got := names(changes(t, r, parent(t, r, cs[0].SHA), tree)); got != "Ab.txt" {
 		t.Errorf("Diff(parent of b, b) = %s, want Ab.txt", got)
 	}
-	// emptyTree is the ID of the tree that has no files.
 	const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 	if got := parent(t, r, cs[1].SHA); got != emptyTree {
 		t.Errorf("parent of the root commit = %s, want the empty tree", got)
 	}
 }
 
-// TestMissingCommit checks that HeadTree and ParentTree return an error,
-// not the empty tree, when a commit object is missing.
 func TestMissingCommit(t *testing.T) {
 	t.Parallel()
 	// Returning the empty tree would be wrong, because then every file
@@ -265,9 +232,7 @@ func TestMissingCommit(t *testing.T) {
 	}
 }
 
-// TestDiffManyFiles checks that Diff returns the right content for enough
-// files to need several git processes, and that a second Diff returns the
-// new content of a file edited in between.
+// A second Diff must not return stale cached content.
 func TestDiffManyFiles(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -302,16 +267,12 @@ func TestDiffManyFiles(t *testing.T) {
 	check("edited\n")
 }
 
-// TestDiffSkipsBinaryAndBigFiles checks that Diff and ReadFile report
-// binary and oversized files with ErrBinary and ErrTooBig and drop their
-// content, and that the limits apply to each version separately.
+// The limits apply to each version of a file separately.
 func TestDiffSkipsBinaryAndBigFiles(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
 	full := strings.Repeat("x", 1_999_999) + "\n" // exactly at the byte limit
 	lines := strings.Repeat("x\n", 50_000)        // exactly at the line limit
-	// A file whose old and new versions are both at the limit is not too
-	// big.
 	limit := strings.Repeat("y\n", 50_000)
 	testgit.WriteFile(t, dir, "bytes", full)
 	testgit.WriteFile(t, dir, "lines", lines)
@@ -323,12 +284,11 @@ func TestDiffSkipsBinaryAndBigFiles(t *testing.T) {
 	testgit.WriteFile(t, dir, "limit", "z"+limit[2:])
 	err := os.CopyFS(dir, fstest.MapFS{
 		"bin": {Data: []byte("a\x00b")},
-		// The NUL byte in "late" is at offset 9000.
+		// The NUL byte in "late" is past the 8000 bytes that git checks.
 		"late": {Data: []byte(strings.Repeat("x", 9000) + "\x00")},
 		"big":  {Data: []byte(strings.Repeat("x\n", 50_001))},
 		"huge": {Data: []byte(strings.Repeat("x", 2_000_001))},
-		// Diff reads this file after the skipped ones, so skipping must not
-		// break the reads that follow.
+		// Skipped files must not break the reads after them.
 		"small": {Data: []byte("after\n")},
 	})
 	if err != nil {
@@ -371,9 +331,6 @@ func TestDiffSkipsBinaryAndBigFiles(t *testing.T) {
 	}
 }
 
-// TestDiffTotalLimit checks that Diff stops reading files once their
-// text passes the limit, keeps the files after them that still fit, and
-// gives the same result when the objects come from its cache.
 func TestDiffTotalLimit(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -403,11 +360,8 @@ func TestDiffTotalLimit(t *testing.T) {
 	}
 }
 
-// TestDiffTooManyFiles checks that Diff reads no file and reports the
-// number of changed files when there are more than 20,000. The count is
-// right when paths start with ':', as git's metadata does, and when files
-// are renamed, which gives two paths. git fast-import writes the two
-// commits, so the test writes no files.
+// TestDiffTooManyFiles uses paths that start with ':', like git's
+// metadata, and renames, which have two paths.
 func TestDiffTooManyFiles(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -444,8 +398,6 @@ func TestDiffTooManyFiles(t *testing.T) {
 	}
 }
 
-// TestFilesInConflict checks that Files lists a file with a merge conflict
-// only once.
 func TestFilesInConflict(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -478,8 +430,6 @@ func TestFilesInConflict(t *testing.T) {
 	}
 }
 
-// TestWorktree checks Files, IgnoredDir, Grep, ReadFile and Contains on
-// the working tree of the test repository.
 func TestWorktree(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -503,8 +453,7 @@ func TestWorktree(t *testing.T) {
 		t.Errorf("IgnoredDir(no such dir) = %v, want none", es)
 	}
 
-	// A query with an upper case letter is case-sensitive. A query in
-	// lower case ignores case.
+	// A query with an upper case letter is case-sensitive.
 	if ms, _, err := r.Grep(ctx, "TWO", 10, time.Minute); err != nil || len(ms) != 0 {
 		t.Errorf("Grep(TWO) = %+v, %v, want none, nil", ms, err)
 	}
@@ -529,7 +478,7 @@ func TestWorktree(t *testing.T) {
 	}{
 		{filepath.Join(dir, "build"), true},
 		{filepath.Dir(dir), false},
-		{dir + "x", false}, // a sibling directory whose name starts with the root's name
+		{dir + "x", false}, // a sibling whose name starts with the root's name
 	}
 	for _, tt := range tests {
 		if got := r.Contains(tt.path); got != tt.want {
@@ -538,9 +487,6 @@ func TestWorktree(t *testing.T) {
 	}
 }
 
-// TestOwns checks that Owns reports true for the root and a subdirectory,
-// and false for a nested repository, a relative path, an empty path, a
-// path outside the root, and a missing directory.
 func TestOwns(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -553,7 +499,7 @@ func TestOwns(t *testing.T) {
 		{dir, true},
 		{filepath.Join(dir, "build"), true},
 		{nested, false},
-		{"build", false}, // a relative path
+		{"build", false},
 		{"", false},
 		{filepath.Dir(dir), false},
 		{filepath.Join(dir, "gone"), false},
@@ -565,9 +511,7 @@ func TestOwns(t *testing.T) {
 	}
 }
 
-// TestOwnsWithoutGit checks that Owns returns an error when git is
-// missing, except for a path outside the root, for which it does not need
-// to run git.
+// TestOwnsWithoutGit checks that a path outside the root needs no git.
 func TestOwnsWithoutGit(t *testing.T) {
 	t.Parallel()
 	env, link := gitLink(t)
@@ -581,9 +525,6 @@ func TestOwnsWithoutGit(t *testing.T) {
 	}
 }
 
-// TestRefs checks Branches, DefaultBase, ResolveRev and Branch, including
-// remote branches, a dangling origin/HEAD and a repository with no
-// commits.
 func TestRefs(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -594,9 +535,8 @@ func TestRefs(t *testing.T) {
 	if b := r.DefaultBase(ctx); b != "main" {
 		t.Errorf("DefaultBase = %q, want main", b)
 	}
-	// origin/main hides main, and origin/HEAD is not listed. Branches of
-	// remotes other than origin are not listed either. The branch old has
-	// the oldest commit, so it comes last.
+	// origin/main hides main. origin/HEAD and other remotes are not listed.
+	// The branch old has the oldest commit, so it comes last.
 	for _, remote := range []string{"origin", "up"} {
 		testgit.Git(t, dir, "update-ref", "refs/remotes/"+remote+"/main", "main")
 		testgit.Git(t, dir, "symbolic-ref", "refs/remotes/"+remote+"/HEAD",
@@ -627,8 +567,6 @@ func TestRefs(t *testing.T) {
 	}
 }
 
-// TestEditor checks that GitEditor returns core.editor, or "" if it is not
-// set.
 func TestEditor(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -641,9 +579,6 @@ func TestEditor(t *testing.T) {
 	}
 }
 
-// TestDiffRenameAndSubmodule checks that Diff sets OldPath for a renamed
-// file and returns a "Subproject commit" line for each side of a changed
-// submodule.
 func TestDiffRenameAndSubmodule(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -687,7 +622,6 @@ func TestDiffRenameAndSubmodule(t *testing.T) {
 	}
 }
 
-// TestOpenOutsideARepo checks that Open fails outside a repository.
 func TestOpenOutsideARepo(t *testing.T) {
 	t.Parallel()
 	if _, err := vcs.Open(t.Context(), testgit.ToolEnv(t), t.TempDir()); err == nil {
@@ -695,9 +629,6 @@ func TestOpenOutsideARepo(t *testing.T) {
 	}
 }
 
-// TestNewRepo checks Open, Root, HeadTree and SnapshotTree in a repository
-// with no commits and no index, including one whose root path contains a
-// newline.
 func TestNewRepo(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ name, root string }{
@@ -724,9 +655,7 @@ func TestNewRepo(t *testing.T) {
 	}
 }
 
-// TestSnapshotBadIndex checks that SnapshotTree fails if the real index
-// exists but cannot be read. Only a missing index is treated as an empty
-// one.
+// Only a missing index counts as empty. An unreadable index is an error.
 func TestSnapshotBadIndex(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -742,9 +671,6 @@ func TestSnapshotBadIndex(t *testing.T) {
 	}
 }
 
-// TestSnapshotRacyEdit checks that SnapshotTree notices an edit that keeps
-// the file size and is made in the same second as the last write of the
-// index.
 func TestSnapshotRacyEdit(t *testing.T) {
 	t.Parallel()
 	// git detects "racily clean" files by comparing with the index's
@@ -762,7 +688,6 @@ func TestSnapshotRacyEdit(t *testing.T) {
 	}
 	testgit.WriteFile(t, dir, "b.txt", "bee\n")
 	touch("b.txt")
-	// Record the modification time of b.txt in the index entry.
 	testgit.Git(t, dir, "update-index", "--really-refresh")
 	touch(".git/index")
 	testgit.WriteFile(t, dir, "b.txt", "BEE\n") // same size; touch then restores the time
@@ -773,9 +698,6 @@ func TestSnapshotRacyEdit(t *testing.T) {
 	}
 }
 
-// TestCommitsFirstParent checks that Commits returns only first-parent
-// commits after since, the last [vcs.LastCommits] commits when since is
-// empty, and no commits in an empty repository.
 func TestCommitsFirstParent(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -825,9 +747,6 @@ func TestCommitsFirstParent(t *testing.T) {
 	}
 }
 
-// TestGrepLimit checks that Grep returns at most limit matches, in file
-// TestGrepLongLines checks that Grep keeps only the start of a long line,
-// without cutting a character in two, and reads the matches after it.
 func TestGrepLongLines(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -847,7 +766,6 @@ func TestGrepLongLines(t *testing.T) {
 	}
 }
 
-// order, and sets more only when there are more matches.
 func TestGrepLimit(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -876,8 +794,6 @@ func TestGrepLimit(t *testing.T) {
 	}
 }
 
-// TestGrepCancelled checks that Grep returns the cancellation cause of a
-// cancelled context.
 func TestGrepCancelled(t *testing.T) {
 	t.Parallel()
 	r, _ := openTestRepo(t)
@@ -889,9 +805,6 @@ func TestGrepCancelled(t *testing.T) {
 	}
 }
 
-// TestSnapshotFollowsIndex checks that after a .gitignore change, a new
-// SnapshotTree leaves out a file that git now ignores but keeps a file
-// added with "git add -f".
 func TestSnapshotFollowsIndex(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)

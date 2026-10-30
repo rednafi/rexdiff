@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// actionNames lists every action that the keybindings setting accepts.
-// alias is a former rexdiff name that the setting also accepts, or "".
+// actionNames lists every keybindings action. alias is a former name, or "".
 var actionNames = []struct{ name, alias string }{
 	{"down", ""},
 	{"up", ""},
@@ -59,21 +58,14 @@ var actionNames = []struct{ name, alias string }{
 	{"quit-discard", ""},
 }
 
-// actionKeys holds the keys that TestConfigNames binds, one for each
-// action in actionNames, in order. It leaves out U, which is always the
-// update key.
+// actionKeys leaves out U, which is always the update key.
 const actionKeys = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTVWXYZ"
 
-// TestConfigNames checks that a config that uses the action names, or
-// their aliases, binds every key and sets the position and width of the
-// file list. It checks the key bindings through the help screen.
 func TestConfigNames(t *testing.T) {
 	keyOf := map[string]string{}
 	for i, a := range actionNames {
 		keyOf[a.name] = actionKeys[i : i+1]
 	}
-	// Each help entry lists the keys followed by a label. Some labels
-	// cover two or three actions, such as "next/prev file".
 	k := func(names ...string) string {
 		keys := make([]string, len(names))
 		for i, n := range names {

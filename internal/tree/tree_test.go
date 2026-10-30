@@ -9,7 +9,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/tree"
 )
 
-// changed returns an entry with Changed set for each path.
 func changed(paths ...string) []tree.Entry {
 	var es []tree.Entry
 	for _, p := range paths {
@@ -18,7 +17,6 @@ func changed(paths ...string) []tree.Entry {
 	return es
 }
 
-// plain returns an unchanged entry for each path.
 func plain(paths ...string) []tree.Entry {
 	var es []tree.Entry
 	for _, p := range paths {
@@ -27,14 +25,10 @@ func plain(paths ...string) []tree.Entry {
 	return es
 }
 
-// ignoredDir returns an entry for an ignored directory that git lists as a
-// single path.
 func ignoredDir(path string) tree.Entry {
 	return tree.Entry{Path: path, Ignored: true, Dir: true}
 }
 
-// shape formats each row as "depth:dir:name" or "depth:file:name",
-// followed by the marks "+" (changed), "!" (ignored) and "v" (expanded).
 func shape(rows []tree.Row) []string {
 	var out []string
 	for _, r := range rows {
@@ -58,7 +52,6 @@ func shape(rows []tree.Row) []string {
 	return out
 }
 
-// set returns a set of paths.
 func set(paths ...string) map[string]bool {
 	m := map[string]bool{}
 	for _, p := range paths {
@@ -67,7 +60,6 @@ func set(paths ...string) map[string]bool {
 	return m
 }
 
-// TestBuild checks the rows that Build returns.
 func TestBuild(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -152,7 +144,6 @@ func TestBuild(t *testing.T) {
 			want:    []string{"0:dir:target ! v", "1:file:a.o !", "1:file:b.o !"},
 		},
 		{
-			// The row stays so that the user can collapse the directory.
 			name: "an ignored directory with one child keeps its row",
 			entries: []tree.Entry{
 				ignoredDir("a"),
@@ -179,8 +170,6 @@ func TestBuild(t *testing.T) {
 	}
 }
 
-// TestBuildIndex checks the entry index of each file row and the path of
-// each directory row.
 func TestBuildIndex(t *testing.T) {
 	t.Parallel()
 	es := append(changed("z.rs", "a/b/deep.rs"), plain("a/top.rs", "a/b/other.rs")...)

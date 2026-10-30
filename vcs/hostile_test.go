@@ -19,16 +19,13 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// commitAll stages and commits every change in the working tree of dir.
 func commitAll(t *testing.T, dir string) {
 	t.Helper()
 	testgit.Git(t, dir, "add", "-A")
 	testgit.Git(t, dir, "commit", "-qm", "all")
 }
 
-// TestRevIsNotAnOption checks that every method that takes a revision
-// fails for a revision that starts with "-", instead of passing it to git
-// as an option, and that --output does not overwrite a file.
+// Git must not read a revision as an option, so --output writes no file.
 func TestRevIsNotAnOption(t *testing.T) {
 	t.Parallel()
 	r, _ := openTestRepo(t)
@@ -61,9 +58,6 @@ func TestRevIsNotAnOption(t *testing.T) {
 	}
 }
 
-// TestHostilePaths checks that Diff, Files, ReadFile and Grep handle file
-// names that look like options, globs or pathspecs, or that contain
-// quotes, tabs, newlines or invalid UTF-8, without changing them.
 func TestHostilePaths(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -74,12 +68,11 @@ func TestHostilePaths(t *testing.T) {
 		`say "hi"`, `back\slash`, "ünï cödé", " spaces ",
 		"*", "[a]", ":(glob)x", "\xff\xfe",
 	}
-	want := map[string]string{} // the expected content of each path
+	want := map[string]string{}
 	for i, p := range hostile {
 		s := fmt.Sprintf("id%02d\n", i)
 		if err := os.WriteFile(filepath.Join(dir, p), []byte(s), 0o644); err != nil {
-			// Some file systems reject some names; macOS, for example,
-			// requires valid UTF-8.
+			// Some file systems reject some names. macOS requires valid UTF-8.
 			t.Logf("skip %q: %v", p, err)
 			continue
 		}
@@ -116,9 +109,6 @@ func TestHostilePaths(t *testing.T) {
 	}
 }
 
-// TestDiffFileKinds checks what Diff returns for symbolic links, mode
-// changes, a file replaced by a directory or by a link, CRLF line endings,
-// a missing final newline, and empty files.
 func TestDiffFileKinds(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -174,9 +164,8 @@ func TestDiffFileKinds(t *testing.T) {
 	}
 }
 
-// TestSnapshotNestedRepo checks that SnapshotTree still adds the other
-// files when git cannot add a nested repository with no commits, and adds
-// a nested repository with a commit as a submodule.
+// git cannot add a nested repository with no commits. A nested repository
+// with a commit becomes a submodule.
 func TestSnapshotNestedRepo(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -194,9 +183,6 @@ func TestSnapshotNestedRepo(t *testing.T) {
 	}
 }
 
-// TestReadFileStaysInRoot checks that ReadFile refuses paths and symbolic
-// links that lead outside the root, devices, directories and named pipes,
-// but follows a link to a regular file inside the root.
 func TestReadFileStaysInRoot(t *testing.T) {
 	t.Parallel()
 	// A repository can contain a link to a secret file, or to a device
@@ -231,13 +217,9 @@ func TestReadFileStaysInRoot(t *testing.T) {
 	}
 }
 
-// TestGitWorktree checks Diff and SnapshotTree in a working tree created
-// by "git worktree add", and that the snapshot does not change what git
-// status reports there.
 func TestGitWorktree(t *testing.T) {
 	t.Parallel()
-	// Such a working tree has its own index, which SnapshotTree must not
-	// change.
+	// A git worktree has its own index, which SnapshotTree must not change.
 	_, dir := openTestRepo(t)
 	wt := filepath.Join(t.TempDir(), "wt")
 	testgit.Git(t, dir, "worktree", "add", "-q", "-b", "other", wt, "main")
@@ -256,7 +238,6 @@ func TestGitWorktree(t *testing.T) {
 	}
 }
 
-// TestDetachedHead checks Diff, Commits, and Branch when HEAD is detached.
 func TestDetachedHead(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -274,16 +255,12 @@ func TestDetachedHead(t *testing.T) {
 	}
 }
 
-// TestGrepIsLiteral checks that Grep searches for the query as literal
-// text, not as a pattern or an option, and that it ignores case only when
-// the query has no upper case letter.
 func TestGrepIsLiteral(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
 	ctx := t.Context()
 	testgit.WriteFile(t, dir, "g.txt", "abc\na.c\n-v\n--help\n[x\n(y\n\\d\n*\n^a\nx$\nAbc\n")
-	// The grep.column setting adds a field to the output, which Grep must
-	// turn off.
+	// grep.column adds a field to the output. Grep must turn it off.
 	testgit.Git(t, dir, "config", "grep.column", "true")
 	tests := []struct {
 		q    string
@@ -318,9 +295,6 @@ func TestGrepIsLiteral(t *testing.T) {
 	}
 }
 
-// TestCommitsHostileSubject checks that Commits keeps every byte of a
-// commit subject, including the field separator that Commits uses and
-// escape sequences.
 func TestCommitsHostileSubject(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -345,15 +319,12 @@ func TestCommitsHostileSubject(t *testing.T) {
 	}
 }
 
-// TestPRBadJSON checks how PR handles gh output that is not a normal pull
-// request: an empty object, text that is not JSON, a number out of range,
-// and null fields.
 func TestPRBadJSON(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name, out string
-		wantErr   error // the error to match, or nil to accept any error
-		ok        bool  // true if PR must succeed
+		wantErr   error // nil accepts any error
+		ok        bool
 	}{
 		{name: "empty object", out: `{}`, wantErr: vcs.ErrNoPR},
 		{name: "not JSON", out: `warning: no pull request`},
@@ -384,17 +355,11 @@ func TestPRBadJSON(t *testing.T) {
 	}
 }
 
-// TestGrepDeadline checks that when the budget or the deadline of ctx
-// passes, Grep stops git, returns the matches found so far without the
-// incomplete one, and sets more.
 func TestGrepDeadline(t *testing.T) {
 	t.Parallel()
 	env, link := gitLink(t)
 	r, _ := openTestRepoEnv(t, env)
-	// After Open, a fake git replaces the real one. It prints one match and
-	// an incomplete record, then hangs. If a file named slow is next to it,
-	// it first sleeps for much longer than the budget. If a FIFO named
-	// block is next to it, it waits on the FIFO and prints nothing.
+	// The fake git prints one match and an incomplete record, then hangs.
 	removeGit(t, link)
 	bin := filepath.Dir(link)
 	testgit.Script(t, bin, "git", `d="${0%/*}"
@@ -427,16 +392,10 @@ exec /bin/sleep 10
 	}
 }
 
-// TestSnapshotWaitStops checks that a SnapshotTree call that is waiting
-// for another call returns the cause of its context when its context
-// ends, and that the running call returns its own cause when cancelled.
 func TestSnapshotWaitStops(t *testing.T) {
 	t.Parallel()
 	env, link := gitLink(t)
 	r, _ := openTestRepoEnv(t, env)
-	// After Open, a fake git replaces the real one. It writes to the FIFO
-	// named started, which tells the test that the first SnapshotTree holds
-	// the lock, and then waits on the FIFO named block.
 	removeGit(t, link)
 	bin := filepath.Dir(link)
 	for _, name := range []string{"started", "block"} {

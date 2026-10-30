@@ -1,27 +1,22 @@
--- This is the code of the "Toggle rexdiff" action. rexdiff writes it to
--- rexdiff_toggle.lua, under the line that sets BIN, the path of rexdiff.
--- rexdiff.lua calls the function at the end with the settings.
+-- rexdiff writes this code under the line that sets BIN, the path of
+-- rexdiff.
 
 local PLACEMENTS = { split = true, zoomed = true, tab = true, overlay = true }
 local DIRECTIONS = { right = "horizontal", down = "vertical" }
 local TERM = "com.superlogical.terminal"
 
--- must returns res, or fails the action with err. A Rex call returns nil
--- and an error message when it fails.
+-- A failed Rex call returns nil and an error message.
 local function must(res, err)
   if err ~= nil then error(err, 0) end
   return res
 end
 
--- call calls method on the terminal block with the ID id.
 local function call(method, id)
   return must(rex.block.call(TERM, method, { block_id = id }))
 end
 
--- runs_rexdiff returns true if the terminal block id runs rexdiff. rexdiff
--- reports app=rexdiff to Rex with OSC 7501. Rex keeps an idle status after
--- its program stops. Thus the block counts only while the process that
--- reported the status is in the foreground.
+-- Rex keeps the status after its program stops. Thus the block counts
+-- only while the process that reported the status is in the foreground.
 local function runs_rexdiff(id)
   for _, r in ipairs(call("program_status", id).records or {}) do
     if r.app == "rexdiff" and r.owner then
@@ -32,7 +27,6 @@ local function runs_rexdiff(id)
   return false
 end
 
--- reviewers returns the IDs of the blocks in the session that run rexdiff.
 local function reviewers()
   local ids = {}
   for _, b in ipairs(must(rex.session.list_blocks{}).blocks or {}) do
@@ -43,21 +37,16 @@ local function reviewers()
   return ids
 end
 
--- check fails the action if rexdiff does not accept config, the settings
--- as a JSON object. The user sees an error of the action. If rexdiff stops
--- at once in a new pane, the pane closes and the user does not see the error.
+-- If rexdiff stops at once in a new pane, the pane closes and the user
+-- does not see the error.
 local function check(config)
   local r, err = rex.exec({ BIN, "--check", "--config", config })
   if r == nil then error(err, 0) end
   if not r.ok then error((r.stderr:gsub("%s+$", "")), 0) end
 end
 
--- open_rexdiff opens rexdiff at placement, beside the agent in ctx, with
--- the settings in config. A split opens in direction, right or down.
--- rexdiff starts in the current directory of the agent. The rex package
--- of rexdiff finds the directory the same way.
--- rexdiff starts through the login shell of the user, so that it gets the
--- login environment of the user, for example EDITOR and PATH.
+-- The rex package of rexdiff finds the cwd the same way. The shell flavor
+-- gives rexdiff the login environment, such as EDITOR.
 local function open_rexdiff(ctx, placement, direction, config)
   local p = call("process", ctx.block_id)
   local cwd = (p.foreground or {}).cwd or (p.child or {}).cwd
@@ -92,11 +81,7 @@ local function open_rexdiff(ctx, placement, direction, config)
   return s
 end
 
--- The function gets the settings of rexdiff.lua, and adds the action
--- and its key.
 return function(settings)
-  -- The key, the placement, and the direction are for Rex. rexdiff gets
-  -- the other settings as JSON.
   if type(settings) ~= "table" then
     error("config: settings must be a table, as in: local settings = { }", 0)
   end
@@ -118,7 +103,7 @@ return function(settings)
     description = "Review the agent's changes beside it and send comments back",
     category = "rexdiff",
     keywords = "diff review git comments agent",
-    args = { placement = "string?" }, -- split, zoomed, tab, or overlay
+    args = { placement = "string?" },
     run = function(ctx, args)
       local placement = args.placement or default_placement
       if not PLACEMENTS[placement] then

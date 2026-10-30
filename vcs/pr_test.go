@@ -13,9 +13,7 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// fakeTool writes a fake command called name to dir. When its arguments
-// match a key of calls, it prints the corresponding value. Otherwise it
-// fails with "unexpected call".
+// fakeTool prints calls[args], or fails with "unexpected call".
 func fakeTool(t *testing.T, dir, name string, calls map[string]string) {
 	t.Helper()
 	var script strings.Builder
@@ -27,8 +25,6 @@ func fakeTool(t *testing.T, dir, name string, calls map[string]string) {
 	testgit.Script(t, dir, name, script.String())
 }
 
-// repoAt returns a copy of the test repository, on the branch feat, that
-// uses the environment env and has origin set to the URL remote.
 func repoAt(t *testing.T, env []string, remote string) (*vcs.Repo, string) {
 	t.Helper()
 	r, dir := openTestRepoEnv(t, env)
@@ -36,19 +32,13 @@ func repoAt(t *testing.T, env []string, remote string) (*vcs.Repo, string) {
 	return r, dir
 }
 
-// ghArgs are the arguments that PR passes to gh to fetch a pull request.
 const ghArgs = "pr view --json number,title,state,isDraft,url,body,author," +
 	"headRefName,baseRefName,comments,statusCheckRollup"
 
-// azArgs returns the arguments that PR passes to az to fetch the pull
-// request for branch.
 func azArgs(branch string) string {
 	return "repos pr list --source-branch " + branch + " --status all --top 1 --output json"
 }
 
-// TestPR checks that PR converts the output of gh, glab and az into a
-// [vcs.PR], including states, check results and comments, and that it
-// recognises a self-hosted GitLab host regardless of case.
 func TestPR(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -72,7 +62,6 @@ func TestPR(t *testing.T) {
 		"mr view --output json": `{"iid": 3, "title": "Fix y", "state": "opened",
 		"web_url": "https://gitlab.com/o/r/-/merge_requests/3", "description": "D",
 		"source_branch": "fix", "target_branch": "main", "author": {"username": "cy"}}`,
-		// glab returns a list of discussions, each with its own notes.
 		"mr note list --output json": `[
 		{"id": "d1", "notes": [
 			{"body": "added 1 commit", "system": true, "author": {"username": "cy"}}]},
@@ -158,9 +147,6 @@ func TestPR(t *testing.T) {
 	}
 }
 
-// TestPRErrors checks the errors that PR returns for a missing remote, an
-// unsupported host, a branch with no pull request and a missing forge
-// tool.
 func TestPRErrors(t *testing.T) {
 	t.Parallel()
 	bin := t.TempDir()
@@ -174,7 +160,7 @@ func TestPRErrors(t *testing.T) {
 		remote, branch string
 		hosts          vcs.Hosts
 		wantErr        error  // if not nil, err must wrap it
-		errText        string // if not empty, text that err must contain
+		errText        string // if not empty, err must contain it
 	}{
 		// Only the host chooses the forge, not a forge name in the path.
 		{
@@ -253,8 +239,7 @@ func TestPRErrors(t *testing.T) {
 	}
 }
 
-// TestPRHostile checks that PR removes control characters, such as an
-// escape sequence that sets the terminal title, from every text field.
+// TestPRHostile uses an escape sequence that sets the terminal title.
 func TestPRHostile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -280,15 +265,13 @@ func TestPRHostile(t *testing.T) {
 	}
 }
 
-// TestPRCheckLimit checks that PR counts every check that gh returns but
-// keeps only 100, the failed ones first, in the order gh gives them.
 func TestPRCheckLimit(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
 		pass, fail int
 		wantTally  vcs.Tally
-		wantFailed int // the number of failed checks kept
+		wantFailed int
 		wantLast   string
 	}{
 		{"101 passing", 101, 0, vcs.Tally{Pass: 101}, 0, "c99"},
@@ -340,8 +323,6 @@ func TestPRCheckLimit(t *testing.T) {
 	}
 }
 
-// TestNoPR checks that PR returns ErrNoPR when gh or glab exits with
-// status 1 and says that the branch has no pull request.
 func TestNoPR(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

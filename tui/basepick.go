@@ -1,7 +1,5 @@
 package tui
 
-// The base picker lets the user choose the base branch for the branch scope.
-
 import (
 	"slices"
 	"strings"
@@ -13,17 +11,13 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// branchTimeout limits how long listing the branches can take.
 const branchTimeout = 5 * time.Second
 
-// branchesMsg carries the list of branches for the base picker.
 type branchesMsg struct {
 	branches []string
 	err      error
 }
 
-// openBasePicker returns a command that lists the branches for the base
-// picker. It returns nil on the PR tab, or when the base was set by a flag.
 func (m *model) openBasePicker() tea.Cmd {
 	if m.baseFromFlag || m.tab == tabPR {
 		return nil
@@ -37,9 +31,6 @@ func (m *model) openBasePicker() tea.Cmd {
 	}
 }
 
-// onBranches opens the base picker with the branches in msg. The base of
-// an open pull request comes first, then the default branch. These two and
-// the current base are tagged.
 func (m *model) onBranches(msg branchesMsg) {
 	if msg.err != nil {
 		m.flash("branch list failed: " + msg.err.Error())
@@ -55,8 +46,7 @@ func (m *model) onBranches(msg branchesMsg) {
 	}
 	defaultBase := strings.TrimPrefix(m.defaultBase, "origin/")
 	current := strings.TrimPrefix(m.base, "origin/")
-	// groups holds the PR base, then the default branch, then the rest.
-	// Each group keeps the order of msg.branches, newest first.
+	// Each group keeps the order of msg.branches, which is newest first.
 	var groups [3][]overlayItem
 	for _, b := range msg.branches {
 		var tags []string
@@ -76,10 +66,8 @@ func (m *model) onBranches(msg branchesMsg) {
 	m.openOverlay(ov)
 }
 
-// baseRef returns the ref chosen in the base picker, given the selected
-// item it. A valid typed ref, such as a tag, is preferred over the
-// first match, but a match that the user moves the cursor to is preferred
-// over the typed text. It returns ok false if the ref does not resolve.
+// baseRef prefers a valid typed ref, such as a tag, over the first match.
+// A match that the user moves the cursor to wins over the typed text.
 func (m *model) baseRef(it *overlayItem) (ref string, ok bool) {
 	ctx, done := m.gitContext("base resolve")
 	defer done()

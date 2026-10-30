@@ -7,21 +7,16 @@ import (
 	"znkr.io/diff/textdiff"
 )
 
-// hunk is a run of lines of a diff. OldStart and NewStart are the old
-// and new line numbers of its first line.
 type hunk struct {
 	OldStart, NewStart int
 	Lines              []diffLine
 }
 
-// diffLine is one line of a hunk. Content keeps its line ending.
 type diffLine struct {
-	Kind    Kind // KindEqual, KindAdded, or KindDeleted
-	Content string
+	Kind    Kind
+	Content string // keeps its line ending
 }
 
-// next returns the old and new line numbers of the line after l, where
-// oldNum and newNum are those of l.
 func (l diffLine) next(oldNum, newNum int) (int, int) {
 	if l.Kind != KindAdded {
 		oldNum++
@@ -32,17 +27,12 @@ func (l diffLine) next(oldNum, newNum int) (int, int) {
 	return oldNum, newNum
 }
 
-// fastDiffLines is the number of lines, old and new together, above which
-// edits uses the fast diff. The diff runs while the screen is drawn, and
-// the default diff becomes slow on large rewrites. The fast diff can mark
-// a few extra lines as changed.
+// The diff runs during a draw, and the default diff is slow on large
+// rewrites. The fast diff can mark a few extra lines as changed.
 const fastDiffLines = 10_000
 
-// edits returns the line edits between oldText and newText, from newText
-// to oldText: a Delete is a line of newText, and an Insert a line of
-// oldText. Reversing makes textdiff pick the same diff as git when two
-// diffs are equally short. Above fastDiffLines lines, edits uses the fast
-// diff, so that no input makes it slow.
+// edits diffs from newText to oldText, so a Delete is a line of newText.
+// The reverse order makes textdiff pick the same diff as git on ties.
 func edits(oldText, newText string) []textdiff.Edit[string] {
 	opts := []textdiff.Option{textdiff.IndentHeuristic()}
 	if strings.Count(oldText, "\n")+strings.Count(newText, "\n") > fastDiffLines {
@@ -51,13 +41,11 @@ func edits(oldText, newText string) []textdiff.Edit[string] {
 	return textdiff.Edits(newText, oldText, opts...)
 }
 
-// lineDiff returns a hunk that holds every line of oldText and newText, or
-// nil if the texts are equal. In each run of changes, the deleted lines
-// come before the added lines. A line whose ending changes counts as
-// changed.
+// lineDiff returns nil if the texts are equal. A change to a line ending
+// counts as a change.
 func lineDiff(oldText, newText string) *hunk {
 	h := &hunk{OldStart: 1, NewStart: 1}
-	var added []diffLine // the added lines of the current run
+	var added []diffLine
 	changed := false
 	for _, e := range edits(oldText, newText) {
 		switch e.Op {
@@ -79,8 +67,7 @@ func lineDiff(oldText, newText string) *hunk {
 	return h
 }
 
-// CountLines returns the number of lines added and deleted by the change
-// from oldText to newText.
+// CountLines returns the added and deleted line counts.
 func CountLines(oldText, newText string) (added, deleted int) {
 	for _, e := range edits(oldText, newText) {
 		switch e.Op {

@@ -13,9 +13,8 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// newWatcher returns a Watcher for r on which Changed has already been
-// called once. Its clock never moves, so no call is skipped by the pause
-// between checks.
+// newWatcher has already called Changed once. Its clock never moves, so
+// the pause skips no call.
 func newWatcher(t *testing.T, r *vcs.Repo) *vcs.Watcher {
 	t.Helper()
 	w, err := r.Watch(t.Context())
@@ -29,8 +28,6 @@ func newWatcher(t *testing.T, r *vcs.Repo) *vcs.Watcher {
 	return w
 }
 
-// changed calls w.Changed and returns the result, failing the test on
-// error.
 func changed(t *testing.T, w *vcs.Watcher) vcs.Change {
 	t.Helper()
 	ch, err := w.Changed(t.Context())
@@ -40,8 +37,7 @@ func changed(t *testing.T, w *vcs.Watcher) vcs.Change {
 	return ch
 }
 
-// covers reports whether got sets every field that want sets, and, if
-// want is empty, whether got is empty too.
+// covers treats an empty want as an exact match.
 func covers(got, want vcs.Change) bool {
 	if want == (vcs.Change{}) {
 		return got == want
@@ -51,9 +47,6 @@ func covers(got, want vcs.Change) bool {
 	return filesOK && refsOK
 }
 
-// TestWatcher checks which edits a Watcher reports and which it ignores.
-// For each edit, Changed must set every field that want sets, must report
-// nothing when want is empty, and must report nothing on the next call.
 func TestWatcher(t *testing.T) {
 	t.Parallel()
 	files := vcs.Change{Files: true}
@@ -116,9 +109,6 @@ func TestWatcher(t *testing.T) {
 	}
 }
 
-// TestWatcherLastWrite checks that LastWrite returns the time of a file
-// written after the watch started, ignores times after until, and does
-// not stop Changed from reporting the new file.
 func TestWatcherLastWrite(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -146,8 +136,6 @@ func TestWatcherLastWrite(t *testing.T) {
 	}
 }
 
-// TestWatcherNewDirectory checks that Changed reports an edit to a file in
-// a new untracked directory.
 func TestWatcherNewDirectory(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -160,8 +148,6 @@ func TestWatcherNewDirectory(t *testing.T) {
 	}
 }
 
-// TestWatcherUnignore checks that Changed reports a .gitignore edit that
-// stops git from ignoring a file, and then reports edits to that file.
 func TestWatcherUnignore(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -180,10 +166,6 @@ func TestWatcherUnignore(t *testing.T) {
 	}
 }
 
-// TestWatcherIncluded checks that, after Include, Changed reports files
-// added to or removed from an ignored directory, and edits to an ignored
-// file or to the target of a symbolic link. Include itself is not a
-// change.
 func TestWatcherIncluded(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -227,8 +209,6 @@ func TestWatcherIncluded(t *testing.T) {
 	}
 }
 
-// TestWatcherNested checks that Changed reports a commit in a nested
-// repository or in a submodule.
 func TestWatcherNested(t *testing.T) {
 	t.Parallel()
 	for _, sub := range []bool{false, true} {
@@ -261,8 +241,6 @@ func TestWatcherNested(t *testing.T) {
 	}
 }
 
-// TestWatcherRunsNoGit checks that a Watcher runs no git process while
-// nothing changes.
 func TestWatcherRunsNoGit(t *testing.T) {
 	t.Parallel()
 	env, link := gitLink(t)
@@ -277,8 +255,6 @@ func TestWatcherRunsNoGit(t *testing.T) {
 	}
 }
 
-// TestWatcherBudget checks that after a call, Changed reports nothing for
-// 100 times as long as that call took, and reports the change after that.
 func TestWatcherBudget(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -302,8 +278,7 @@ func TestWatcherBudget(t *testing.T) {
 	if got := changed(t, w); !got.Files {
 		t.Errorf("Changed after the pause = %+v, want Files", got)
 	}
-	// A call that takes 1 s would make the next one wait 100 s, but the
-	// pause is at most 30 s.
+	// A 1 s call would give a 100 s pause, but the pause is at most 30 s.
 	step := time.Second
 	w.SetClock(func() time.Time {
 		now = now.Add(step)
@@ -318,9 +293,6 @@ func TestWatcherBudget(t *testing.T) {
 	}
 }
 
-// TestWatcherUntrackedDir checks that Changed reports a new file in an
-// untracked directory that git lists no files for, but not a new file in
-// an ignored directory inside it. Names that start with ":" must work too.
 func TestWatcherUntrackedDir(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -355,9 +327,7 @@ func TestWatcherUntrackedDir(t *testing.T) {
 	}
 }
 
-// TestWatcherConcurrent checks that Include and LastWrite can run while
-// another goroutine calls Changed, and that Changed then still reports an
-// edit to one of many files. Run it with -race.
+// TestWatcherConcurrent is useful only with -race.
 func TestWatcherConcurrent(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)

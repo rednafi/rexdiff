@@ -1,9 +1,5 @@
-// Package rex controls the Rex terminal through the rex command.
-//
-// A Rex session has windows, and a window has blocks, which are panes
-// such as a terminal that runs a coding agent. An agent reports its app
-// name and state with the OSC 7501 escape sequence. A [Client] lists the
-// agents in a session, pastes text into them and watches their status.
+// Package rex controls the Rex terminal through the rex command. Agents in
+// its blocks report their state with OSC 7501.
 package rex
 
 import (
@@ -28,16 +24,13 @@ import (
 
 // Client runs rex commands in one Rex session.
 type Client struct {
-	block   string   // the ID of the block that runs this process, or ""
-	session string   // the session ID
-	bin     string   // the path of the rex binary, or "" to use "rex" from PATH
-	env     []string // the environment for rex
+	block   string
+	session string
+	bin     string // "" means "rex" from PATH
+	env     []string
 }
 
-// New returns a client for the Rex session described by env, such as the
-// result of [os.Environ]. It reads REX_SESSION and REX_BLOCK, which Rex
-// sets in every block. If REX_SESSION is not set, the process does not run
-// in Rex, and New returns nil and false. The client runs rex with env.
+// New returns a client from REX_SESSION and REX_BLOCK, or false outside Rex.
 func New(env []string) (*Client, bool) {
 	session := proc.Getenv(env, "REX_SESSION")
 	if session == "" {
@@ -52,14 +45,11 @@ func New(env []string) (*Client, bool) {
 	return c, true
 }
 
-// Block returns the ID of the block that runs this process, or "" if it is
-// not known.
+// Block returns the ID of the block that runs this process, or "".
 func (c *Client) Block() string { return c.block }
 
-// binPath returns the path of the rex binary to use for env, or "" to use
-// rex from PATH. It prefers REX_BIN_DIR, which Rex sets in its terminals.
-// If that is not set and PATH has no rex, on macOS it returns the rex
-// binary inside the Rex Server app in HOME, if it exists.
+// binPath returns "" to use rex from PATH. On macOS it can fall back to the
+// Rex Server app.
 func binPath(env []string) string {
 	if dir := proc.Getenv(env, "REX_BIN_DIR"); dir != "" {
 		return filepath.Join(dir, "rex")
@@ -71,7 +61,6 @@ func binPath(env []string) string {
 	if runtime.GOOS != "darwin" || home == "" {
 		return ""
 	}
-	// On macOS, this is the directory that os.UserConfigDir returns.
 	dir := filepath.Join(home, "Library", "Application Support")
 	bin := filepath.Join(dir, "com.superlogical.rex", "RexServer", "Versions", "Current", "Rex Server.app", "Contents", "MacOS", "rex")
 	if _, err := os.Stat(bin); err != nil {
@@ -80,13 +69,10 @@ func binPath(env []string) string {
 	return bin
 }
 
-// command returns a command that runs rex with args.
 func (c *Client) command(ctx context.Context, args ...string) *exec.Cmd {
 	return proc.Command(ctx, c.env, cmp.Or(c.bin, "rex"), args...)
 }
 
-// run runs rex with args and returns its standard output. If rex fails,
-// the error includes the first line of its standard error.
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := c.command(ctx, args...)
 	var stderr proc.Head
@@ -98,8 +84,6 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// runJSON runs rex with args and decodes its JSON output into v. A
-// decoding error names the rex subcommand.
 func (c *Client) runJSON(ctx context.Context, v any, args ...string) error {
 	out, err := c.run(ctx, args...)
 	if err != nil {
@@ -111,12 +95,9 @@ func (c *Client) runJSON(ctx context.Context, v any, args ...string) error {
 	return nil
 }
 
-// request calls the session API method with args encoded as JSON. If
-// reply is not nil, request decodes the response into it.
 func (c *Client) request(ctx context.Context, method string, args, reply any) error {
-	// Rex encodes the request again, with its own escaping, so whether
-	// this escapes HTML characters does not change the size Rex measures.
-	// Leaving them unescaped keeps the command line short and readable.
+	// Rex escapes the request again itself, so HTML escaping here gains
+	// nothing. Unescaped text keeps the command line short.
 	body, err := json.Marshal(args, jsontext.EscapeForHTML(false))
 	if err != nil {
 		return err
@@ -133,38 +114,33 @@ func (c *Client) request(ctx context.Context, method string, args, reply any) er
 
 // Status is the status that a program reports to Rex with OSC 7501.
 type Status struct {
-	App   string // the program name, for example "pi" or "claude-code"
+	App   string // for example "pi" or "claude-code"
 	State State
-	At    time.Time // when Rex received the status, or zero if Rex does not say
+	At    time.Time // when Rex received the status, or zero
 }
 
-// State describes what a program is doing. The zero State means that the
-// program reports no status.
+// State describes what a program is doing. "" means no status.
 type State string
 
-// The states that the OSC 7501 protocol defines. A State can also have
-// other values, such as "error".
+// The states of OSC 7501. Other values, such as "error", can occur.
 const (
-	StateIdle    State = "idle"    // waiting for the user's next instruction
-	StateWorking State = "working" // working on a task
-	StateDone    State = "done"    // finished a task that the user has not seen yet
+	StateIdle    State = "idle"
+	StateWorking State = "working"
+	StateDone    State = "done"    // the user has not seen the result yet
 	StateBlocked State = "blocked" // waiting for the user to act
 )
 
-// statusEntry is a status as Rex returns it. A program can report one
-// status for itself, with an empty ID, and one for each of its sub-agents.
+// statusEntry has an empty ID for the program itself, else a sub-agent ID.
 type statusEntry struct {
-	ID    string `json:"id"`
-	State State  `json:"state"`
-	App   string `json:"app"`
-	// EffectiveApp is the name that Rex displays. It can differ from App.
+	ID           string `json:"id"`
+	State        State  `json:"state"`
+	App          string `json:"app"`
 	EffectiveApp string `json:"effective_app"`
 	UpdatedAt    string `json:"updated_at"` // RFC 3339
 }
 
-// status converts e to a Status, using the name that Rex displays.
 func (e statusEntry) status() Status {
-	at, _ := time.Parse(time.RFC3339Nano, e.UpdatedAt) // zero if the time does not parse
+	at, _ := time.Parse(time.RFC3339Nano, e.UpdatedAt)
 	return Status{
 		App:   cmp.Or(e.EffectiveApp, e.App),
 		State: e.State,
@@ -172,9 +148,7 @@ func (e statusEntry) status() Status {
 	}
 }
 
-// Status returns the status of the program in block, or the zero Status if
-// the program reports none. Like [Client.Events], it ignores the statuses
-// of sub-agents.
+// Status returns the status of the program in block, without sub-agents.
 func (c *Client) Status(ctx context.Context, block string) (Status, error) {
 	var reply struct {
 		Entries []statusEntry `json:"records"`
@@ -194,8 +168,7 @@ func (c *Client) Cwd(ctx context.Context, block string) (string, error) {
 	type process struct {
 		Cwd string `json:"cwd"` // a path, or a file:// URL
 	}
-	// Foreground is the process that owns the terminal, for example an
-	// agent started from a shell. Child is the shell itself.
+	// Foreground is the job that owns the terminal. Child is the shell.
 	var reply struct {
 		Foreground process `json:"foreground"`
 		Child      process `json:"child"`
@@ -210,21 +183,19 @@ func (c *Client) Cwd(ctx context.Context, block string) (string, error) {
 
 // Agent is a block whose program reports a status with an app name.
 type Agent struct {
-	Block  string // the block ID
-	Name   string // the block label, or the app name if the block has no label
-	Window string // the label of the block's window, or ""
-	Cwd    string // the working directory of the program
+	Block  string
+	Name   string // the block label, or else the app name
+	Window string // the window label, or ""
+	Cwd    string
 	Status Status
 }
 
-// terminalCreator is the creator name of terminal blocks. Only a terminal
-// block can run an agent.
+// Only terminal blocks can run an agent.
 const terminalCreator = "com.superlogical.terminal"
 
-// Agents returns the agents in the session in layout order, leaving out
-// the client's own block. If ctx ends, Agents returns the cause of ctx.
+// Agents returns the agents in layout order, without the client's own
+// block. If ctx ends, Agents returns the cause of ctx.
 func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
-	// List the windows while the blocks are being listed.
 	var windows []window
 	var wg sync.WaitGroup
 	wg.Go(func() { windows = c.windows(ctx) })
@@ -242,8 +213,6 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 		return nil, err
 	}
 
-	// Fetch the status of each terminal block in parallel. A block is an
-	// agent if its program reports an app name.
 	agents := make([]Agent, len(reply.Blocks))
 	for i, b := range reply.Blocks {
 		if b.ID == c.block || b.Creator != terminalCreator {
@@ -254,7 +223,6 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 			if err != nil || status.App == "" {
 				return
 			}
-			// If Cwd fails, keep the agent with an empty working directory.
 			cwd, _ := c.Cwd(ctx, b.ID)
 			agents[i] = Agent{
 				Block:  b.ID,
@@ -266,7 +234,7 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 	}
 	wg.Wait()
 	if ctx.Err() != nil {
-		// A status call that failed because ctx ended does not mean that
+		// A status call that failed because ctx ended does not prove that
 		// the block is not an agent.
 		return nil, context.Cause(ctx)
 	}
@@ -278,13 +246,11 @@ func (c *Client) Agents(ctx context.Context) ([]Agent, error) {
 	return slices.DeleteFunc(agents, notAgent), nil
 }
 
-// window is a window of the session.
 type window struct {
 	ID    string `json:"window_id"`
 	Label string `json:"label"`
 }
 
-// windows returns the windows of the session, or nil if rex fails.
 func (c *Client) windows(ctx context.Context) []window {
 	var reply struct {
 		Windows []window `json:"windows"`
@@ -295,8 +261,6 @@ func (c *Client) windows(ctx context.Context) []window {
 	return reply.Windows
 }
 
-// windowLabel returns the label of the window with the given id, or "" if
-// there is no such window.
 func windowLabel(windows []window, id string) string {
 	if i := slices.IndexFunc(windows, func(w window) bool { return w.ID == id }); i >= 0 {
 		return windows[i].Label
@@ -304,8 +268,7 @@ func windowLabel(windows []window, id string) string {
 	return ""
 }
 
-// ResolveBlock returns the ID of the block that target refers to. target
-// can be a block ID, a block label or the end of a block ID.
+// ResolveBlock returns the ID of a block given by ID, label or ID suffix.
 func (c *Client) ResolveBlock(ctx context.Context, target string) (string, error) {
 	if strings.HasPrefix(target, "block:") {
 		return target, nil
@@ -322,20 +285,17 @@ func (c *Client) ResolveBlock(ctx context.Context, target string) (string, error
 	return reply.Block.ID, nil
 }
 
-// maxPastePart is the most bytes that the text of one paste event may take
-// once Rex encodes it as JSON. Rex refuses a control message larger than
-// 65,536 bytes, and the rest of the message takes a few hundred bytes, so
-// this leaves a wide margin.
+// maxPastePart leaves a wide margin under the 65,536-byte limit of one Rex
+// control message.
 const maxPastePart = 48 << 10
 
-// PasteError is the error from a [Client.Paste] that failed after it had
-// pasted some parts of the text.
+// PasteError reports a [Client.Paste] that failed after some parts.
 type PasteError struct {
-	Pasted, Parts int   // the number of parts pasted, and of all parts
-	Err           error // the error from the part that failed
+	Pasted, Parts int
+	Err           error
 }
 
-// Error returns the counts of parts and the error of the part that failed.
+// Error returns the part counts and the error.
 func (e *PasteError) Error() string {
 	return fmt.Sprintf("pasted only %d of %d parts: %v", e.Pasted, e.Parts, e.Err)
 }
@@ -343,13 +303,8 @@ func (e *PasteError) Error() string {
 // Unwrap returns e.Err.
 func (e *PasteError) Unwrap() error { return e.Err }
 
-// Paste pastes text into the program in block as if the user had pasted
-// it. Paste does not press Enter, so the program does not submit the text.
-//
-// Rex limits the size of one paste, so Paste splits a long text into parts
-// and pastes them in order, which the program sees as several pastes. It
-// splits only between characters, after a newline where it can. If a part
-// fails after others were pasted, the error is a [*PasteError].
+// Paste pastes text into block without Enter. A long text goes as several
+// pastes. If a later part fails, the error is a [*PasteError].
 func (c *Client) Paste(ctx context.Context, block, text string) error {
 	parts := pasteParts(text, maxPastePart)
 	for i, part := range parts {
@@ -363,7 +318,6 @@ func (c *Client) Paste(ctx context.Context, block, text string) error {
 	return nil
 }
 
-// pastePart pastes text with one paste event.
 func (c *Client) pastePart(ctx context.Context, block, text string) error {
 	type paste struct {
 		Text string `json:"text"`
@@ -382,10 +336,7 @@ func (c *Client) pastePart(ctx context.Context, block, text string) error {
 	return c.request(ctx, "block.event", args, nil)
 }
 
-// pasteParts splits text into parts whose JSON encoding, as Rex measures
-// it, takes at most limit bytes. Each part ends between two characters,
-// after the last newline that fits if it is in the second half of the
-// part. It returns one part for a text that fits, including the empty text.
+// pasteParts ends a part after a newline if one is in its second half.
 func pasteParts(text string, limit int) []string {
 	var parts []string
 	for {
@@ -412,11 +363,8 @@ func pasteParts(text string, limit int) []string {
 	}
 }
 
-// encodedLen returns the most bytes that the rune r, which takes n bytes
-// of the text, can take in a JSON string. Rex encodes like Go's
-// encoding/json package, which escapes the HTML characters <, > and &, the
-// line and paragraph separators and most control characters as \uXXXX,
-// and replaces an invalid byte with \ufffd.
+// encodedLen returns the maximum JSON size of r. Rex escapes like Go's
+// encoding/json: \uXXXX for <, >, &, U+2028, U+2029 and invalid bytes.
 func encodedLen(r rune, n int) int {
 	switch {
 	case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t':
@@ -445,17 +393,14 @@ func (c *Client) SetLabel(ctx context.Context, block, label string) error {
 	return c.request(ctx, "session.set_block_label", args, nil)
 }
 
-// Split opens a new terminal block next to the client's block and runs
-// the command argv in it, in the directory cwd.
+// Split runs argv in cwd in a new terminal block next to the client's.
 func (c *Client) Split(ctx context.Context, cwd string, argv ...string) error {
 	args := []string{"split", "-s", c.session, "-b", c.block, "--cwd", cwd, "--"}
 	_, err := c.run(ctx, append(args, argv...)...)
 	return err
 }
 
-// ConfigPath returns the path of the Rex configuration file for env. It is
-// $REX_CONFIG if set, or else rex/init.lua in $XDG_CONFIG_HOME or
-// $HOME/.config.
+// ConfigPath returns $REX_CONFIG, or rex/init.lua in the XDG config dir.
 func ConfigPath(env []string) string {
 	if path := proc.Getenv(env, "REX_CONFIG"); path != "" {
 		return path
@@ -467,43 +412,33 @@ func ConfigPath(env []string) string {
 	return filepath.Join(dir, "rex", "init.lua")
 }
 
-// ReloadConfig tells Rex to read its configuration file again. It runs rex
-// with env and also works outside a Rex session.
+// ReloadConfig tells Rex to read its configuration again. It also works
+// outside a Rex session.
 func ReloadConfig(ctx context.Context, env []string) error {
 	c := &Client{bin: binPath(env), env: env}
 	_, err := c.run(ctx, "config", "reload")
 	return err
 }
 
-// Event is a change to a block in the session, or a notice that
-// [Client.Events] has restarted rex.
+// Event is a change to a block, or a notice from [Client.Events].
 type Event struct {
-	Block  string // the block ID
-	Closed bool   // true if the block closed
-	// Status is the new status of the program in the block, or the zero
-	// Status if the program removed its status.
+	Block  string
+	Closed bool
+	// Status is zero if the program removed its status.
 	Status Status
-	// Reconnect is true if Events restarted rex. Events that happened while
-	// rex was not running are lost. A Reconnect event has no block.
+	// Reconnect is true after Events restarts rex. Events in the gap are lost.
 	Reconnect bool
-	// Err is the error from a failed rex run, including the first line of
-	// its standard error. An event with Err has no block, and Events
-	// restarts rex after it.
+	// Err is from a failed rex run. Events restarts rex after it.
 	Err error
 }
 
 const (
-	// reconnectDelay is how long Events waits before it restarts rex.
 	reconnectDelay = 2 * time.Second
-	// maxEventLine is the longest event line, in bytes, that Events accepts.
-	maxEventLine = 1 << 20
+	maxEventLine   = 1 << 20
 )
 
-// Events runs "rex events" and calls fn for each event in the session,
-// from a single goroutine. If rex fails, Events calls fn with an event
-// that holds the error. When rex stops, Events restarts it after
-// 2 seconds and reports a Reconnect event before any new events.
-// Events returns the cause of ctx when ctx is done.
+// Events runs "rex events" and calls fn from one goroutine. It restarts rex
+// when rex stops. It returns the cause of ctx when ctx is done.
 func (c *Client) Events(ctx context.Context, fn func(Event)) error {
 	for again := false; ; again = true {
 		if err := c.eventsOnce(ctx, again, fn); err != nil && ctx.Err() == nil {
@@ -517,9 +452,6 @@ func (c *Client) Events(ctx context.Context, fn func(Event)) error {
 	}
 }
 
-// eventsOnce runs "rex events" once and calls fn for each event until rex
-// stops. If again is true, it first reports a Reconnect event. The
-// returned error includes the first line of rex's standard error.
 func (c *Client) eventsOnce(ctx context.Context, again bool, fn func(Event)) error {
 	cmd := c.command(ctx, "events", "-s", c.session, "--json")
 	var stderr proc.Head
@@ -542,8 +474,8 @@ func (c *Client) eventsOnce(ctx context.Context, again bool, fn func(Event)) err
 		}
 	}
 	if err := lines.Err(); err != nil {
-		// A line is too long. Kill rex, because it can block until someone
-		// reads its output.
+		// A line is too long. Kill rex, because it can block until
+		// someone reads its output.
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return fmt.Errorf("rex events: %w", err)
@@ -554,29 +486,22 @@ func (c *Client) eventsOnce(ctx context.Context, again bool, fn func(Event)) err
 	return nil
 }
 
-// blockEvent is an event about one block in the output of
-// "rex events --json".
 type blockEvent struct {
 	Block string     `json:"block_id"`
-	Name  string     `json:"name"` // for example "program_status_changed"
+	Name  string     `json:"name"`
 	Data  statusData `json:"payload"`
 }
 
-// statusData is the payload of a status event. Changed holds the new
-// status and Removed holds the IDs of the removed statuses.
 type statusData struct {
 	ID      string      `json:"id"`
 	Changed statusEntry `json:"record"`
 	Removed []string    `json:"ids"`
 }
 
-// parseEvent decodes one line of "rex events --json" output. It returns
-// false if the line is not an event that Events reports.
 func parseEvent(line []byte) (Event, bool) {
 	var msg struct {
 		Payload struct {
 			Event struct {
-				// Type is "block_event" or "block_closed".
 				Type  string     `json:"type"`
 				Block blockEvent `json:"payload"`
 			} `json:"event"`
@@ -595,9 +520,6 @@ func parseEvent(line []byte) (Event, bool) {
 	return Event{}, false
 }
 
-// statusEvent returns the status change in b. It reports only changes to
-// the program's own status, which has an empty ID, and ignores sub-agents.
-// It returns false if b does not change that status.
 func statusEvent(b blockEvent) (Event, bool) {
 	ev := Event{Block: b.Block}
 	switch b.Name {

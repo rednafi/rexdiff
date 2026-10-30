@@ -18,11 +18,8 @@ import (
 	"github.com/rednafi/rexdiff/internal/xctx"
 )
 
-// shEnv is an environment whose PATH contains sh.
 var shEnv = []string{"PATH=/usr/bin:/bin"}
 
-// TestError checks the message of the error that Error returns, and that
-// the error wraps the original error.
 func TestError(t *testing.T) {
 	t.Parallel()
 	exit := proc.Command(t.Context(), shEnv, "sh", "-c", "exit 3").Run()
@@ -48,9 +45,6 @@ func TestError(t *testing.T) {
 	}
 }
 
-// TestErrorCause checks that when the context is done, Error returns the
-// message of the context's cause, and that the error wraps both the cause
-// and the process's exit error.
 func TestErrorCause(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := xctx.WithTimeout(t.Context(), time.Millisecond, "test run")
@@ -70,8 +64,6 @@ func TestErrorCause(t *testing.T) {
 	}
 }
 
-// TestCommandTerm checks that cancelling the context sends SIGTERM, so
-// that the program can clean up before it exits.
 func TestCommandTerm(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancelCause(t.Context())
@@ -95,8 +87,6 @@ func TestCommandTerm(t *testing.T) {
 	}
 }
 
-// TestLastLine checks that LastLine skips trailing blank lines and trims
-// white space.
 func TestLastLine(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ in, want string }{
@@ -112,8 +102,6 @@ func TestLastLine(t *testing.T) {
 	}
 }
 
-// TestCommand checks that Command sets a WaitDelay, keeps name as
-// Args[0], and passes env to the program.
 func TestCommand(t *testing.T) {
 	t.Parallel()
 	env := slices.Concat(shEnv, []string{"A=1"})
@@ -128,8 +116,7 @@ func TestCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// sh can add variables of its own, such as PWD, so check only that the
-	// variables of env are present.
+	// sh can add its own variables, such as PWD.
 	for _, kv := range env {
 		if !strings.Contains(string(out), kv+"\n") {
 			t.Errorf("sh output = %q, want a line %q", out, kv)
@@ -137,8 +124,6 @@ func TestCommand(t *testing.T) {
 	}
 }
 
-// TestCommandNotFound checks that running the command returns the
-// LookPath error if the program is not on the PATH in env.
 func TestCommandNotFound(t *testing.T) {
 	t.Parallel()
 	for _, env := range [][]string{nil, {"PATH=" + t.TempDir()}} {
@@ -152,8 +137,6 @@ func TestCommandNotFound(t *testing.T) {
 	}
 }
 
-// TestGetenv checks that the last value of a key wins, and that a key
-// does not match a longer key that starts with it.
 func TestGetenv(t *testing.T) {
 	t.Parallel()
 	env := []string{"A=1", "AB=2", "A=3", "C=", "D"}
@@ -175,8 +158,6 @@ func TestGetenv(t *testing.T) {
 	}
 }
 
-// TestLookPath checks that LookPath finds an executable regular file in
-// the PATH in env, searching the entries in order.
 func TestLookPath(t *testing.T) {
 	t.Parallel()
 	first, second := t.TempDir(), t.TempDir()
@@ -225,8 +206,7 @@ func TestLookPath(t *testing.T) {
 	if got, err := proc.LookPath(nil, "sh"); !errors.Is(err, exec.ErrNotFound) {
 		t.Errorf("LookPath(nil, sh) = %q, %v, want exec.ErrNotFound", got, err)
 	}
-	// A relative entry is skipped, because it is resolved against the
-	// working directory, which can be the repository under review.
+	// A relative entry can point into the repository under review.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +220,6 @@ func TestLookPath(t *testing.T) {
 	}
 }
 
-// TestHead checks that Head keeps only the start of what is written.
 func TestHead(t *testing.T) {
 	t.Parallel()
 	var h proc.Head

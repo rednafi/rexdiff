@@ -8,9 +8,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// TestSavedBase checks that SavedBase returns the base that SaveBase
-// saved, that saving the default branch clears it, and that values that
-// are not valid ref names cannot be saved or read back.
 func TestSavedBase(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
@@ -43,8 +40,6 @@ func TestSavedBase(t *testing.T) {
 	}
 }
 
-// hashObject stores s as a blob in the repository at dir and returns the
-// blob's ID.
 func hashObject(t *testing.T, dir, s string) string {
 	t.Helper()
 	tmp := t.TempDir()
@@ -53,13 +48,11 @@ func hashObject(t *testing.T, dir, s string) string {
 	return strings.TrimSpace(out)
 }
 
-// TestSavedTurn checks that a tree saved with SaveTurn survives git gc,
-// and that saving "" deletes it, also when it is already deleted.
 func TestSavedTurn(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
 	ctx := t.Context()
-	tree := snapshot(t, r) // a tree that no commit refers to
+	tree := snapshot(t, r) // no commit refers to it
 	if err := r.SaveTurn(ctx, tree); err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +73,6 @@ func TestSavedTurn(t *testing.T) {
 	}
 }
 
-// TestSavedPerWorktree checks that the base and turn saved in one
-// worktree are not visible in another worktree of the same repository.
 func TestSavedPerWorktree(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)

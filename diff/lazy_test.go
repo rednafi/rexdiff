@@ -13,9 +13,7 @@ import (
 	"github.com/rednafi/rexdiff/diff"
 )
 
-// checkLazy checks that lazy has the same rows and lines as eager. It
-// reads the lines of lazy from last to first, so that no line relies on
-// earlier lines having been rendered.
+// checkLazy reads lines from last to first, so no line relies on earlier ones.
 func checkLazy(t *testing.T, eager, lazy *diff.Diff) {
 	t.Helper()
 	want := screenLines(eager)
@@ -32,10 +30,7 @@ func checkLazy(t *testing.T, eager, lazy *diff.Diff) {
 	}
 }
 
-// checkLazyFile checks that two RenderFiles of src at path with the
-// options o return the same rows and lines, whatever order they are read
-// in. The first waits for the highlighting that both use: a line that the
-// highlighter has not reached in time shows without colours.
+// checkLazyFile waits for the highlighter, so that no line shows plain.
 func checkLazyFile(t *testing.T, path, src string, o diff.Options) {
 	t.Helper()
 	o.Cache = &diff.Cache{}
@@ -44,10 +39,7 @@ func checkLazyFile(t *testing.T, path, src string, o diff.Options) {
 	checkLazy(t, eager, diff.RenderFile(path, src, fileOptions(o)))
 }
 
-// lazyFile returns a Go file of about n lines that includes long lines,
-// lines with wide characters and indented lines. If edit is true, some
-// lines differ and end in CRLF. No line is longer than 256 bytes, so that
-// the time limit on highlighting a long line on its own never applies.
+// lazyFile keeps lines under 256 bytes, below the long-line time limit.
 func lazyFile(n int, edit bool) string {
 	var b strings.Builder
 	b.WriteString("package x\n\n")
@@ -66,9 +58,6 @@ func lazyFile(n int, edit bool) string {
 	return b.String()
 }
 
-// TestLazy checks that a lazy render returns the same rows and lines as an
-// eager render, for both layouts, several widths and scroll offsets, and
-// with and without wrapping.
 func TestLazy(t *testing.T) {
 	t.Parallel()
 	oldSrc, newSrc := lazyFile(300, false), lazyFile(310, true)
@@ -98,8 +87,7 @@ func TestLazy(t *testing.T) {
 			}
 		}
 	}
-	// Test non-ASCII lines that fit or wrap at each width. Colour codes
-	// between the runes of an emoji can change its width.
+	// Colour codes between the runes of an emoji can change its width.
 	wide := []string{"é 日本\n", "x := 👨‍👩 + 🇬🇧 é\n", "x := 👨‍👩 + 🇬🇧 " + strings.Repeat("日本 ", 20) + "\n"}
 	for width := range 40 {
 		o := diff.Options{Wrap: true, Width: width, Theme: diff.Theme{Background: color.Black, Foreground: color.White}}
@@ -112,9 +100,6 @@ func TestLazy(t *testing.T) {
 	}
 }
 
-// TestCacheKeepsDiff checks that lazy renders that reuse one Cache return
-// the same rows and lines as renders without a Cache, while the layout,
-// wrapping, folds, width and horizontal scroll change between renders.
 func TestCacheKeepsDiff(t *testing.T) {
 	t.Parallel()
 	oldSrc, newSrc := lazyFile(120, false), lazyFile(110, true)
@@ -138,7 +123,6 @@ func TestCacheKeepsDiff(t *testing.T) {
 	}
 }
 
-// waitHighlighted waits until c highlights no file in the background.
 func waitHighlighted(t *testing.T, c *diff.Cache) {
 	t.Helper()
 	for deadline := time.Now().Add(time.Minute); c.Highlighting(); time.Sleep(time.Millisecond) {
@@ -148,9 +132,8 @@ func waitHighlighted(t *testing.T, c *diff.Cache) {
 	}
 }
 
-// TestFileKeepsLines checks that a lazy Diff still renders its last line
-// highlighted after the same Cache renders another file, which stops the
-// background highlighting of the first.
+// TestFileKeepsLines renders another file with the same Cache. That stops
+// the first highlighter, but the lazy Diff must still highlight.
 func TestFileKeepsLines(t *testing.T) {
 	t.Parallel()
 	src := lazyFile(3000, false)
@@ -160,8 +143,7 @@ func TestFileKeepsLines(t *testing.T) {
 	wc := &diff.Cache{}
 	want := diff.RenderFile("x.go", src, diff.FileOptions{Width: 80, Cache: wc})
 	waitHighlighted(t, wc)
-	// The lazy Diff highlights the line again, and shows it plain until
-	// then.
+	// The line shows plain until the lazy Diff highlights it again.
 	last := len(big.Rows) - 1
 	deadline := time.Now().Add(time.Minute)
 	for got := big.Line(last); got != want.Line(last); got = big.Line(last) {

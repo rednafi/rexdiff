@@ -11,18 +11,14 @@ import (
 	"github.com/rednafi/rexdiff/rex"
 )
 
-// member is an agent working in the repository.
 type member struct {
 	block, app string
 	state      rex.State
 	since      time.Time // when Rex received the state
 }
 
-// turnMembers returns the agents working in the repository, sorted by
-// block. An agent is a member if its working directory is absolute and
-// inside this working tree. If an agent's directory is not known, ok is
-// false, and ask is that agent's block if Rex can be asked for the
-// directory.
+// If a directory is not known, ok is false. Then ask is that agent's block
+// if Rex can tell the directory.
 func (m *model) turnMembers() (ms []member, ask string, ok bool) {
 	for _, block := range slices.Sorted(maps.Keys(m.agents)) {
 		a := m.agents[block]
@@ -53,9 +49,6 @@ func (m *model) turnMembers() (ms []member, ask string, ok bool) {
 	return ms, "", true
 }
 
-// askCwd returns a command that asks Rex for the working directory of the
-// agent in block, or nil if a request is already in progress. The answer
-// arrives as a cwdMsg.
 func (m *model) askCwd(block string) tea.Cmd {
 	a := m.agents[block]
 	if a.asking {
@@ -71,8 +64,7 @@ func (m *model) askCwd(block string) tea.Cmd {
 	}
 }
 
-// onCwd records an agent's working directory and updates turn tracking.
-// After an error, the next state change asks again.
+// onCwd lets the next state change ask again after an error.
 func (m *model) onCwd(msg cwdMsg) tea.Cmd {
 	a := m.agents[msg.block]
 	if a == nil {
@@ -87,9 +79,8 @@ func (m *model) onCwd(msg cwdMsg) tea.Cmd {
 	return m.observeTurn()
 }
 
-// owns reports whether dir is inside this working tree. It caches each
-// answer, because the top of the working tree does not move, and every
-// Rex event asks again on the UI goroutine.
+// owns caches each answer. The top of the working tree does not move, and
+// every Rex event asks again on the UI goroutine.
 func (m *model) owns(dir string) (bool, error) {
 	if in, ok := m.ownsDir[dir]; ok {
 		return in, nil
@@ -106,8 +97,6 @@ func (m *model) owns(dir string) (bool, error) {
 	return in, err
 }
 
-// observeTurn passes the states of the agents in the repository to the
-// tracker and handles the start or end of a turn.
 func (m *model) observeTurn() tea.Cmd {
 	if !m.agentsSampled {
 		return nil
@@ -140,8 +129,6 @@ func (m *model) observeTurn() tea.Cmd {
 	return nil
 }
 
-// turnWaitNote returns a message explaining why the last-turn scope has no
-// turn to show.
 func (m *model) turnWaitNote() string {
 	if m.turnRaced {
 		return "the last turn started before rexdiff could snapshot it"
@@ -152,13 +139,10 @@ func (m *model) turnWaitNote() string {
 	return "waiting for the first turn"
 }
 
-// raceBefore is how long before Rex receives the working state an agent
-// may already be writing files.
+// raceBefore is how long an agent can write files before Rex receives the
+// working state.
 const raceBefore = time.Second
 
-// startTurn returns a command that takes a snapshot of the working tree
-// when the members ms start a turn. The snapshot arrives as a
-// turnStartMsg.
 func (m *model) startTurn(ms []member) tea.Cmd {
 	m.pendingTurn = nil
 	m.turnGen++
@@ -171,9 +155,8 @@ func (m *model) startTurn(ms []member) tea.Cmd {
 		tree, err := repo.SnapshotTree(ctx)
 		msg := turnStartMsg{gen: gen, agent: a, tree: tree, snapped: time.Now(), err: err}
 		if watch != nil && err == nil {
-			// LastWrite waits for a watcher check, so call it here rather
-			// than in Update. A write after the snapshot does not hide one
-			// before it.
+			// LastWrite waits for a watcher check, so do not call it in
+			// Update. A write after the snapshot does not hide one before it.
 			w := watch.LastWrite(msg.snapped)
 			msg.write = w
 			msg.raced = !w.Before(a.since.Add(-raceBefore)) && !w.After(msg.snapped)
@@ -182,7 +165,6 @@ func (m *model) startTurn(ms []member) tea.Cmd {
 	}
 }
 
-// turnStartMsg carries the snapshot taken at the start of a turn.
 type turnStartMsg struct {
 	gen     int    // the value of model.turnGen when the snapshot started
 	agent   member // the first working agent in the turn
@@ -193,11 +175,9 @@ type turnStartMsg struct {
 	err     error
 }
 
-// onTurnStart records the turn in msg as pending. It stays pending until
-// it changes a file. If a file was written in the time from raceBefore
-// before the start to the snapshot, the snapshot may already hold the
-// agent's changes, so the turn is forgotten and the scope says so. msg is
-// ignored if another turn started or ended after it was sent.
+// onTurnStart keeps the turn pending until it changes a file. A write from
+// raceBefore before the start up to the snapshot can be in the snapshot.
+// Then it forgets the turn.
 func (m *model) onTurnStart(msg turnStartMsg) tea.Cmd {
 	if msg.gen != m.turnGen {
 		return nil
@@ -221,10 +201,6 @@ func (m *model) onTurnStart(msg turnStartMsg) tea.Cmd {
 	return nil
 }
 
-// scheduleTurnCheck returns a command that takes a snapshot for the
-// pending turn. onTurnCheck then makes it the last turn if the working
-// tree differs from the start of the turn. A check at the end of a turn
-// always runs; other checks run one at a time.
 func (m *model) scheduleTurnCheck(end bool) tea.Cmd {
 	if m.turnChecking && !end {
 		return nil
@@ -239,7 +215,6 @@ func (m *model) scheduleTurnCheck(end bool) tea.Cmd {
 	}
 }
 
-// turnCheckMsg carries a snapshot taken for the pending turn.
 type turnCheckMsg struct {
 	turn *turnState
 	gen  int  // the value of model.turnGen when the check started
@@ -248,10 +223,6 @@ type turnCheckMsg struct {
 	err  error
 }
 
-// onTurnCheck makes the turn in msg the last turn if the working tree
-// differs from the start of the turn. For a check before the end, the turn
-// must still be pending. For a check at the end, no new turn may have
-// started since. Otherwise the last turn does not change.
 func (m *model) onTurnCheck(msg turnCheckMsg) tea.Cmd {
 	if !msg.end {
 		m.turnChecking = false
@@ -269,8 +240,7 @@ func (m *model) onTurnCheck(msg turnCheckMsg) tea.Cmd {
 	return nil
 }
 
-// forgetTurn forgets the last turn when a new turn starts whose starting
-// state cannot be known. It returns a command that deletes the saved tree.
+// forgetTurn is for a new turn whose start state is not known.
 func (m *model) forgetTurn() tea.Cmd {
 	m.turn, m.turnRaced = nil, true
 	if m.scope == ScopeLastTurn {
@@ -279,8 +249,6 @@ func (m *model) forgetTurn() tea.Cmd {
 	return m.saveTurn("")
 }
 
-// promoteTurn makes t the last turn. It returns a command that saves its
-// tree.
 func (m *model) promoteTurn(t *turnState) tea.Cmd {
 	m.turn, m.turnRaced = t, false
 	if m.pendingTurn == t {
@@ -292,8 +260,7 @@ func (m *model) promoteTurn(t *turnState) tea.Cmd {
 	return m.saveTurn(t.tree)
 }
 
-// saveTurn returns a command that saves tree as the tree of the last turn.
-// An empty tree deletes the saved tree.
+// saveTurn deletes the saved tree if tree is empty.
 func (m *model) saveTurn(tree string) tea.Cmd {
 	repo, ctx, log := m.repo, m.ctx, m.log
 	return func() tea.Msg {
@@ -306,9 +273,8 @@ func (m *model) saveTurn(tree string) tea.Cmd {
 	}
 }
 
-// endTurn ends the current turn. It returns a command that checks the
-// pending turn, which becomes the last turn if it changed the working
-// tree. Changes after the end do not belong to the turn.
+// endTurn checks the pending turn. Changes after the end do not belong to
+// the turn.
 func (m *model) endTurn() tea.Cmd {
 	m.turnGen++ // ignore a turn start whose snapshot has not arrived yet
 	var cmd tea.Cmd

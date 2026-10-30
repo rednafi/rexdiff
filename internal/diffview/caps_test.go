@@ -12,13 +12,10 @@ import (
 	"github.com/rednafi/rexdiff/internal/diffview"
 )
 
-// newHighlighter returns a Highlighter for src at path that escapes the
-// text of tokens, as RenderFile does.
 func newHighlighter(path, src string) *diffview.Highlighter {
 	return diffview.NewHighlighter(path, src, lipgloss.NoColor{}, escapeLines, escapeLines)
 }
 
-// escapeLines escapes each line of s.
 func escapeLines(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
@@ -27,8 +24,6 @@ func escapeLines(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// wait waits until h has highlighted every line, as long as nothing
-// calls Stop.
 func wait(t *testing.T, h *diffview.Highlighter) {
 	t.Helper()
 	for deadline := time.Now().Add(time.Minute); h.Busy(); time.Sleep(time.Millisecond) {
@@ -38,11 +33,8 @@ func wait(t *testing.T, h *diffview.Highlighter) {
 	}
 }
 
-// coloured reports whether s contains an escape sequence.
 func coloured(s string) bool { return strings.Contains(s, "\x1b[") }
 
-// TestHighlighterLongLine checks that a Highlighter draws a line too long
-// to lex plain and escaped, and still highlights the other lines.
 func TestHighlighterLongLine(t *testing.T) {
 	t.Parallel()
 	long := "var s = \"\x07" + strings.Repeat("x", 5000) + "\""
@@ -59,8 +51,6 @@ func TestHighlighterLongLine(t *testing.T) {
 	}
 }
 
-// TestHighlighterLargeFile checks that a Highlighter still highlights the
-// lines of a file too large to lex as a whole.
 func TestHighlighterLargeFile(t *testing.T) {
 	t.Parallel()
 	if raceOn {
@@ -77,9 +67,6 @@ func TestHighlighterLargeFile(t *testing.T) {
 	}
 }
 
-// TestHighlighterSlow checks that Line does not wait for a lexer that is
-// slow, and returns the line plain instead: one screen of such lines takes
-// far less time than the lexing.
 func TestHighlighterSlow(t *testing.T) {
 	t.Parallel()
 	// The Java lexer takes about a second on these lines.
@@ -97,15 +84,11 @@ func TestHighlighterSlow(t *testing.T) {
 			t.Errorf("Line(%d) is final before lexing passes line 300", i)
 		}
 	}
-	// The race detector slows the lexer down too much for the time check.
 	if d := time.Since(start); d > 250*time.Millisecond && !raceOn {
 		t.Errorf("41 lines took %v, want Line to give up waiting sooner", d)
 	}
 }
 
-// TestHighlighterStop checks that Busy reports true while lexing goes on,
-// and that Stop ends the lexing of a source that is slow to lex within a
-// second, rather than after its time budget.
 func TestHighlighterStop(t *testing.T) {
 	t.Parallel()
 	h := newHighlighter("x.java", slowJava())
@@ -115,14 +98,11 @@ func TestHighlighterStop(t *testing.T) {
 	h.Stop()
 	start := time.Now()
 	wait(t, h)
-	// The race detector slows the lexer down too much for the time check.
 	if d := time.Since(start); d > time.Second && !raceOn {
 		t.Errorf("lexing runs %v after Stop, want at most a second", d)
 	}
 }
 
-// TestHighlighterTypicalFile checks that a typical Go file of 100 KB is
-// coloured to the end: no line of it misses a time limit.
 func TestHighlighterTypicalFile(t *testing.T) {
 	t.Parallel()
 	var b strings.Builder
@@ -145,8 +125,8 @@ func TestHighlighterTypicalFile(t *testing.T) {
 	}
 }
 
-// TestWrapLine checks that WrapLine breaks a coloured line where WrapParts
-// breaks its plain text, even when colours split a grapheme cluster.
+// Colours can split a grapheme cluster. WrapLine must still break where
+// WrapParts does.
 func TestWrapLine(t *testing.T) {
 	t.Parallel()
 	family := "👨\u200d👩\u200d👧" // one cluster of five runes
@@ -170,20 +150,16 @@ func TestWrapLine(t *testing.T) {
 			t.Errorf("width %d: the parts have no colours", width)
 		}
 	}
-	// A code line that does not match plain gives the plain parts.
 	if got := diffview.WrapLine(plain, "other", 10); strings.Join(got, "") != strings.Join(diffview.WrapParts(plain, 10), "") {
 		t.Errorf("WrapLine with other text = %q, want the plain parts", got)
 	}
 }
 
-// slowJava returns about 100 KB of lines of words, on which the Java
-// lexer takes about 30 s when it lexes them as a whole.
+// The Java lexer takes about 30 s on this text as a whole.
 func slowJava() string {
 	return strings.Repeat(strings.Repeat("lorem ipsum dolor sit amet ", 7)+"\n", 500) + "class A {}\n"
 }
 
-// TestHighlighterBudget checks that a Highlighter stops lexing a source
-// that is slow to lex after its time budget, and draws the rest plain.
 func TestHighlighterBudget(t *testing.T) {
 	t.Parallel()
 	src := slowJava()

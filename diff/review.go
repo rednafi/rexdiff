@@ -6,9 +6,7 @@ import (
 	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
-// Review returns the comments as text for a coding agent. The text starts
-// with prefix, if it is not empty, followed by the comments in
-// [Comments.All] order, separated by blank lines. The text contains no
+// Review returns the comments as text for a coding agent. The text has no
 // control characters.
 //
 // A comment looks like this:
@@ -18,8 +16,7 @@ import (
 //	+y := 2
 //	Merge these lines.
 //
-// If stale is not nil and reports true for a comment, " (stale)" follows
-// its location, because its lines may no longer hold the code shown.
+// If stale reports true for a comment, " (stale)" follows its location.
 func (cs *Comments) Review(prefix string, stale func(*Comment) bool) string {
 	var parts []string
 	if p := strings.TrimRight(termtext.Plain(prefix), " \n\t"); p != "" {
@@ -31,16 +28,12 @@ func (cs *Comments) Review(prefix string, stale func(*Comment) bool) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// formatComment returns c as text for [Comments.Review], marked stale if
-// stale is true.
 func formatComment(c *Comment, stale bool) string {
 	var b strings.Builder
 	b.WriteString(termtext.Plain(c.Location()))
 	if stale {
 		b.WriteString(" (stale)")
 	}
-	// Write the rows as unified diff lines, or the code lines if there are
-	// no rows.
 	if len(c.snippet) > 0 {
 		for _, l := range c.snippet {
 			b.WriteByte('\n')
@@ -68,7 +61,6 @@ func formatComment(c *Comment, stale bool) string {
 	return b.String()
 }
 
-// snippet returns rows as unified diff lines. See [NewComment].
 func snippet(rows []Row, oldText, newText string) []string {
 	oldLines, newLines := SplitLines(oldText), SplitLines(newText)
 	line := func(ls []string, n int) string {

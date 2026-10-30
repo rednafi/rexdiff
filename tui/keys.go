@@ -12,72 +12,50 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// keyMap holds the key binding for each action. Each field is named after
-// the action in the keybindings setting, such as NextHunk for next-hunk
-// (see [keyActions]). The settings cannot change the keys of the comment
-// box or the find bar.
+// keyMap fields match the actions in the keybindings setting, such as
+// NextHunk for next-hunk.
 type keyMap struct {
-	// Movement.
 	Down, Up, PageDown, PageUp, HalfDown, HalfUp, Collapse, Expand key.Binding
 	NextHunk, PrevHunk, NextFile, PrevFile, Focus                  key.Binding
 
-	// Scopes and tabs.
 	ScopeUncommitted, ScopeBranch, ScopeLastTurn, ScopeCommits key.Binding
 	BasePick, CommitPick, TabChanges, TabAllFiles, TabPR       key.Binding
 
-	// Comments.
 	Select, Comment, Edit, Delete, NextComment, PrevComment key.Binding
 	Comments, Send, Copy                                    key.Binding
 
-	// View and other actions.
 	Search, Find, GotoLine, Rendered, Split, Wrap                    key.Binding
 	NavigatorPosition, NavigatorHide, NavigatorGrow, NavigatorShrink key.Binding
 	OpenPR, Refresh, Keys, Quit, QuitDiscard                         key.Binding
-	// Update installs a newer release. It works only while the footer is
-	// announcing one.
-	Update key.Binding
+	Update                                                           key.Binding
 
-	// Keys of the comment box. Cancel also clears the selection.
 	SaveComment, InsertNewline, Cancel key.Binding
 }
 
-// bind returns a binding for keys, with helpKey and desc as its help text.
 func bind(keys []string, helpKey, desc string) key.Binding {
 	return key.NewBinding(key.WithKeys(keys...), key.WithHelp(helpKey, desc))
 }
 
-// hint returns a copy of b with different help text. The copy keeps the
-// keys of b, because the help view hides bindings that have no keys.
+// hint keeps the keys of b, because the help view hides bindings that
+// have no keys.
 func hint(b key.Binding, helpKey, desc string) key.Binding {
 	b.SetHelp(helpKey, desc)
 	return b
 }
 
-// keyAction describes an action that can be bound to keys.
 type keyAction struct {
-	// name is the action name in the keybindings setting, or "" for a
-	// key of the comment box.
-	name          string
-	keys          []string // the default keys
+	name          string // "" for a key of the comment box
+	keys          []string
 	helpKey, help string
 	field         func(*keyMap) *key.Binding
-	// setting returns the keys that the keybindings setting assigns to
-	// the action. It is nil if the setting cannot change them.
-	setting func(*keybindings) []string
-	// handle runs the action when no box is open. It is nil if the key
-	// does nothing in that state. The QuitDiscard key only answers the
-	// quit prompt.
-	handle func(*model) tea.Cmd
-	// keepView reports whether the view stays put, rather than scrolling
-	// to the cursor, after the action runs.
+	setting       func(*keybindings) []string // nil if not configurable
+	// handle is nil if the key does nothing when no box is open.
+	handle   func(*model) tea.Cmd
 	keepView bool
 }
 
-// keyActions lists every key action, in the order that keybinding errors
-// name them. The update action, whose key is fixed, follows the
-// configurable actions, and the comment box keys come last. A help label
-// shared by a group, such as "j/k move", belongs to its first action (see
-// [keyMap.pairs]).
+// keyActions is in the order that keybinding errors name them. A shared
+// help label such as "j/k move" belongs to the first action of its group.
 var keyActions = []keyAction{
 	{
 		name: "down",
@@ -422,8 +400,6 @@ var keyActions = []keyAction{
 	},
 }
 
-// defaultKeys returns the default key bindings, with the help text for
-// each action.
 func defaultKeys() keyMap {
 	var k keyMap
 	for _, a := range keyActions {
@@ -432,9 +408,8 @@ func defaultKeys() keyMap {
 	return k
 }
 
-// action returns the action that msg triggers when no box is open, or
-// nil. The order of the actions does not matter, because checking the
-// keybindings setting ensures that each key has at most one action.
+// action can ignore order, because validation gives each key at most one
+// action.
 func (k *keyMap) action(msg tea.KeyPressMsg) *keyAction {
 	for i, a := range keyActions {
 		if a.handle != nil && key.Matches(msg, *a.field(k)) {
@@ -444,21 +419,14 @@ func (k *keyMap) action(msg tea.KeyPressMsg) *keyAction {
 	return nil
 }
 
-// overlayKeyMap holds the keys used in overlays. The settings cannot
-// change them.
 type overlayKeyMap struct {
-	// Up and Down move the cursor through the items. Their letter keys, k
-	// and j, move the cursor only in an overlay without a text input, such
-	// as the agent picker. A text input types them instead (see
-	// [overlay.isCursorKey]).
+	// In an overlay with a text input, j and k type text. They do not
+	// move the cursor.
 	Choose, Close, Up, Down key.Binding
 
-	// ToggleSearchMode switches the search mode. ScrollPreviewUp and
-	// ScrollPreviewDown scroll the search preview.
 	ToggleSearchMode, ScrollPreviewUp, ScrollPreviewDown key.Binding
 }
 
-// overlayKeys holds the keys used in overlays.
 var overlayKeys = overlayKeyMap{
 	Choose:            key.NewBinding(key.WithKeys("enter")),
 	Close:             key.NewBinding(key.WithKeys("esc")),
@@ -469,20 +437,14 @@ var overlayKeys = overlayKeyMap{
 	ScrollPreviewDown: key.NewBinding(key.WithKeys("pgdown")),
 }
 
-// letterMoveKeys are the keys of overlayKeys.Up and Down that are also
-// letters.
 var letterMoveKeys = []string{"j", "k"}
 
-// binding pairs an action from the keybindings setting with the key
-// binding that it changes.
 type binding struct {
-	name string // the action name in the keybindings setting
+	name string
 	keys []string
 	key  *key.Binding
 }
 
-// bindings returns each configurable action with the keys that c sets for
-// it and its binding in k, in the order of keyActions.
 func (k *keyMap) bindings(c keybindings) []binding {
 	var bs []binding
 	for _, a := range keyActions {
@@ -498,10 +460,7 @@ func (k *keyMap) bindings(c keybindings) []binding {
 	return bs
 }
 
-// applyConfig sets the keys of each action that c configures. c must
-// already have passed validation. The help for a changed action shows its
-// first key, and a shared label such as "j/k move" shows the first key of
-// each action in the group.
+// applyConfig requires that c has passed validation.
 func (k *keyMap) applyConfig(c keybindings) {
 	changed := map[*key.Binding]bool{}
 	for _, b := range k.bindings(c) {
@@ -510,7 +469,7 @@ func (k *keyMap) applyConfig(c keybindings) {
 		}
 		keys := make([]string, len(b.keys))
 		for i, s := range b.keys {
-			keys[i], _ = keyName(s) // cannot fail: c has passed validation
+			keys[i], _ = keyName(s)
 		}
 		b.key.SetKeys(keys...)
 		b.key.SetHelp(firstKey(*b.key), b.key.Help().Desc)
@@ -528,8 +487,6 @@ func (k *keyMap) applyConfig(c keybindings) {
 	}
 }
 
-// pairs returns the groups of actions that share one help label, such as
-// "j/k move". The label belongs to the first action of each group.
 func (k *keyMap) pairs() [][]*key.Binding {
 	return [][]*key.Binding{
 		{&k.Down, &k.Up},
@@ -543,9 +500,6 @@ func (k *keyMap) pairs() [][]*key.Binding {
 	}
 }
 
-// namedKeys are the keys that are not a single character. Each has its
-// name in the keybindings setting, its bubbletea name and its on-screen
-// label.
 var namedKeys = []namedKey{
 	{"left", "left", "←"},
 	{"right", "right", "→"},
@@ -555,11 +509,9 @@ var namedKeys = []namedKey{
 	{"pagedown", "pgdown", "PageDown"},
 }
 
-// namedKey is a key that is not a single character.
+// namedKey holds the setting name, bubbletea name and on-screen label.
 type namedKey struct{ name, tea, label string }
 
-// teaKey splits the bubbletea key name into its modifier and the named
-// key it refers to. ok is false if no named key matches.
 func teaKey(name string) (mod string, k namedKey, ok bool) {
 	mod, rest := cutModifier(name)
 	i := slices.IndexFunc(namedKeys, func(nk namedKey) bool { return nk.tea == rest })
@@ -569,11 +521,8 @@ func teaKey(name string) (mod string, k namedKey, ok bool) {
 	return mod, namedKeys[i], true
 }
 
-// keyName converts the key s from the keybindings setting to its
-// bubbletea name. It is the inverse of [settingKeyName]. s is a
-// single character or a named key, optionally after "ctrl+" or "alt+".
-// The bubbletea names "pgup" and "pgdown" are also accepted. ok is false
-// if s is not a valid key.
+// keyName is the inverse of [settingKeyName]. It also accepts the
+// bubbletea names "pgup" and "pgdown".
 func keyName(s string) (name string, ok bool) {
 	mod, rest := cutModifier(s)
 	named := func(k namedKey) bool { return rest == k.name || rest == k.tea }
@@ -588,9 +537,6 @@ func keyName(s string) (name string, ok bool) {
 	return s, true
 }
 
-// settingKeyName converts a bubbletea key name to its name in the
-// keybindings setting, such as "pageup" for "pgup". It is the inverse of
-// [keyName].
 func settingKeyName(name string) string {
 	if mod, k, ok := teaKey(name); ok {
 		return mod + k.name
@@ -598,8 +544,6 @@ func settingKeyName(name string) string {
 	return name
 }
 
-// cutModifier splits a leading "ctrl+" or "alt+" from s. mod is "" if s
-// has neither.
 func cutModifier(s string) (mod, rest string) {
 	for _, m := range []string{"ctrl+", "alt+"} {
 		if r, ok := strings.CutPrefix(s, m); ok {
@@ -609,8 +553,6 @@ func cutModifier(s string) (mod, rest string) {
 	return "", s
 }
 
-// keyNames returns a comma-separated list of the named keys, for use in
-// error messages.
 func keyNames() string {
 	names := make([]string, len(namedKeys))
 	for i, k := range namedKeys {
@@ -619,16 +561,15 @@ func keyNames() string {
 	return strings.Join(names, ", ")
 }
 
-// helpKeys implements [help.KeyMap] for the current mode and tab.
 type helpKeys struct {
 	keys                 keyMap
 	mode                 mode
 	tab                  tab
 	split                bool
 	selecting            bool
-	cursorOnFold         bool // the cursor is on a fold
-	cursorInExpandedFold bool // the collapse key would collapse the expanded fold under the cursor
-	crossStep            int  // the direction of a pending jump to another file, or 0
+	cursorOnFold         bool
+	cursorInExpandedFold bool
+	crossStep            int // 0 if no jump to another file is pending
 }
 
 // ShortHelp returns the keys shown in the footer.
@@ -667,7 +608,7 @@ func (h helpKeys) ShortHelp() []key.Binding {
 	return []key.Binding{k.Comment, k.Send, k.NextHunk, k.NextFile, k.Split, k.Keys, k.Quit}
 }
 
-// FullHelp returns the columns of keys shown by the ? key.
+// FullHelp returns the key columns that the ? key shows.
 func (h helpKeys) FullHelp() [][]key.Binding {
 	k := h.keys
 	move := []key.Binding{
@@ -687,11 +628,9 @@ func (h helpKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{move, scopes, comments, view, other}
 }
 
-// helpGap separates the keys in the short help. The header uses the same
-// gap between scopes.
+// helpGap is also the gap between scopes in the header.
 const helpGap = "  "
 
-// newHelp returns the footer help, styled with the terminal palette.
 func newHelp() help.Model {
 	h := help.New()
 	h.Styles.ShortKey, h.Styles.FullKey = boldStyle, boldStyle
@@ -702,8 +641,6 @@ func newHelp() help.Model {
 	return h
 }
 
-// firstKey returns the on-screen label of the first key of b, or "" if b
-// has no keys.
 func firstKey(b key.Binding) string {
 	ks := b.Keys()
 	if len(ks) == 0 {

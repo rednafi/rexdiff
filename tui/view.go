@@ -20,7 +20,6 @@ import (
 
 // The colours are ANSI palette indexes, so they follow the terminal theme.
 var (
-	// dimColor is the colour of dim text and borders.
 	dimColor     = lipgloss.Color("8")
 	dimStyle     = lipgloss.NewStyle().Foreground(dimColor)
 	boldStyle    = lipgloss.NewStyle().Bold(true)
@@ -30,21 +29,15 @@ var (
 	noteStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	headerStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("4"))
 	findStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	titleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5")) // the file path above the diff
+	titleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 )
 
-// truncate cuts s to at most w columns, ending with an ellipsis if it
-// was cut.
 func truncate(s string, w int) string { return ansi.Truncate(s, max(w, 0), "…") }
 
-// dark reports whether the terminal background is dark. An unknown
-// background counts as dark.
 func (m *model) dark() bool {
 	return m.bg == nil || tea.BackgroundColorMsg{Color: m.bg}.IsDark()
 }
 
-// highlightStyle returns the style for a highlighted row: a tint of the
-// terminal background, or reverse video if the background is unknown.
 func (m *model) highlightStyle() lipgloss.Style {
 	if m.bg == nil {
 		return lipgloss.NewStyle().Reverse(true)
@@ -56,7 +49,6 @@ func (m *model) highlightStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Bold(true).Background(tint)
 }
 
-// headerAction is the action that clicking part of the header performs.
 type headerAction int
 
 const (
@@ -70,21 +62,17 @@ const (
 	headerAgent   = headerBase + 2
 )
 
-// headerSpan is a clickable part of the header.
 type headerSpan struct {
 	x0, x1 int
 	action headerAction
 }
 
-// headerLine builds the top line and records its clickable parts.
 type headerLine struct {
 	b     strings.Builder
 	spans []headerSpan
-	x     int // the width so far, in columns
+	x     int // columns
 }
 
-// add appends s to the line. Clicking s performs action, unless action is
-// headerNone.
 func (l *headerLine) add(s string, action headerAction) {
 	w := lipgloss.Width(s)
 	if action != headerNone {
@@ -94,12 +82,9 @@ func (l *headerLine) add(s string, action headerAction) {
 	l.x += w
 }
 
-// header renders the top line and returns its clickable parts.
 func (m *model) header() (string, []headerSpan) {
 	var l headerLine
 	for i, t := range []string{"Changes", "Files", "PR"} {
-		// The key is bold and its label plain, as in the footer. The
-		// labels of the other tabs are dim.
 		name := dimStyle.Render(t)
 		if tab(i) == m.tab {
 			name = t
@@ -117,7 +102,6 @@ func (m *model) header() (string, []headerSpan) {
 			l.add(dimStyle.Render(string(pr.Forge)+" "), headerNone)
 		}
 	}
-	// The right end shows where a review would be sent.
 	if right := m.agentLabel(); right != "" {
 		if pad := m.w - l.x - lipgloss.Width(right) - 1; pad > 0 {
 			l.add(strings.Repeat(" ", pad), headerNone)
@@ -127,8 +111,6 @@ func (m *model) header() (string, []headerSpan) {
 	return truncate(l.b.String(), m.w), l.spans
 }
 
-// headerScopes adds the scopes to the header, followed by what the current
-// scope compares against.
 func (m *model) headerScopes(l *headerLine) {
 	for i, s := range scopes {
 		style := dimStyle
@@ -150,8 +132,6 @@ func (m *model) headerScopes(l *headerLine) {
 	}
 }
 
-// commitsLabel returns the header text naming the commits chosen for the
-// commits scope.
 func (m *model) commitsLabel() string {
 	if m.newest == "" {
 		return "pick ▾"
@@ -163,12 +143,10 @@ func (m *model) commitsLabel() string {
 	return label + dimStyle.Render(" ▾")
 }
 
-// shortSHA returns the first 7 characters of a commit hash.
 func shortSHA(s string) string { return s[:min(len(s), 7)] }
 
-// turnLabel returns the header text about the last turn. It returns ""
-// for a turn saved by an earlier run, and when there is no turn, because
-// the Changes tab then explains why.
+// turnLabel returns "" for a turn saved by an earlier run. The Changes tab
+// explains it.
 func (m *model) turnLabel() string {
 	if m.turn == nil || m.turn.at.IsZero() {
 		return ""
@@ -181,8 +159,6 @@ func (m *model) turnLabel() string {
 	return app + dimStyle.Render(" · "+ago.String()+" ago")
 }
 
-// agentLabel returns the header text saying how many agents the next
-// review could be sent to.
 func (m *model) agentLabel() string {
 	if m.rex == nil {
 		return dimStyle.Render("not in Rex")
@@ -199,8 +175,6 @@ func (m *model) agentLabel() string {
 	return dimStyle.Render("send → ") + plural(n, "agent")
 }
 
-// statusMark returns the status letter shown for a changed file in the
-// file list.
 func statusMark(s vcs.FileStatus) string {
 	switch s {
 	case vcs.StatusAdded:
@@ -215,8 +189,6 @@ func statusMark(s vcs.FileStatus) string {
 	return " "
 }
 
-// navigatorLines renders h lines of the file list: a title followed by the
-// rows of the tree.
 func (m *model) navigatorLines(h int) []string {
 	t := m.curNavigator()
 	if t == nil {
@@ -230,7 +202,6 @@ func (m *model) navigatorLines(h int) []string {
 			title += fmt.Sprintf(" … %d more files not listed", n)
 		}
 	}
-	// The title lines up with the status letters of the rows.
 	out := []string{truncate(" "+headerStyle.Render(title), w)}
 	for i := m.navigatorStart(h); i < len(t.rows) && len(out) < h; i++ {
 		// A long name or count must not wrap the row onto the next line.
@@ -243,7 +214,6 @@ func (m *model) navigatorLines(h int) []string {
 	return out
 }
 
-// navigatorRow renders row r of the file list, w columns wide.
 func (m *model) navigatorRow(r tree.Row, w int) string {
 	indent := strings.Repeat("  ", r.Depth)
 	switch {
@@ -255,8 +225,6 @@ func (m *model) navigatorRow(r tree.Row, w int) string {
 	return m.allFilesRow(m.allFiles.entries[r.File], indent, r.Name, w)
 }
 
-// dirRow renders directory row r of the file list, w columns wide. In the
-// Files tab, a collapsed directory that contains changes gets a dot.
 func (m *model) dirRow(r tree.Row, indent string, w int) string {
 	arrow, mark := "▸", ""
 	if r.Expanded {
@@ -274,8 +242,6 @@ func (m *model) dirRow(r tree.Row, indent string, w int) string {
 	return " " + indent + dimStyle.Render(arrow) + " " + name + " " + mark
 }
 
-// changesRow renders changed file f in the file list, w columns wide. The
-// row shows name, its name in the tree, after indent.
 func (m *model) changesRow(f changedFile, indent, name string, w int) string {
 	stat := f.stat()
 	if c := m.comments.Count(m.anchorOf(tabChanges), f.Path); c > 0 {
@@ -287,8 +253,6 @@ func (m *model) changesRow(f changedFile, indent, name string, w int) string {
 	return navigatorRowText(indent, statusMark(f.Status), name, stat, w)
 }
 
-// allFilesRow renders entry e in the Files tab's file list, w columns
-// wide. The row shows name, its name in the tree, after indent.
 func (m *model) allFilesRow(e vcs.Entry, indent, name string, w int) string {
 	if e.Ignored {
 		return dimStyle.Render(navigatorRowText(indent, " ", name, "", w))
@@ -300,8 +264,6 @@ func (m *model) allFilesRow(e vcs.Entry, indent, name string, w int) string {
 	return navigatorRowText(indent, " ", name, stat, w)
 }
 
-// highlightRow highlights r, the row of the current file, w columns wide.
-// When the file list has focus, a bar replaces the first space.
 func (m *model) highlightRow(r string, w int) string {
 	style := m.highlightStyle().Width(w)
 	if !m.navigatorFocused {
@@ -310,8 +272,6 @@ func (m *model) highlightRow(r string, w int) string {
 	return style.Render(accentStyle.Render("▎") + ansi.TruncateLeft(r, 1, ""))
 }
 
-// navigatorStart returns the first row that the file list shows in h
-// lines, the first of which is the title.
 func (m *model) navigatorStart(h int) int {
 	if t := m.curNavigator(); t != nil {
 		return t.start(h - 1)
@@ -319,15 +279,11 @@ func (m *model) navigatorStart(h int) int {
 	return 0
 }
 
-// navigatorRowText returns a file list row such as
-// " M name/of/file.go  +3 -1", with indent before the status letter.
 func navigatorRowText(indent, mark, p, stat string, w int) string {
 	room := w - ansi.StringWidth(indent) - lipgloss.Width(stat) - 4
 	return " " + indent + mark + " " + fitName(p, room) + " " + stat
 }
 
-// fitName fits p into room columns, padding it with spaces. If p is too
-// long, it drops the directory first, and then cuts the start of the name.
 func fitName(p string, room int) string {
 	if q := termtext.Quote(p); ansi.StringWidth(q) <= room {
 		p = q
@@ -341,9 +297,8 @@ func fitName(p string, room int) string {
 	return p + strings.Repeat(" ", max(room-ansi.StringWidth(p), 0))
 }
 
-// lastColumns returns the end of s that fits in n columns. It drops a
-// wide character that does not fit whole, so the result can be a column
-// short of n.
+// lastColumns drops a wide character that does not fit whole. So the
+// result can be a column short of n.
 func lastColumns(s string, n int) string {
 	n = max(n, 0)
 	w := ansi.StringWidth(s)
@@ -357,9 +312,7 @@ func lastColumns(s string, n int) string {
 	return end
 }
 
-// mainLines renders the visible part of the main pane. rowAt[y] is the row
-// shown on screen line y, or -1 for a note, a comment or the comment box.
-// hits are the find matches to mark. The marks do not affect rowAt.
+// mainLines sets rowAt[y] to -1 for a note, a comment or the comment box.
 func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int) {
 	p := m.curPane()
 	if note := m.emptyNote(); note != "" {
@@ -369,8 +322,6 @@ func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int) {
 	add := func(l string, row int) {
 		lines, rowAt = append(lines, l), append(rowAt, row)
 	}
-	// addBelow adds lines that show no source line, as long as there is
-	// room.
 	addBelow := func(ls []string) {
 		for _, l := range ls {
 			if len(lines) >= h {
@@ -386,8 +337,6 @@ func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int) {
 		}
 	}
 	for i := p.top; i < p.count() && len(lines) < h; i++ {
-		// A wrapped line shows its markers on its first row and its
-		// comments below its last row.
 		target := m.targetAt(i, diff.SideNew)
 		add(m.rowMark(i, target, lo, hi, marked[i])+p.line(i), i)
 		if target != nil && p.lineEnd(i) == i {
@@ -400,10 +349,6 @@ func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int) {
 	return lines, rowAt
 }
 
-// noteLines renders note, the text of an empty pane, for a pane h lines
-// high. The note is indented and wrapped, with the indent on every line.
-// A blank line comes first if the pane, and the screen below the header,
-// have room for it.
 func (m *model) noteLines(note string, h int) (lines []string, rowAt []int) {
 	wrapped := strings.Split(wrapWords(note, m.mainWidth()-2), "\n")
 	if min(h, m.h-1-m.footerHeight()) > len(wrapped) {
@@ -419,8 +364,6 @@ func (m *model) noteLines(note string, h int) (lines []string, rowAt []int) {
 	return lines, rowAt
 }
 
-// emptyNote returns the text to show instead of an empty pane, or "" if
-// the pane is not empty.
 func (m *model) emptyNote() string {
 	p := m.curPane()
 	switch {
@@ -440,8 +383,6 @@ func (m *model) emptyNote() string {
 	return ""
 }
 
-// highlightRange returns the first and last rows of the drag or the
-// selection. With neither, it returns -1, -1.
 func (m *model) highlightRange() (lo, hi int) {
 	p := m.curPane()
 	switch {
@@ -453,14 +394,10 @@ func (m *model) highlightRange() (lo, hi int) {
 	return -1, -1
 }
 
-// rowMark returns the gutter marker for row i. target is the line that
-// row i shows, or nil, and hit reports whether the row is a find match.
-// The marker shows, in order of priority, the cursor, the highlighted
-// rows lo to hi, a find match, or a comment.
 func (m *model) rowMark(i int, target *targetLine, lo, hi int, hit bool) string {
 	p := m.curPane()
-	// The first row of a line taller than the pane can scroll above the
-	// top, so the top row then shows the cursor while the line is in view.
+	// A line taller than the pane can start above the top. Then the top
+	// row shows the cursor while the line is in view.
 	cur := i == p.cur || i == p.top && p.cur < p.top && p.lineEnd(p.cur) >= p.top
 	switch {
 	case cur && m.tab != tabPR:
@@ -475,9 +412,7 @@ func (m *model) rowMark(i int, target *targetLine, lo, hi int, hit bool) string 
 	return commentMark(m.commentOn(i, target))
 }
 
-// commentOn returns a comment on row i, which shows target, or nil. In
-// rendered Markdown, it returns a comment on any line of the block that
-// contains row i.
+// commentOn checks every line of the rendered Markdown block of row i.
 func (m *model) commentOn(i int, target *targetLine) *diff.Comment {
 	p := m.curPane()
 	if p.removedMarker(i) {
@@ -495,10 +430,6 @@ func (m *model) commentOn(i int, target *targetLine) *diff.Comment {
 	return nil
 }
 
-// commentsBelow returns the rendered lines of the comments whose range
-// ends on row i, which shows target. In rendered Markdown, these are the
-// comments that end anywhere in the block of row i. The comment being
-// edited in the comment box is left out.
 func (m *model) commentsBelow(i int, target *targetLine) []string {
 	p := m.curPane()
 	if p.removedMarker(i) {
@@ -520,8 +451,6 @@ func (m *model) commentsBelow(i int, target *targetLine) []string {
 	return out
 }
 
-// commentMark returns the gutter marker for a line with comment c, or a
-// space if c is nil.
 func commentMark(c *diff.Comment) string {
 	if c == nil {
 		return " "
@@ -529,8 +458,6 @@ func commentMark(c *diff.Comment) string {
 	return accentStyle.Render("●")
 }
 
-// commentBox returns the lines of the comment box, indented to sit below
-// the code.
 func (m *model) commentBox() []string {
 	var box []string
 	for l := range strings.SplitSeq(m.commentInput.View(), "\n") {
@@ -539,8 +466,6 @@ func (m *model) commentBox() []string {
 	return box
 }
 
-// commentLines returns the lines that display comment c below the lines
-// it refers to. A stale comment starts with "stale".
 func (m *model) commentLines(c *diff.Comment) []string {
 	var out []string
 	stale := m.commentStale(c)
@@ -557,16 +482,12 @@ func (m *model) commentLines(c *diff.Comment) []string {
 	return out
 }
 
-// scrollToCursor scrolls the main pane so that the cursor, and the comment
-// box below it, are visible. The box appears below the last row of the
-// cursor line. If a line is taller than the screen, only its end is shown
-// while the box is open, and only its first rows while the box is closed.
-// It also scrolls the file list so that its cursor is visible. Each view
-// moves as little as possible.
+// scrollToCursor shows the end of a tall cursor line while the comment box
+// is open, and its start when the box is closed.
 func (m *model) scrollToCursor() {
 	// A hidden file list keeps its top row for when it is shown again.
 	if t, h := m.curNavigator(), m.navigatorRows()-1; t != nil && m.navigatorWidth() > 0 && h > 0 {
-		t.scrollToCursor(h) // h excludes the title line
+		t.scrollToCursor(h)
 	}
 	p := m.curPane()
 	h := m.shownMainHeight()
@@ -574,28 +495,24 @@ func (m *model) scrollToCursor() {
 		p.top = min(p.top, max(p.count()-h, 0))
 		return
 	}
-	p.cur = p.lineStart(p.cur) // keep the cursor on the first row of a wrapped line
+	p.cur = p.lineStart(p.cur)
 	last, box := p.cur, 0
 	if m.mode == modeComment {
-		// The line's comments appear between the line and the box.
 		last = p.lineEnd(p.cur)
 		box = lipgloss.Height(m.commentInput.View()) + m.linesBelow(last)
 	}
-	// Each row takes at least one line, so row last cannot be visible if
-	// it is h or more rows below the top.
+	// Each row takes at least one line. So row last is not visible if it
+	// is h or more rows below the top.
 	p.top = min(keepInView(p.top, last, h), p.last())
 	if p.top >= last {
 		return
 	}
-	if m.emptyNote() != "" { // the note replaces all rows
+	if m.emptyNote() != "" {
 		p.top = last
 		return
 	}
-	// The end of the cursor line is visible if it lands on screen line 0
-	// to h-1-box. Starting from that line, move the top up one row at a
-	// time for as long as the end stays in that range. Each row takes its
-	// own line plus the lines of the comments below it. The top never
-	// moves above its current value.
+	// The end of the cursor line must land on screen line 0 to h-1-box.
+	// The top never moves above its current value.
 	end := p.lineEnd(p.cur)
 	top, used := end, 0
 	for top > p.top {
@@ -609,8 +526,7 @@ func (m *model) scrollToCursor() {
 	p.top = min(top, last)
 }
 
-// linesBelow returns the number of comment lines shown below row i of the
-// main pane, as mainLines adds them.
+// linesBelow must match how mainLines adds comment lines.
 func (m *model) linesBelow(i int) int {
 	p := m.curPane()
 	target := m.targetAt(i, diff.SideNew)
@@ -620,9 +536,6 @@ func (m *model) linesBelow(i int) int {
 	return len(m.commentsBelow(i, target))
 }
 
-// footer renders the notice, the status and the key help. The notice is
-// wrapped so that the user can read all of it. hits are the matches shown
-// in the find bar.
 func (m *model) footer(hits []findHit) string {
 	line := m.footerLine(hits)
 	if m.notice != "" {
@@ -632,17 +545,12 @@ func (m *model) footer(hits []findHit) string {
 	return inset(line)
 }
 
-// footerWidth returns the width of the footer, not counting the blank
-// column at its left. The header has the same blank column.
 func (m *model) footerWidth() int { return max(m.w-1, 1) }
 
-// inset adds a space at the start of each line of s.
 func inset(s string) string { return " " + strings.ReplaceAll(s, "\n", "\n ") }
 
-// wrapWords breaks s into lines at most w columns wide, breaking only at
-// spaces. A word wider than w is cut, and a character wider than w gets a
-// line of its own. It does not use [ansi.Wrap], because that can let a
-// line run past w at a hyphen.
+// wrapWords does not use [ansi.Wrap], because that can let a line run
+// past w at a hyphen.
 func wrapWords(s string, w int) string {
 	w = max(w, 1)
 	var lines []string
@@ -670,8 +578,6 @@ func wrapWords(s string, w int) string {
 	return strings.Join(append(lines, line), "\n")
 }
 
-// footerLine renders the status and the key help, or the find bar when it
-// is open.
 func (m *model) footerLine(hits []findHit) string {
 	if m.mode == modeFind {
 		return m.findBand(hits)
@@ -713,20 +619,14 @@ func (m *model) footerLine(hits []findHit) string {
 	return m.help.View(hk)
 }
 
-// bodyHeight returns the number of lines between the header and the
-// footer, and at least 3.
 func (m *model) bodyHeight() int { return max(m.h-m.footerHeight()-1, 3) }
 
-// shownBodyHeight returns the number of body lines on screen. On a short
-// terminal, View cuts the body to make room for the footer, so this can
-// be less than bodyHeight.
+// shownBodyHeight is less than bodyHeight when View cuts the body on a
+// short terminal.
 func (m *model) shownBodyHeight() int {
 	return min(m.bodyHeight(), max(m.h-1-m.footerHeight(), 0))
 }
 
-// shownMainHeight returns the number of rows of the main pane on screen,
-// and at least 1. On a short terminal, View cuts the body, so this can be
-// less than mainHeight.
 func (m *model) shownMainHeight() int {
 	room := m.shownBodyHeight() - m.titleHeight()
 	if m.navigatorPosition == positionTop {
@@ -735,9 +635,8 @@ func (m *model) shownMainHeight() int {
 	return max(min(m.mainHeight(), room), 1)
 }
 
-// footerHeight returns the height of the footer, as heightAbove measures
-// it, without rendering the footer. Only the full key list can take more
-// than one line, so it is the only part rendered.
+// footerHeight renders only the full key list, because only it can take
+// more than one line.
 func (m *model) footerHeight() int {
 	n := 1
 	if m.mode != modeFind && m.help.ShowAll {
@@ -749,8 +648,6 @@ func (m *model) footerHeight() int {
 	return n
 }
 
-// heightAbove returns the height of the body above the rendered footer,
-// and at least 3.
 func (m *model) heightAbove(footer string) int {
 	return max(m.h-lipgloss.Height(footer)-1, 3)
 }
@@ -783,7 +680,6 @@ func (m *model) View() tea.View {
 	ml, _ := m.mainLines(mh, hits)
 	main, mainExact := box(ml, mw, mh)
 	if m.titleHeight() > 0 && !noteOnTitle {
-		// Pad a title that fits to the full width of the pane.
 		if tw := ansi.StringWidth(title); tw <= mw {
 			title += strings.Repeat(" ", mw-tw)
 		} else {
@@ -801,7 +697,7 @@ func (m *model) View() tea.View {
 		} else {
 			body = lipgloss.JoinVertical(lipgloss.Left, main, rule, navigator)
 		}
-	case lw > 0 && !m.navigatorPosition.stacked(): // a file list above or below with no rows is not shown
+	case lw > 0 && !m.navigatorPosition.stacked():
 		navigator, navigatorExact := box(m.navigatorLines(h), lw, h)
 		sep := dimStyle.Render(strings.TrimSuffix(strings.Repeat(" │\n", h), "\n"))
 		parts := []string{main, sep, navigator}
@@ -809,8 +705,6 @@ func (m *model) View() tea.View {
 			parts = []string{navigator, sep, main}
 		}
 		if mainExact && navigatorExact {
-			// Every line of each part is exactly as wide as the part, so
-			// the lines can be joined without measuring.
 			body = joinColumns(parts...)
 		} else {
 			body = lipgloss.JoinHorizontal(lipgloss.Top, parts...)
@@ -835,8 +729,7 @@ func (m *model) View() tea.View {
 		screen = c.Render()
 	}
 
-	// On a small terminal, the parts keep their minimum sizes and can
-	// overflow, so cut the screen to the terminal size.
+	// On a small terminal, the parts keep their minimum sizes and overflow.
 	screen = fitScreen(screen, max(m.w, 1), max(m.h, 1))
 	v := tea.NewView(screen)
 	v.AltScreen = true
@@ -846,9 +739,8 @@ func (m *model) View() tea.View {
 	return v
 }
 
-// box joins lines into a block of w columns and h lines. exact reports
-// whether every line is exactly w columns wide; if not, a line with a wide
-// character at the edge may be one column short.
+// box joins lines into a block of w columns and h lines. If exact is false,
+// a line with a wide character at the edge can be one column short.
 func box(lines []string, w, h int) (block string, exact bool) {
 	if out, ok := paddedBox(lines, w, h); ok {
 		return out, true
@@ -856,9 +748,8 @@ func box(lines []string, w, h int) (block string, exact bool) {
 	return styledBox(lines, w, h), false
 }
 
-// joinColumns joins the blocks side by side, like
-// [lipgloss.JoinHorizontal] but without measuring widths. Each block must
-// have the same number of lines, all as wide as the block.
+// joinColumns is [lipgloss.JoinHorizontal] without width measurement. Each
+// block must have the same number of lines, all as wide as the block.
 func joinColumns(blocks ...string) string {
 	split := make([][]string, len(blocks))
 	for i, b := range blocks {
@@ -878,16 +769,13 @@ func joinColumns(blocks ...string) string {
 	return b.String()
 }
 
-// styledBox implements box with a lipgloss style. It handles any input.
 func styledBox(lines []string, w, h int) string {
 	st := lipgloss.NewStyle().Width(w).MaxWidth(w).Height(h).MaxHeight(h)
 	return st.Render(strings.Join(lines, "\n"))
 }
 
-// paddedBox implements box for lines that already fit, by padding them as
-// the style in styledBox would. It measures each line only once. ok is
-// false if a line is too wide or contains a tab or carriage return, which
-// the style would change.
+// paddedBox is a fast styledBox. It fails on lines that the style would
+// change: too wide, or with a tab or carriage return.
 func paddedBox(lines []string, w, h int) (string, bool) {
 	if w <= 0 || h <= 0 {
 		return "", false
@@ -919,9 +807,8 @@ func paddedBox(lines []string, w, h int) (string, bool) {
 	return b.String(), true
 }
 
-// fitScreen cuts the screen to w columns and h lines, as a style with
-// MaxWidth and MaxHeight would. Like that style, it pads each line to the
-// width of the widest line.
+// fitScreen acts as a style with MaxWidth and MaxHeight. Like that style,
+// it pads each line to the width of the widest line.
 func fitScreen(screen string, w, h int) string {
 	slow := func() string { return lipgloss.NewStyle().MaxWidth(w).MaxHeight(h).Render(screen) }
 	if strings.ContainsAny(screen, "\t\r") {
@@ -944,8 +831,8 @@ func fitScreen(screen string, w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-// programStatus returns the status that rexdiff reports to Rex with OSC
-// 7501. Rex shows it in its tabs and sidebar.
+// programStatus goes to Rex with OSC 7501. Rex shows it in its tabs and
+// sidebar.
 func (m *model) programStatus() *tea.ProgramStatus {
 	msg := "reviewing " + plural(max(len(m.changes.files), m.changes.tooMany), "file")
 	if n := m.comments.Len(); n > 0 {
@@ -959,7 +846,6 @@ func (m *model) programStatus() *tea.ProgramStatus {
 	}
 }
 
-// mainX returns the screen column where the main pane starts.
 func (m *model) mainX() int {
 	if m.navigatorPosition == positionLeft && m.navigatorWidth() > 0 {
 		return m.navigatorWidth() + sepWidth
@@ -967,7 +853,6 @@ func (m *model) mainX() int {
 	return 0
 }
 
-// mainY returns the screen line where the main pane starts.
 func (m *model) mainY() int {
 	if m.navigatorPosition == positionTop {
 		return bodyY + m.navigatorHeight(m.bodyHeight()) + m.titleHeight()
@@ -975,7 +860,6 @@ func (m *model) mainY() int {
 	return bodyY + m.titleHeight()
 }
 
-// navigatorX returns the screen column where the file list starts.
 func (m *model) navigatorX() int {
 	if m.navigatorPosition == positionRight {
 		return m.mainWidth() + sepWidth
@@ -983,8 +867,6 @@ func (m *model) navigatorX() int {
 	return 0
 }
 
-// navigatorY returns the screen line where the file list starts. Below
-// the main pane, it starts under the rule.
 func (m *model) navigatorY() int {
 	if m.navigatorPosition == positionBottom {
 		return bodyY + m.titleHeight() + m.mainHeight() + 1
@@ -992,8 +874,7 @@ func (m *model) navigatorY() int {
 	return bodyY
 }
 
-// navigatorRows returns the number of lines in the file list, including
-// its title.
+// navigatorRows includes the title.
 func (m *model) navigatorRows() int {
 	h := m.bodyHeight()
 	if m.navigatorPosition.stacked() {
@@ -1002,9 +883,6 @@ func (m *model) navigatorRows() int {
 	return h
 }
 
-// sepWidth is the width of the line " │" between the panes. The file
-// list has its own blank column at its left.
-const sepWidth = 2
+const sepWidth = 2 // " │" between the panes
 
-// bodyY is the screen line where the body starts, just below the header.
 const bodyY = 1

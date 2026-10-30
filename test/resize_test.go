@@ -8,10 +8,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// drawn reports whether s is a whole frame of a w by h terminal: it is
-// not blank, it has at most h lines and none wider than w, and on a
-// terminal big enough for them it has the tab bar on the first line and
-// the key hints on the last, or a whole box that covers the screen.
 func drawn(s string, w, h int) bool {
 	lines := strings.Split(s, "\n")
 	if strings.TrimSpace(s) == "" || len(lines) > h {
@@ -31,9 +27,6 @@ func drawn(s string, w, h int) bool {
 	return len(lines) == h && strings.Contains(lines[0], "1 Changes") && strings.TrimSpace(lines[h-1]) != ""
 }
 
-// TestResize checks that rexdiff draws a whole frame at each size while a
-// box or bar is open, from 1 by 1 up to 300 by 80, and that the box is
-// still open and closes at the end.
 func TestResize(t *testing.T) {
 	sizes := [][2]int{{1, 1}, {10, 3}, {300, 80}, {40, 10}, {160, 40}}
 	tests := []struct {

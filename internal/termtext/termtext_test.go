@@ -6,9 +6,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
-// TestQuote checks that Quote quotes only unsafe paths, and that it shows
-// invisible characters as escapes: format characters, line and
-// paragraph separators and fillers such as U+3164 (Hangul filler).
 func TestQuote(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ in, want string }{
@@ -37,8 +34,6 @@ func TestQuote(t *testing.T) {
 	}
 }
 
-// TestPlain checks that Plain removes control characters and bidi
-// controls, but keeps tabs, newlines and the joiners of emoji sequences.
 func TestPlain(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ in, want string }{

@@ -16,20 +16,12 @@ import (
 )
 
 var (
-	// root is the temporary directory for fixtures. It is "" until Main
-	// runs.
-	root string
-	// gitPath is the path of git, found in the process's PATH. It is ""
-	// until Main runs, or if git is not on PATH.
-	gitPath string
+	root    string // "" until Main runs
+	gitPath string // "" until Main runs, or if git is not on PATH
 )
 
-// Main runs the tests in m. Every package whose tests run git calls it
-// from TestMain. Main does not change the process's environment.
-//
-// Main looks for git in the process's PATH before the tests run. If git is
-// not found, every test that uses a helper from this package is skipped.
-// The tests also need /bin/sh and the tools in /usr/bin and /bin.
+// Main runs the tests in m. Call it from TestMain in every package whose
+// tests run git.
 func Main(m *testing.M) {
 	dir, err := os.MkdirTemp("", "testgit")
 	if err != nil {
@@ -49,10 +41,7 @@ func Main(m *testing.M) {
 	m.Run()
 }
 
-// Env returns the git environment variables for a test, as "key=value"
-// pairs. With them, git reads no global or system config, no system
-// attributes file and no templates. Git runs no background maintenance,
-// and commits have a fixed author.
+// Env returns a git environment that ignores the user's config.
 func Env() []string {
 	return []string{
 		"GIT_CONFIG_GLOBAL=" + os.DevNull,
@@ -71,9 +60,7 @@ func Env() []string {
 	}
 }
 
-// ToolEnv returns the variables of [Env] plus a PATH made of dirs, a
-// directory that holds only git, /usr/bin and /bin. A test puts its fake
-// tools in dirs. ToolEnv sets no HOME, so none of the user's files apply.
+// ToolEnv returns [Env] plus a PATH that starts with dirs.
 func ToolEnv(tb testing.TB, dirs ...string) []string {
 	tb.Helper()
 	ready(tb)
@@ -90,7 +77,6 @@ func LinkGit(tb testing.TB, dir string) {
 	}
 }
 
-// ready fails tb if Main has not run, and skips tb if git is not on PATH.
 func ready(tb testing.TB) {
 	tb.Helper()
 	if root == "" {
@@ -101,8 +87,7 @@ func ready(tb testing.TB) {
 	}
 }
 
-// Git runs git in dir with [ToolEnv] and returns its standard output. It
-// fails tb if git fails.
+// Git runs git in dir with [ToolEnv] and returns its stdout.
 func Git(tb testing.TB, dir string, args ...string) string {
 	tb.Helper()
 	cmd := proc.Command(tb.Context(), ToolEnv(tb), "git", args...)
@@ -118,8 +103,7 @@ func Git(tb testing.TB, dir string, args ...string) string {
 	return string(out)
 }
 
-// InitRepo creates a repository in dir with the branch main. It creates
-// dir if it does not exist.
+// InitRepo creates a repository in dir with the branch main.
 func InitRepo(tb testing.TB, dir string) {
 	tb.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -128,8 +112,7 @@ func InitRepo(tb testing.TB, dir string) {
 	Git(tb, dir, "init", "-q", "-b", "main")
 }
 
-// WriteFile writes content to the file name in dir, creating parent
-// directories as needed.
+// WriteFile writes content to the file name in dir.
 func WriteFile(tb testing.TB, dir, name, content string) {
 	tb.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(name))
@@ -141,9 +124,7 @@ func WriteFile(tb testing.TB, dir, name, content string) {
 	}
 }
 
-// Script writes an executable sh script with the given body to the file
-// name in dir, and returns its path. A test puts dir on PATH to fake a
-// tool.
+// Script writes an executable sh script to the file name in dir.
 func Script(tb testing.TB, dir, name, body string) string {
 	tb.Helper()
 	p := filepath.Join(dir, name)
@@ -158,7 +139,7 @@ func Script(tb testing.TB, dir, name, body string) string {
 type Fixture struct {
 	build func(tb testing.TB, dir string)
 	once  sync.Once
-	dir   string // the built repository, or "" if the build failed
+	dir   string // "" if the build failed
 }
 
 // NewFixture returns a Fixture that build creates in an empty directory.
@@ -166,9 +147,7 @@ func NewFixture(build func(tb testing.TB, dir string)) *Fixture {
 	return &Fixture{build: build}
 }
 
-// Copy copies the repository of f to dir, building it on the first call.
-// If the build fails, the first call reports that failure, and every later
-// call fails too.
+// Copy copies the repository of f to dir. It builds it on the first call.
 func (f *Fixture) Copy(tb testing.TB, dir string) {
 	tb.Helper()
 	ready(tb)

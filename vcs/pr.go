@@ -19,15 +19,12 @@ var (
 	errUnsupported = errors.New("the remote is not on GitHub, GitLab, or Azure DevOps")
 )
 
-// Limits for [Repo.PR]: it keeps at most maxComments of the most recent
-// comments and at most maxChecks checks, though it counts every check.
 const (
 	maxComments = 100
 	maxChecks   = 100
 )
 
-// Hosts holds the host names of self-hosted forges. An empty field means
-// that only the public host of that forge is recognised.
+// Hosts names self-hosted forges. An empty field means the public host.
 type Hosts struct {
 	GitHub, GitLab, Azure string
 }
@@ -43,14 +40,10 @@ type PR struct {
 	Head   string // the source branch
 	Base   string // the target branch
 	Body   string // Markdown
-	// Checks holds at most 100 of the CI checks, in the forge's order. If
-	// there are more, it keeps the failed checks before the others, so
-	// that every failure it can hold is named. Tally counts all of them.
-	Checks []Check
-	Tally  Tally
-	// Comments holds at most 100 of the most recent comments, oldest
-	// first.
-	Comments []PRComment
+	// Checks holds at most 100 checks, failed ones first. Tally counts all.
+	Checks   []Check
+	Tally    Tally
+	Comments []PRComment // the newest 100, oldest first
 }
 
 // Check is a CI check.
@@ -59,7 +52,7 @@ type Check struct {
 	Result Result
 }
 
-// Tally counts the CI checks of a pull request by result.
+// Tally counts the CI checks by result.
 type Tally struct {
 	Pass, Fail, Pending, Skip int
 }
@@ -69,7 +62,6 @@ func (t *Tally) Total() int {
 	return t.Pass + t.Fail + t.Pending + t.Skip
 }
 
-// add counts a check with the result res.
 func (t *Tally) add(res Result) {
 	switch res {
 	case ResultPass:
@@ -83,8 +75,7 @@ func (t *Tally) add(res Result) {
 	}
 }
 
-// Forge is the service that hosts a pull request. Its value is the
-// service's display name.
+// Forge is the display name of the service that hosts a pull request.
 type Forge string
 
 // The forges that [Repo.PR] supports.
@@ -94,8 +85,7 @@ const (
 	ForgeAzure  Forge = "Azure DevOps"
 )
 
-// PRState is the state of a pull request, using the same values for every
-// forge.
+// PRState is the state of a pull request.
 type PRState string
 
 // The values of PRState.
@@ -106,8 +96,7 @@ const (
 	PRClosed PRState = "closed" // closed without being merged
 )
 
-// Result is the result of a CI check, using the same values for every
-// forge.
+// Result is the result of a CI check.
 type Result string
 
 // The values of Result.
@@ -121,16 +110,11 @@ const (
 // PRComment is a comment on a pull request.
 type PRComment struct {
 	Author string
-	When   string // the creation time, as the forge formats it
+	When   string // creation time, as the forge formats it
 	Body   string // Markdown
 }
 
-// PR returns the pull request for the current branch. It chooses the forge
-// from the host of the remote "upstream", or of "origin" if there is no
-// upstream, and runs that forge's command-line tool: gh, glab or az. The
-// tool must be installed and signed in. PR removes control characters
-// from all text fields. If the branch has no pull request, PR returns
-// [ErrNoPR].
+// PR returns the pull request for the current branch with gh, glab or az.
 func (r *Repo) PR(ctx context.Context, h Hosts) (*PR, error) {
 	remote := r.remoteURL(ctx)
 	if remote == "" {
@@ -161,9 +145,7 @@ func (r *Repo) PR(ctx context.Context, h Hosts) (*PR, error) {
 	return pr, nil
 }
 
-// remoteHost returns the host name in the remote URL u, in lower case. u
-// is either a URL such as "ssh://git@host:22/path" or in the scp-like form
-// "git@host:path". For a local path, it returns "".
+// remoteHost also accepts the scp-like form "git@host:path".
 func remoteHost(u string) string {
 	var auth string // [user@]host[:port]
 	if _, rest, ok := strings.Cut(u, "://"); ok {
@@ -178,8 +160,7 @@ func remoteHost(u string) string {
 	return strings.ToLower(host)
 }
 
-// sanitizePR removes control characters from the text fields of pr,
-// because other users write that text.
+// sanitizePR removes control characters, because others write the text.
 func sanitizePR(pr *PR) {
 	texts := []*string{&pr.Title, &pr.URL, &pr.Author, &pr.Head, &pr.Base, &pr.Body}
 	for i := range pr.Checks {
@@ -194,9 +175,6 @@ func sanitizePR(pr *PR) {
 	}
 }
 
-// runJSON runs a forge tool in the root directory and decodes its JSON
-// output into v. env holds extra environment variables. The error names
-// the tool and its subcommand, for example "gh pr".
 func (r *Repo) runJSON(ctx context.Context, env []string, v any, name string, args ...string) error {
 	cmd, stderr := r.command(ctx, env, name, args...)
 	out, err := output(ctx, cmd, stderr)
@@ -209,26 +187,19 @@ func (r *Repo) runJSON(ctx context.Context, env []string, v any, name string, ar
 	return nil
 }
 
-// isNoPR reports whether err means that the forge tool found no pull
-// request: the tool exited with status 1 and its message contains msg.
 func isNoPR(err error, msg string) bool {
-	// gh and glab exit with status 1 for every kind of failure and have no
-	// error code for "no pull request", so the message text is the only sign.
+	// gh and glab exit 1 for every failure, so check the message.
 	return isExitOne(err) && strings.Contains(strings.ToLower(err.Error()), msg)
 }
 
-// lastN returns the last n elements of xs, or all of them if there are
-// fewer.
 func lastN[T any](xs []T, n int) []T {
 	return xs[max(len(xs)-n, 0):]
 }
 
-// gitHubUser is a user in the JSON output of gh.
 type gitHubUser struct {
 	Login string `json:"login"`
 }
 
-// gitHubPR is the JSON output of "gh pr view".
 type gitHubPR struct {
 	Number      int        `json:"number"`
 	Title       string     `json:"title"`
@@ -252,8 +223,6 @@ type gitHubPR struct {
 	} `json:"statusCheckRollup"`
 }
 
-// gitHub fetches the pull request with gh. A non-empty host is the host
-// name of a self-hosted GitHub.
 func (r *Repo) gitHub(ctx context.Context, host string) (*PR, error) {
 	var env []string
 	if host != "" {
@@ -280,8 +249,7 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PR, error) {
 		Base:   v.BaseRefName,
 		Body:   v.Body,
 	}
-	// A finished check run has a conclusion, and a commit status has a
-	// state.
+	// A check run has a conclusion. A commit status has a state.
 	var checks []Check
 	for _, c := range v.StatusCheckRollup {
 		checks = append(checks, Check{
@@ -300,9 +268,7 @@ func (r *Repo) gitHub(ctx context.Context, host string) (*PR, error) {
 	return pr, nil
 }
 
-// keepChecks counts all the checks and returns at most n of them, in their
-// original order. If there are more than n, it keeps the failed checks
-// first and fills the rest with the earliest of the others.
+// keepChecks keeps failed checks first, then the earliest others, in order.
 func keepChecks(checks []Check, n int) ([]Check, Tally) {
 	var t Tally
 	for _, c := range checks {
@@ -311,7 +277,6 @@ func keepChecks(checks []Check, n int) ([]Check, Tally) {
 	if len(checks) <= n {
 		return checks, t
 	}
-	// Room left for checks that did not fail, after the failed ones.
 	others := max(n-t.Fail, 0)
 	kept := make([]Check, 0, n)
 	for _, c := range checks {
@@ -328,8 +293,6 @@ func keepChecks(checks []Check, n int) ([]Check, Tally) {
 	return kept, t
 }
 
-// gitHubState returns the state of a GitHub pull request from its state
-// and draft flag.
 func gitHubState(s string, draft bool) PRState {
 	switch {
 	case s == "MERGED":
@@ -342,8 +305,7 @@ func gitHubState(s string, draft bool) PRState {
 	return PROpen
 }
 
-// gitLabState returns the state of a GitLab merge request. It treats a
-// locked merge request as closed.
+// gitLabState treats a locked merge request as closed.
 func gitLabState(s string) PRState {
 	switch s {
 	case "opened":
@@ -354,8 +316,7 @@ func gitLabState(s string) PRState {
 	return PRClosed
 }
 
-// azureState returns the state of an Azure DevOps pull request from its
-// status. It treats an abandoned pull request as closed.
+// azureState treats an abandoned pull request as closed.
 func azureState(s string) PRState {
 	switch s {
 	case "active":
@@ -366,8 +327,6 @@ func azureState(s string) PRState {
 	return PRClosed
 }
 
-// gitHubResult returns the result of a GitHub check from its conclusion or
-// its state.
 func gitHubResult(s string) Result {
 	switch strings.ToUpper(s) {
 	case "SUCCESS":
@@ -381,12 +340,10 @@ func gitHubResult(s string) Result {
 	return ResultPending
 }
 
-// gitLabUser is a user in the JSON output of glab.
 type gitLabUser struct {
 	Username string `json:"username"`
 }
 
-// gitLabMR is the JSON output of "glab mr view".
 type gitLabMR struct {
 	IID         int        `json:"iid"`
 	Title       string     `json:"title"`
@@ -398,8 +355,6 @@ type gitLabMR struct {
 	Author      gitLabUser `json:"author"`
 }
 
-// gitLabDiscussion is a thread of notes in the JSON output of
-// "glab mr note list".
 type gitLabDiscussion struct {
 	Notes []struct {
 		Body      string     `json:"body"`
@@ -409,7 +364,6 @@ type gitLabDiscussion struct {
 	} `json:"notes"`
 }
 
-// gitLab fetches the merge request with glab.
 func (r *Repo) gitLab(ctx context.Context) (*PR, error) {
 	var v gitLabMR
 	err := r.runJSON(ctx, nil, &v, "glab", "mr", "view", "--output", "json")
@@ -439,8 +393,7 @@ func (r *Repo) gitLab(ctx context.Context) (*PR, error) {
 	return pr, nil
 }
 
-// gitLabComments returns the most recent notes in the discussions, oldest
-// first. It skips system notes, such as "added 1 commit".
+// gitLabComments skips system notes, such as "added 1 commit".
 func gitLabComments(ds []gitLabDiscussion) []PRComment {
 	var cs []PRComment
 	for _, d := range ds {
@@ -458,7 +411,6 @@ func gitLabComments(ds []gitLabDiscussion) []PRComment {
 	return lastN(cs, maxComments)
 }
 
-// azurePR is a pull request in the JSON output of "az repos pr list".
 type azurePR struct {
 	PullRequestID int    `json:"pullRequestId"`
 	Title         string `json:"title"`
@@ -474,7 +426,6 @@ type azurePR struct {
 	} `json:"repository"`
 }
 
-// azure fetches the pull request for the current branch with az.
 func (r *Repo) azure(ctx context.Context) (*PR, error) {
 	branch, err := r.Branch(ctx)
 	if err != nil {

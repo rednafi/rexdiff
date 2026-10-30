@@ -1,8 +1,5 @@
 package tui
 
-// The commit picker lets the user choose a commit, or a range of commits,
-// for the commits scope.
-
 import (
 	"fmt"
 	"slices"
@@ -15,25 +12,17 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// commitTimeout limits how long listing the commits can take.
 const commitTimeout = 10 * time.Second
 
-// commitsMsg carries the commits for the commit picker ov. since is the
-// merge base that they come after, or "" for the most recent commits.
 type commitsMsg struct {
 	ov      *overlay
 	commits []vcs.Commit
-	since   string
+	since   string // merge base, or "" for the most recent commits
 	err     error
 }
 
-// openCommitPicker opens the commit picker and returns a command that
-// lists its commits: the first-parent commits since the merge base with
-// the base branch, newest first, up to vcs.MaxCommits. If HEAD is the
-// merge base, or there is none, it lists the most recent commits instead.
-// Listing can take a while in a large repository, so the picker shows that
-// it is loading until the commits arrive, and closing it stops the
-// listing. It does nothing on the PR tab.
+// Listing can be slow in a large repository. So the picker shows a loading
+// state, and closing it stops the listing.
 func (m *model) openCommitPicker() tea.Cmd {
 	if m.tab == tabPR {
 		return nil
@@ -54,10 +43,8 @@ func (m *model) openCommitPicker() tea.Cmd {
 	}
 }
 
-// onCommits fills the commit picker with the commits in msg. The cursor
-// and range anchor start on the current choice. If the picker that asked
-// for the commits has closed, onCommits does nothing, so that a slow list
-// does not open the picker again after the user has moved on.
+// onCommits does nothing if the picker that asked for the commits has
+// closed. This stops a slow list from opening the picker again.
 func (m *model) onCommits(msg commitsMsg) {
 	ov := msg.ov
 	if m.overlay != ov || m.tab == tabPR {
@@ -100,9 +87,6 @@ func (m *model) onCommits(msg commitsMsg) {
 	}
 }
 
-// updateCommitPicker handles a key press in the commit picker. The Select
-// key sets or clears the start of a range. Esc clears the range start if
-// there is one, and otherwise closes the picker.
 func (m *model) updateCommitPicker(msg tea.KeyPressMsg) tea.Cmd {
 	ov, k := m.overlay, m.keys
 	switch {
@@ -134,7 +118,6 @@ func (m *model) updateCommitPicker(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// commitHint returns the key hints for the commit picker.
 func (m *model) commitHint() string {
 	ov, k := m.overlay, m.keys
 	if ov.loading || len(ov.shown) == 0 {
@@ -151,10 +134,6 @@ func (m *model) commitHint() string {
 		open, esc, firstKey(k.Down), firstKey(k.Up), firstKey(k.Select))
 }
 
-// commitRange returns the oldest and newest commits chosen in the commit
-// picker, given the selected item it. Without a range start, both are the
-// commit of it. Otherwise they are the ends of the range from the start
-// to the cursor.
 func (ov *overlay) commitRange(it *overlayItem) (oldest, newest string) {
 	if ov.rangeStart < 0 {
 		return it.id, it.id

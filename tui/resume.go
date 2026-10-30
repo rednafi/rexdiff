@@ -11,11 +11,8 @@ import (
 )
 
 // After an update, rexdiff restarts in the same terminal. The old process
-// saves the comments and the user's position to a file, and the new
-// process reads that file and carries on from the same position.
+// saves its state to a file, and the new process reads it.
 
-// resumeState holds what a restart must keep: the comments, the scope, the
-// view settings, the expanded folds and the position in each pane.
 type resumeState struct {
 	Tab   tab         `json:"tab"`
 	Scope Scope       `json:"scope"`
@@ -51,8 +48,8 @@ type resumeState struct {
 	Beside   string         `json:"beside"`
 }
 
-// resumeTurn is a [turnState] with exported fields for JSON. State from an
-// older version may contain a "block" member, which Unmarshal ignores.
+// State from an older version can have a "block" member. Unmarshal
+// ignores it.
 type resumeTurn struct {
 	App     string    `json:"app"`
 	Tree    string    `json:"tree"`
@@ -60,23 +57,18 @@ type resumeTurn struct {
 	At      time.Time `json:"at"`
 }
 
-// resumePane is the cursor and scroll position in a pane.
 type resumePane struct {
 	Cur  int `json:"cur"`
 	Top  int `json:"top"`
 	Xoff int `json:"xoff"` // the horizontal scroll
 }
 
-// place returns the position of p, for the resume state.
 func (p *pane) place() resumePane { return resumePane{Cur: p.cur, Top: p.top, Xoff: p.scrollX} }
 
-// restore moves p to the position s, clamped to its lines.
 func (p *pane) restore(s resumePane) {
 	p.cur, p.top, p.scrollX = min(s.Cur, p.last()), min(s.Top, p.last()), s.Xoff
 }
 
-// saveResume writes the resume state to a new temporary file and returns
-// its path.
 func (m *model) saveResume() (string, error) {
 	s := resumeState{
 		Tab:        m.tab,
@@ -112,8 +104,8 @@ func (m *model) saveResume() (string, error) {
 	if m.allFiles.cur < len(m.allFiles.entries) {
 		s.FilePath = m.allFiles.entries[m.allFiles.cur].Path
 	}
-	// Keep the places that the previous process saved if they have not
-	// been restored yet.
+	// Keep the places from the previous process if they are not restored
+	// yet.
 	if r := m.resumeChanges; r != nil {
 		s.ChangePath, s.Changes = r.ChangePath, r.Changes
 	}
@@ -136,14 +128,12 @@ func (m *model) saveResume() (string, error) {
 	return f.Name(), f.Close()
 }
 
-// loadResume reads the file written by saveResume and then removes it.
 func loadResume(path string) (*resumeState, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	// If the removal fails, the file left in the temporary directory does
-	// no harm.
+	// A file left in the temporary directory does no harm.
 	_ = os.Remove(path)
 	s := &resumeState{Comments: new(diff.Comments)}
 	if err := json.Unmarshal(b, s); err != nil {
@@ -152,15 +142,12 @@ func loadResume(path string) (*resumeState, error) {
 	return s, nil
 }
 
-// restoreSettings restores the scope, view settings and comments from s,
-// and keeps s to restore the places once the changes and the files have
-// loaded. Call it before the first reload, which reads the files in the
-// scope.
+// Call restoreSettings before the first reload, which reads the files in
+// the scope.
 func (m *model) restoreSettings(s *resumeState) {
 	m.resumeChanges, m.resumeFiles = s, s
-	// Expand the directories above the current file before reading the
-	// Files tab entries, so that a file inside an ignored directory
-	// appears in the file list.
+	// Expand the directories above the current file before the Files tab
+	// reads its entries. Then a file in an ignored directory shows.
 	m.allFiles.navigator.reveal(s.FilePath)
 	m.allFiles.listing.want = true
 	m.pr.place = &s.PR // the PR loads later, and onPR restores the position
@@ -190,10 +177,7 @@ func (m *model) restoreSettings(s *resumeState) {
 	m.lastSent, m.beside = s.LastSent, s.Beside
 }
 
-// restoreChanges selects the file saved in the resume state and moves the
-// cursor of the Changes tab to the saved position, once the first reload
-// has loaded the changes. The first file list restores the Files tab in
-// [model.onFiles].
+// [model.onFiles] restores the Files tab.
 func (m *model) restoreChanges() {
 	s := m.resumeChanges
 	if s == nil || !m.changesLoaded {
