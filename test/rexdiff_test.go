@@ -87,6 +87,7 @@ type term struct {
 	// changed receives a value after each write to the screen. Its buffer
 	// holds one value, so a write before a wait is not lost.
 	changed chan struct{}
+	diag    func()
 	done    chan struct{}
 }
 
@@ -105,18 +106,6 @@ func start(t *testing.T, repo string, o opts) *term {
 	} else {
 		o.args = append([]string{"-log", diagLog}, o.args...)
 	}
-	{
-		t.Cleanup(func() {
-			if t.Failed() {
-				b, _ := os.ReadFile(diagLog)
-				for _, l := range strings.Split(string(b), "\n") {
-					if strings.Contains(l, "msg=key") {
-						t.Log("DIAG " + l)
-					}
-				}
-			}
-		})
-	}
 	cmd := exec.CommandContext(t.Context(), bin, append(o.args, repo)...)
 	cmd.Dir = repo
 	// SIGTERM, unlike a kill, lets rexdiff remove its files.
@@ -134,6 +123,10 @@ func start(t *testing.T, repo string, o opts) *term {
 			"REX_BIN_DIR="+o.rex.dir)
 	}
 	cmd.Env = append(cmd.Env, o.env...)
+	cmd.Env = append(cmd.Env, "GOTRACEBACK=all")
+	diagErr := filepath.Join(t.TempDir(), "stderr")
+	ef, _ := os.Create(diagErr)
+	cmd.Stderr = ef
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: w, Rows: h})
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +138,15 @@ func start(t *testing.T, repo string, o opts) *term {
 		wait:    sync.OnceValue(cmd.Wait),
 		changed: make(chan struct{}, 1),
 		done:    make(chan struct{}),
+	}
+	tm.diag = func() {
+		_ = cmd.Process.Signal(syscall.SIGQUIT)
+		time.Sleep(3 * time.Second)
+		b, _ := os.ReadFile(diagLog)
+		ls := strings.Split(string(b), "\n")
+		t.Log("DIAG LOG TAIL:\n" + strings.Join(ls[max(len(ls)-40, 0):], "\n"))
+		st, _ := os.ReadFile(diagErr)
+		t.Log("DIAG STACKS:\n" + string(st))
 	}
 	go func() {
 		defer close(tm.done)
@@ -350,7 +352,9 @@ func (tm *term) waitUntil(ok func(string) bool, what string) string {
 			}
 			tm.t.Fatalf("rexdiff stops, and the screen does not %s. It shows:\n%s", what, s)
 		case <-timeout.C:
-			tm.t.Fatalf("the screen does not %s. It shows:\n%s", what, s)
+			tm.t.Logf("the screen does not %s. It shows:\n%s", what, s)
+			tm.diag()
+			tm.t.FailNow()
 		}
 	}
 }
