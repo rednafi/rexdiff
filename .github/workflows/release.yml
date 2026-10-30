@@ -20,7 +20,10 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test -race -count=1 ./...
+      # The tests in test/ time a real rexdiff. Beside the other packages
+      # under -race, they get too little CPU and time out. So run them alone.
+      - run: go test -race -count=1 $(go list ./... | grep -v '/test$')
+      - run: go test -race -count=1 ./test
 
   release:
     needs: test

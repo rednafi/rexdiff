@@ -26,7 +26,10 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test -race -count=1 ./...
+      # The tests in test/ time a real rexdiff. Beside the other packages
+      # under -race, they get too little CPU and time out. So run them alone.
+      - run: go test -race -count=1 $(go list ./... | grep -v '/test$')
+      - run: go test -race -count=1 ./test
       # A second run in a random order finds a test that depends on another.
       - run: go test -count=2 -shuffle=on ./diff/ ./vcs/ ./rex/ ./update/ ./internal/...
 
