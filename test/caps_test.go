@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
@@ -231,6 +232,17 @@ func TestTallLine(t *testing.T) {
 	testgit.WriteFile(t, repo, "a.go", b.String())
 	log := filepath.Join(t.TempDir(), "log")
 	tm := start(t, repo, opts{args: []string{"-log", log}})
+	t.Cleanup(func() {
+		if t.Failed() {
+			b, _ := os.ReadFile(log)
+			for _, l := range strings.Split(string(b), "\n") {
+				if strings.Contains(l, "msg=key") {
+					t.Log(l)
+				}
+			}
+			_ = time.Now
+		}
+	})
 	// A partly drawn frame has no footer or a gap in the words. Or its last
 	// line is blank because the terminal scrolled the old lines up.
 	whole := func(s string) bool {
