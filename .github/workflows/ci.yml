@@ -26,7 +26,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test -race -count=3 -timeout 40m ./...
+      - run: go test -race -count=3 $(go list ./... | grep -v '/test$')
+      - run: go test -race -count=3 -timeout 40m ./test
       # A second run in a random order finds a test that depends on another.
       - run: go test -count=2 -shuffle=on ./diff/ ./vcs/ ./rex/ ./update/ ./internal/...
 
