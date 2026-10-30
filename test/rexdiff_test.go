@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -140,6 +141,17 @@ func start(t *testing.T, repo string, o opts) *term {
 		done:    make(chan struct{}),
 	}
 	tm.diag = func() {
+		ps, _ := exec.Command("ps", "-o", "pid,stat,wchan,time,command", "-p", strconv.Itoa(cmd.Process.Pid)).CombinedOutput()
+		t.Log("DIAG PS:\n" + string(ps))
+		buf := make([]byte, 1<<20)
+		buf = buf[:runtime.Stack(buf, true)]
+		var keep []string
+		for _, g := range strings.Split(string(buf), "\n\n") {
+			if strings.Contains(g, "rexdiff/test.") || strings.Contains(g, "io.Copy") || strings.Contains(g, "vt.") {
+				keep = append(keep, g)
+			}
+		}
+		t.Log("DIAG TEST STACKS:\n" + strings.Join(keep, "\n\n"))
 		_ = cmd.Process.Signal(syscall.SIGQUIT)
 		time.Sleep(3 * time.Second)
 		b, _ := os.ReadFile(diagLog)
@@ -147,6 +159,7 @@ func start(t *testing.T, repo string, o opts) *term {
 		t.Log("DIAG LOG TAIL:\n" + strings.Join(ls[max(len(ls)-40, 0):], "\n"))
 		st, _ := os.ReadFile(diagErr)
 		t.Log("DIAG STACKS:\n" + string(st))
+		t.Log("DIAG SCREEN AFTER:\n" + tm.screen())
 	}
 	go func() {
 		defer close(tm.done)
