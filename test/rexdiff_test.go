@@ -99,9 +99,13 @@ func start(t *testing.T, repo string, o opts) *term {
 	if bin == "" {
 		bin = binary(t)
 	}
-	if !slices.Contains(o.args, "-log") {
-		diagLog := filepath.Join(t.TempDir(), "diag.log")
+	diagLog := filepath.Join(t.TempDir(), "diag.log")
+	if i := slices.Index(o.args, "-log"); i >= 0 {
+		diagLog = o.args[i+1]
+	} else {
 		o.args = append([]string{"-log", diagLog}, o.args...)
+	}
+	{
 		t.Cleanup(func() {
 			if t.Failed() {
 				b, _ := os.ReadFile(diagLog)
