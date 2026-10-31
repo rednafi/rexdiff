@@ -698,6 +698,37 @@ func TestSnapshotRacyEdit(t *testing.T) {
 	}
 }
 
+// The private index still has the old text of new.txt. git rm refuses to
+// drop such a file without -f, and each snapshot then fails.
+func TestSnapshotEditedThenIgnored(t *testing.T) {
+	t.Parallel()
+	r, dir := openTestRepo(t)
+	if got := uncommitted(t, r); !strings.Contains(got, "Anew.txt") {
+		t.Fatalf("Diff(HEAD, Snapshot) = %s, want Anew.txt in it", got)
+	}
+	testgit.WriteFile(t, dir, "new.txt", "edited\n")
+	testgit.WriteFile(t, dir, ".gitignore", "ignored.txt\nbuild/\nnew.txt\n")
+	if got := uncommitted(t, r); strings.Contains(got, "new.txt") {
+		t.Errorf("Diff(HEAD, Snapshot) = %s, want no new.txt", got)
+	}
+}
+
+// A file name is not a pattern. The ignored file *.txt must not take the
+// tracked a.txt and b.txt with it.
+func TestSnapshotIgnoredGlobName(t *testing.T) {
+	t.Parallel()
+	r, dir := openTestRepo(t)
+	testgit.WriteFile(t, dir, "*.txt", "star\n")
+	if got := uncommitted(t, r); !strings.Contains(got, "A*.txt") {
+		t.Fatalf("Diff(HEAD, Snapshot) = %s, want A*.txt in it", got)
+	}
+	testgit.WriteFile(t, dir, ".gitignore", "*.txt\nbuild/\n")
+	got := uncommitted(t, r)
+	if strings.Contains(got, "Da.txt") || strings.Contains(got, "Db.txt") || strings.Contains(got, "*.txt") {
+		t.Errorf("Diff(HEAD, Snapshot) = %s, want a.txt and b.txt kept and *.txt left out", got)
+	}
+}
+
 func TestCommitsFirstParent(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)

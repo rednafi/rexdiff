@@ -302,8 +302,11 @@ func (r *Repo) removeIgnored(ctx context.Context, env []string) error {
 	if removed.Len() == 0 {
 		return nil
 	}
+	// -f drops a file whose staged text is old. Literal pathspecs stop a
+	// name such as *.txt from matching other files.
+	env = append(slices.Clone(env), "GIT_LITERAL_PATHSPECS=1")
 	_, err = r.runInput(ctx, env, strings.NewReader(removed.String()),
-		"rm", "--cached", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul")
+		"rm", "--cached", "-f", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul")
 	return err
 }
 
