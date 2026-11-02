@@ -12,8 +12,8 @@ fi
 go build -o "$BIN" ./cmd/rexdiff
 export PATH="${REX_BIN_DIR:+$REX_BIN_DIR:}$PATH"
 has() { rex block inspect "$1" -s $S --json >/dev/null 2>&1; }
-rex ls | grep -q "^$S " || rex new $S --cwd "$R" -- fish >/dev/null
-has agent || { rex run -s $S --label agent --cwd "$R" -- fish >/dev/null; sleep 1; }
+rex ls | grep -q "^$S " || rex new $S --cwd "$R" -- "${SHELL:-/bin/sh}" >/dev/null
+has agent || { rex run -s $S --label agent --cwd "$R" -- "${SHELL:-/bin/sh}" >/dev/null; sleep 1; }
 for id in $(rex api call -s $S session.list_blocks '{}' | python3 -c 'import json,sys;[print(b["block_id"]) for b in json.load(sys.stdin)["blocks"] if b.get("label")=="rexdiff"]'); do
   rex api call -s $S block.close "{\"block_id\":\"$id\"}" >/dev/null 2>&1 || true
 done
