@@ -15,7 +15,7 @@ require (
 	github.com/dlclark/regexp2/v2 v2.2.1
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/sahilm/fuzzy v0.1.3
-	github.com/yuin/goldmark v1.8.6
+	github.com/yuin/goldmark v1.8.7
 	znkr.io/diff v1.1.4
 )
 
