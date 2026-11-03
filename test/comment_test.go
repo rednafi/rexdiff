@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/charmbracelet/x/vt"
+
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
@@ -110,6 +112,36 @@ func TestCommentBox(t *testing.T) {
 	}
 	tm.keys("r", "enter", "l")
 	tm.waitFor("a.go:4-5  r")
+}
+
+func TestCommentClick(t *testing.T) {
+	tm := start(t, newRepo(t), opts{})
+	comment(tm, "a")
+	tm.keys("c", "b", "enter")
+	tm.waitFor("💬 b")
+	tm.keys("j", "c", "l", "1", "ctrl+j", "l", "2", "enter")
+	tm.waitFor("💬 l1")
+	tm.keys("k", "k")
+	tm.waitCursor("func A")
+	tm.click("💬 b", 1)
+	tm.waitFor("enter save")
+	tm.keys("x", "enter")
+	tm.waitFor("💬 a", "💬 bx")
+	tm.click("l2", 1)
+	tm.waitFor("enter save")
+	tm.keys("x", "enter")
+	tm.waitFor("💬 l1", "l2x")
+}
+
+func TestCommentClickMarkdown(t *testing.T) {
+	tm := start(t, markdownRepo(t, "# Title\n\nSome text.\n\nMore text.\n"), opts{args: rendered})
+	tm.waitFor("Some text.")
+	tm.keys("j", "j", "c", "h", "i", "enter")
+	tm.waitFor("💬 hi")
+	tm.click("💬 hi", 1)
+	tm.waitFor("enter save")
+	tm.keys("x", "enter")
+	tm.waitFor("💬 hix")
 }
 
 func TestCommentBoxAtBottom(t *testing.T) {
@@ -234,6 +266,11 @@ func TestMouse(t *testing.T) {
 	tm.keys(":", "1", "enter")
 	tm.waitFor(" first")
 	tm.wheel("line 2", 10)
+	tm.waitGone(" first")
+	tm.keys(":", "1", "enter")
+	tm.waitFor(" first")
+	// With wrap on, Shift and the wheel scroll down.
+	tm.wheelWith("line 2", 10, vt.MouseWheel{Button: vt.MouseWheelDown, Mod: vt.ModShift})
 	tm.waitGone(" first")
 }
 

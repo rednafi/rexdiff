@@ -310,6 +310,18 @@ drag() {
 	mouse 0 "$3" "$4" m
 }
 
+# wheel BUTTON TEXT N sends N wheel events at TEXT. BUTTON is 65 for down,
+# 66 for left and 67 for right. Add 4 for Shift.
+wheel() {
+	wait_for "$2"
+	b=$1 i=$3
+	set -- $(at "$2")
+	while [ "$i" -gt 0 ]; do
+		mouse "$b" "$1" "$2" M
+		i=$((i - 1))
+	done
+}
+
 file_is() { [ -f "$1" ] && [ "$(cat "$1")" = "$2" ]; }
 
 file_has() {
@@ -403,6 +415,18 @@ wait_gone "find needle"
 text w
 wait_for "needle end" "needle changed"
 
+step "3. the sideways wheel, and Shift with the wheel, scroll a cut line"
+text w
+wait_gone needle
+wheel 67 "wide.txt  +1 -1" 30
+wait_for "needle changed"
+wheel 66 "wide.txt  +1 -1" 30
+wait_gone needle
+wheel 69 "wide.txt  +1 -1" 30
+wait_for "needle changed"
+text w
+wait_for "needle end" "needle changed"
+
 step "3. m shows Markdown rendered, with comments"
 text FFFF
 wait_header README.md
@@ -416,8 +440,13 @@ text c
 text "on the markdown"
 keys enter
 wait_for "💬 on the markdown" "comment added"
+click "💬 on the markdown"
+wait_for "enter save"
+text "!"
+keys enter
+wait_for "💬 on the markdown!"
 text m
-wait_for "**new**" "💬 on the markdown"
+wait_for "**new**" "💬 on the markdown!"
 
 step "8. y copies the review"
 text y
@@ -486,6 +515,16 @@ text "<"
 until_screen eval '[ "$(column "Changes (5)")" -lt "$x0" ]'
 text ">>"
 until_screen eval '[ "$(column "Changes (5)")" -gt "$x0" ]'
+
+step "3. a drag on the line beside the file list resizes the list"
+for dx in -10 10; do
+	set -- $(at "│ Changes (5)")
+	x=$1
+	mouse 0 "$x" "$2" M
+	mouse 32 $((x + dx)) "$2" M
+	mouse 0 $((x + dx)) "$2" m
+	until_screen eval '[ "$(column "│ Changes (5)")" -eq $((x + dx)) ]'
+done
 
 step "tab moves the focus to the file list and back"
 keys tab
@@ -577,6 +616,13 @@ keys enter
 wait_for "a.go:4 (removed)  first note more"
 keys escape
 wait_gone "Comments ("
+
+step "7. a click on a comment edits it"
+click "💬 range note"
+wait_for "enter save"
+text " clicked"
+keys enter
+wait_for "💬 range note clicked"
 
 step "n and N go to the next and previous comment"
 text ":0"

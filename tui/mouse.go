@@ -19,7 +19,7 @@ func (m *model) onClick(mouse tea.Mouse) tea.Cmd {
 	if mouse.Button != tea.MouseLeft {
 		return nil
 	}
-	m.crossStep = 0
+	m.crossStep, m.drag = 0, dragState{}
 	if m.overlay != nil {
 		return m.clickOverlay(mouse)
 	}
@@ -41,6 +41,10 @@ func (m *model) onClick(mouse tea.Mouse) tea.Cmd {
 	// Time the next click from the end of this one, so that a slow copy
 	// does not break a triple click.
 	defer func() { m.click.at = time.Now() }()
+	if m.inSep(mouse.X, mouse.Y) {
+		m.drag = dragState{sep: true}
+		return nil
+	}
 	if m.inNavigator(mouse.X, mouse.Y) {
 		y := mouse.Y - m.navigatorY()
 		if y < 1 {
@@ -64,11 +68,19 @@ func (m *model) clickMain(mouse tea.Mouse) tea.Cmd {
 	if y < 0 || y >= h || mouse.X < m.mainX() || mouse.X >= m.mainX()+m.mainWidth() {
 		return nil
 	}
-	_, rowAt := m.mainLines(h, nil)
-	if y >= len(rowAt) || rowAt[y] < 0 {
+	_, rowAt, commentAt := m.mainLines(h, nil)
+	if y >= len(rowAt) {
 		return nil
 	}
 	p := m.curPane()
+	if c := commentAt[y]; c != nil {
+		m.navigatorFocused = false
+		p.selStart = -1
+		return m.editComment(c, -1)
+	}
+	if rowAt[y] < 0 {
+		return nil
+	}
 	x := mouse.X - m.mainX() - gutter
 	if n := m.countClick(mouse); n >= 2 {
 		if text := m.clickText(rowAt[y], x, n); text != "" {
@@ -118,8 +130,32 @@ func (m *model) inNavigator(x, y int) bool {
 	return lw > 0 && x >= m.navigatorX() && x < m.navigatorX()+lw && y >= ly && y < ly+m.navigatorRows()
 }
 
+func (m *model) inSep(x, y int) bool {
+	sx := m.sepX()
+	return sx >= 0 && x >= sx && x < sx+sepWidth && y >= bodyY && y < bodyY+m.shownBodyHeight()
+}
+
+// dragSep puts the "│" of the separator at column x.
+func (m *model) dragSep(x int) {
+	if m.sepX() < 0 { // p can stack the list during the drag
+		return
+	}
+	w := x - (sepWidth - 1)
+	if m.navigatorPosition == positionRight {
+		w = m.w - 1 - x
+	}
+	m.resizeNavigator(w - m.navigatorSideWidth())
+}
+
 func (m *model) onDrag(mouse tea.Mouse) {
-	if !m.drag.active || mouse.Button != tea.MouseLeft {
+	if mouse.Button != tea.MouseLeft {
+		return
+	}
+	if m.drag.sep {
+		m.dragSep(mouse.X)
+		return
+	}
+	if !m.drag.active {
 		return
 	}
 	p := m.curPane()
@@ -133,7 +169,7 @@ func (m *model) onDrag(mouse tea.Mouse) {
 		p.top = min(p.top+1, p.last())
 		p.cur = max(min(p.top+h-1, p.count()-1), 0)
 	default:
-		_, rowAt := m.mainLines(h, nil)
+		_, rowAt, _ := m.mainLines(h, nil)
 		for yy := min(y, len(rowAt)-1); yy >= 0; yy-- {
 			if rowAt[yy] >= 0 {
 				p.cur = rowAt[yy]
@@ -237,7 +273,7 @@ func (m *model) copyWithCount(text string) {
 
 func (m *model) onMouseUp(mouse tea.Mouse) tea.Cmd {
 	d := m.drag
-	m.drag.active = false
+	m.drag = dragState{}
 	if d.active && d.link != "" && m.click.x == mouse.X && m.click.y == mouse.Y {
 		return m.openURL(d.link, "link")
 	}
@@ -321,13 +357,27 @@ func (m *model) sourceLines(lo, hi int, prefer diff.Side) []string {
 const wheelStep = 3
 
 func (m *model) onWheel(mouse tea.Mouse) {
-	var d int
+	var d, dx int
 	switch mouse.Button {
 	case tea.MouseWheelDown:
 		d = 1
 	case tea.MouseWheelUp:
 		d = -1
+	case tea.MouseWheelRight:
+		dx = 1
+	case tea.MouseWheelLeft:
+		dx = -1
 	default:
+		return
+	}
+	if mouse.Mod.Contains(tea.ModShift) && dx == 0 {
+		dx = d
+	}
+	sideways := dx != 0 && m.overlay == nil && !m.inNavigator(mouse.X, mouse.Y)
+	if sideways && m.scrollSideways(dx*scrollStep) {
+		return
+	}
+	if d == 0 {
 		return
 	}
 	if ov := m.overlay; ov != nil {

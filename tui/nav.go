@@ -227,15 +227,13 @@ func (m *model) onExpand() tea.Cmd {
 	case m.tab == tabPR:
 		m.pr.detailsExpanded = true
 		m.renderPR()
-	case !m.wrap:
-		p.scrollX += scrollStep
-		m.rerender()
+	default:
+		m.scrollSideways(scrollStep)
 	}
 	return nil
 }
 
 func (m *model) onCollapse() tea.Cmd {
-	p := m.curPane()
 	switch {
 	case m.cursorOnDir():
 		m.setDirExpanded(false)
@@ -244,11 +242,21 @@ func (m *model) onCollapse() tea.Cmd {
 	case m.tab == tabPR:
 		m.pr.detailsExpanded = false
 		m.renderPR()
-	case !m.wrap:
-		p.scrollX = max(p.scrollX-scrollStep, 0)
-		m.rerender()
+	default:
+		m.scrollSideways(-scrollStep)
 	}
 	return nil
+}
+
+// scrollSideways reports false if the pane cannot scroll sideways.
+func (m *model) scrollSideways(d int) bool {
+	p := m.curPane()
+	if m.wrap || p.diff == nil {
+		return false
+	}
+	p.scrollX = max(p.scrollX+d, 0)
+	m.rerender()
+	return true
 }
 
 // onWrap does nothing outside a diff, because rendered Markdown does its
@@ -402,12 +410,15 @@ func (m *model) resizeNavigator(d int) {
 	if m.navigatorHidden && m.tab != tabPR {
 		return
 	}
+	pct, w := m.navigatorPct, m.navigatorWidthSet
 	if m.navigatorPosition.stacked() {
 		m.navigatorPct = min(max(m.navigatorPct+d, minNavigatorPct), maxNavigatorStackPct)
 	} else {
 		m.navigatorWidthSet = m.clampNavigatorWidth(m.navigatorSideWidth() + d)
 	}
-	m.rerender()
+	if m.navigatorPct != pct || m.navigatorWidthSet != w {
+		m.rerender()
+	}
 }
 
 func (m *model) onOpenPR() tea.Cmd {

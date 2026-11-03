@@ -225,8 +225,8 @@ func genActions(seed uint64, steps int) []action {
 		case p < 55:
 			kinds := []string{"click", "click", "drag", "wheel"}
 			a = action{kind: kinds[r.IntN(len(kinds))], x: r.IntN(220), y: r.IntN(70)}
-			if r.IntN(2) == 0 {
-				a.s = "up"
+			if a.kind == "wheel" {
+				a.s = []string{"down", "up", "left", "right"}[r.IntN(4)]
 			}
 		case p < 58:
 			sizes := [][2]int{{1, 1}, {2, 3}, {10, 5}, {40, 12}, {80, 24}, {120, 40}, {200, 60}, {r.IntN(250), r.IntN(80)}}
@@ -580,13 +580,16 @@ func (s *sim) do(a action) error {
 			return s.update(tea.MouseReleaseMsg(mo))
 		case "drag":
 			_ = s.update(tea.MouseClickMsg(mo))
-			mo.Y = (y + 7) % h
+			mo.X, mo.Y = (x+a.x/7)%w, (y+7)%h
 			_ = s.update(tea.MouseMotionMsg(mo))
 			return s.update(tea.MouseReleaseMsg(mo))
 		default:
-			mo.Button = tea.MouseWheelDown
-			if a.s == "up" {
-				mo.Button = tea.MouseWheelUp
+			mo.Button = map[string]tea.MouseButton{
+				"down": tea.MouseWheelDown, "up": tea.MouseWheelUp,
+				"left": tea.MouseWheelLeft, "right": tea.MouseWheelRight,
+			}[a.s]
+			if a.y%3 == 0 {
+				mo.Mod = tea.ModShift
 			}
 			return s.update(tea.MouseWheelMsg(mo))
 		}

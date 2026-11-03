@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/vt"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
@@ -192,6 +193,11 @@ func TestWrap(t *testing.T) {
 	// the line.
 	tm.keys(slices.Repeat([]string{"right"}, 12)...)
 	tm.waitFor("end\"")
+	tm.wheelWith("end\"", 12, vt.MouseWheel{Button: vt.MouseWheelLeft})
+	tm.waitGone("end\"")
+	// Shift turns the wheel sideways.
+	tm.wheelWith("var long", 12, vt.MouseWheel{Button: vt.MouseWheelDown, Mod: vt.ModShift})
+	tm.waitFor("end\"")
 }
 
 func column(s, text string) int {
@@ -217,6 +223,19 @@ func TestFileList(t *testing.T) {
 	tm.waitGone("Changes (2)")
 	tm.keys("tab") // moving the focus to a hidden list shows it
 	tm.waitFor("Changes (2)")
+}
+
+func TestFileListDrag(t *testing.T) {
+	tm := start(t, newRepo(t), opts{})
+	drag := func(line string, dx int) {
+		x, y := tm.at(line)
+		tm.dragCells(x, y, x+dx, y)
+		tm.waitUntil(func(s string) bool { return column(s, line) == x+dx }, "move the line")
+	}
+	drag("│ Changes (2)", -10)
+	drag("│ Changes (2)", 5)
+	tm.keys("p", "p") // the list on the left
+	drag("│ a.go  +2 -1", 10)
 }
 
 func TestKeys(t *testing.T) {

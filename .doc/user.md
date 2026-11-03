@@ -29,9 +29,13 @@ The diff is on the left. The changed files are on the right.
 - `]` and `[` go to the next or previous change.
 - `f` and `F` go to the next or previous file.
 - The right arrow key on a folded row shows the unchanged lines.
+- `w` turns line wrap on or off. Without wrap, the left and right arrow keys scroll
+  sideways.
 - `:` goes to a line number. Ctrl+F finds text in the file.
 - `m` shows a Markdown file as rendered text. You can comment there too.
 - Drag over the code with the mouse to copy it. Click a link to open it.
+- Without wrap, Shift and the mouse wheel scroll sideways. So does a sideways swipe.
+- Drag the line between the diff and the file list to resize the list.
 
 rexdiff reloads when a file changes.
 
@@ -71,7 +75,7 @@ The comment shows under its code.
 
 ## 7. Change the comments
 
-- `e` edits the comment under the cursor.
+- `e` edits the comment under the cursor. You can also click the comment.
 - `d` deletes it.
 - `l` lists all the comments.
 

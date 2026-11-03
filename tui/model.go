@@ -182,6 +182,7 @@ type dragState struct {
 	prefer                     diff.Side
 	startY, startX, endY, endX int
 	link                       string // the URL under the initial press, or ""
+	sep                        bool   // the drag resizes the file list
 }
 
 // draft edits the comment with ID editID, if set. itemRow is the comment
@@ -993,8 +994,10 @@ func (m *model) handleMsg(msg tea.Msg) tea.Cmd {
 		// Find the clicked row on the current screen before the view
 		// follows the cursor.
 		cmd = m.onClick(msg.Mouse())
-		m.followCursor()
-		m.scrollToCursor()
+		if !m.drag.sep {
+			m.followCursor()
+			m.scrollToCursor()
+		}
 		return cmd
 	case tea.MouseMotionMsg:
 		m.onDrag(msg.Mouse())

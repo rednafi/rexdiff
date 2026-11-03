@@ -312,22 +312,21 @@ func lastColumns(s string, n int) string {
 	return end
 }
 
-// mainLines sets rowAt[y] to -1 for a note, a comment or the comment box.
-func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int) {
+// mainLines sets rowAt[y] to -1 for a note, a comment or the comment box,
+// and commentAt[y] to the comment on line y.
+func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int, commentAt []*diff.Comment) {
 	p := m.curPane()
 	if note := m.emptyNote(); note != "" {
-		return m.noteLines(note, h)
+		lines, rowAt = m.noteLines(note, h)
+		return lines, rowAt, make([]*diff.Comment, len(lines))
 	}
 	lo, hi := m.highlightRange()
-	add := func(l string, row int) {
-		lines, rowAt = append(lines, l), append(rowAt, row)
+	add := func(l string, row int, c *diff.Comment) {
+		lines, rowAt, commentAt = append(lines, l), append(rowAt, row), append(commentAt, c)
 	}
-	addBelow := func(ls []string) {
-		for _, l := range ls {
-			if len(lines) >= h {
-				return
-			}
-			add(l, -1)
+	addBelow := func(l string, c *diff.Comment) {
+		if len(lines) < h {
+			add(l, -1, c)
 		}
 	}
 	marked := map[int]bool{}
@@ -338,15 +337,20 @@ func (m *model) mainLines(h int, hits []findHit) (lines []string, rowAt []int) {
 	}
 	for i := p.top; i < p.count() && len(lines) < h; i++ {
 		target := m.targetAt(i, diff.SideNew)
-		add(m.rowMark(i, target, lo, hi, marked[i])+p.line(i), i)
+		add(m.rowMark(i, target, lo, hi, marked[i])+p.line(i), i, nil)
 		if target != nil && p.lineEnd(i) == i {
-			addBelow(m.commentsBelow(i, target))
+			ls, comments := m.commentsBelow(i, target)
+			for k, l := range ls {
+				addBelow(l, comments[k])
+			}
 		}
 		if m.mode == modeComment && i == p.lineEnd(p.cur) {
-			addBelow(m.commentBox())
+			for _, l := range m.commentBox() {
+				addBelow(l, nil)
+			}
 		}
 	}
-	return lines, rowAt
+	return lines, rowAt, commentAt
 }
 
 func (m *model) noteLines(note string, h int) (lines []string, rowAt []int) {
@@ -430,25 +434,30 @@ func (m *model) commentOn(i int, target *targetLine) *diff.Comment {
 	return nil
 }
 
-func (m *model) commentsBelow(i int, target *targetLine) []string {
+// commentsBelow returns the lines of the comments below row i, and the
+// comment of each line.
+func (m *model) commentsBelow(i int, target *targetLine) ([]string, []*diff.Comment) {
 	p := m.curPane()
 	if p.removedMarker(i) {
-		return nil
+		return nil, nil
 	}
 	first := target.line
 	if p.srcRows != nil {
 		first = p.rows[p.lineStart(i)].New
 	}
-	var out []string
+	var lines []string
+	var comments []*diff.Comment
 	for line := first; line <= target.line; line++ {
 		for _, c := range m.comments.EndingAt(m.curAnchor(), p.path, target.side, line) {
 			if m.mode == modeComment && c.ID == m.draft.editID {
 				continue
 			}
-			out = append(out, m.commentLines(c)...)
+			for _, l := range m.commentLines(c) {
+				lines, comments = append(lines, l), append(comments, c)
+			}
 		}
 	}
-	return out
+	return lines, comments
 }
 
 func commentMark(c *diff.Comment) string {
@@ -533,7 +542,8 @@ func (m *model) linesBelow(i int) int {
 	if target == nil || p.lineEnd(i) != i {
 		return 0
 	}
-	return len(m.commentsBelow(i, target))
+	lines, _ := m.commentsBelow(i, target)
+	return len(lines)
 }
 
 func (m *model) footer(hits []findHit) string {
@@ -677,7 +687,7 @@ func (m *model) View() tea.View {
 	if noteOnTitle {
 		mh++
 	}
-	ml, _ := m.mainLines(mh, hits)
+	ml, _, _ := m.mainLines(mh, hits)
 	main, mainExact := box(ml, mw, mh)
 	if m.titleHeight() > 0 && !noteOnTitle {
 		if tw := ansi.StringWidth(title); tw <= mw {
@@ -865,6 +875,17 @@ func (m *model) navigatorX() int {
 		return m.mainWidth() + sepWidth
 	}
 	return 0
+}
+
+// sepX is -1 if the file list is not beside the code.
+func (m *model) sepX() int {
+	switch {
+	case m.navigatorWidth() == 0 || m.navigatorPosition.stacked():
+		return -1
+	case m.navigatorPosition == positionRight:
+		return m.mainWidth()
+	}
+	return m.navigatorWidth()
 }
 
 func (m *model) navigatorY() int {

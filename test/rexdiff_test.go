@@ -265,6 +265,10 @@ func (tm *term) drag(from, to string) {
 	tm.t.Helper()
 	x0, y0 := tm.at(from)
 	x1, y1 := tm.at(to)
+	tm.dragCells(x0, y0, x1, y1)
+}
+
+func (tm *term) dragCells(x0, y0, x1, y1 int) {
 	tm.mouse(vt.MouseClick{X: x0, Y: y0, Button: vt.MouseLeft})
 	tm.mouse(vt.MouseMotion{X: x1, Y: y1, Button: vt.MouseLeft})
 	tm.mouse(vt.MouseRelease{X: x1, Y: y1, Button: vt.MouseLeft})
@@ -272,9 +276,15 @@ func (tm *term) drag(from, to string) {
 
 func (tm *term) wheel(text string, n int) {
 	tm.t.Helper()
-	x, y := tm.at(text)
+	tm.wheelWith(text, n, vt.MouseWheel{Button: vt.MouseWheelDown})
+}
+
+// wheelWith sends ev n times at text.
+func (tm *term) wheelWith(text string, n int, ev vt.MouseWheel) {
+	tm.t.Helper()
+	ev.X, ev.Y = tm.at(text)
 	for range n {
-		tm.mouse(vt.MouseWheel{X: x, Y: y, Button: vt.MouseWheelDown})
+		tm.mouse(ev)
 	}
 }
 
