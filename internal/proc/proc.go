@@ -38,8 +38,9 @@ func Command(ctx context.Context, env []string, name string, args ...string) *ex
 
 // Getenv returns the last value of key in env, as [exec.Cmd.Env] does.
 func Getenv(env []string, key string) string {
+	prefix := key + "="
 	for _, kv := range slices.Backward(env) {
-		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+		if v, ok := strings.CutPrefix(kv, prefix); ok {
 			return v
 		}
 	}

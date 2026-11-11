@@ -33,21 +33,21 @@ func wait(t *testing.T, h *diffview.Highlighter) {
 	}
 }
 
-func coloured(s string) bool { return strings.Contains(s, "\x1b[") }
+func colored(s string) bool { return strings.Contains(s, "\x1b[") }
 
 func TestHighlighterLongLine(t *testing.T) {
 	t.Parallel()
 	long := "var s = \"\x07" + strings.Repeat("x", 5000) + "\""
 	h := newHighlighter("x.go", "package a\n"+long+"\nfunc f() {}\n")
 	wait(t, h)
-	if l, _, _ := h.Line(0); !coloured(l) {
-		t.Errorf("line 0 = %q, want colours", l)
+	if l, _, _ := h.Line(0); !colored(l) {
+		t.Errorf("line 0 = %q, want colors", l)
 	}
 	if l, _, _ := h.Line(1); l != diffview.Escape(long) {
 		t.Errorf("line 1 = %.40q…, want the line plain and escaped", l)
 	}
-	if l, _, _ := h.Line(2); !coloured(l) {
-		t.Errorf("line 2 = %q, want colours", l)
+	if l, _, _ := h.Line(2); !colored(l) {
+		t.Errorf("line 2 = %q, want colors", l)
 	}
 }
 
@@ -61,7 +61,7 @@ func TestHighlighterLargeFile(t *testing.T) {
 	h := newHighlighter("x.go", src)
 	wait(t, h)
 	for i, want := range map[int]string{0: "package a", 1: comment, 401: "func f() {}"} {
-		if l, _, _ := h.Line(i); !coloured(l) || ansi.Strip(l) != want {
+		if l, _, _ := h.Line(i); !colored(l) || ansi.Strip(l) != want {
 			t.Errorf("line %d = %.40q…, want it highlighted", i, l)
 		}
 	}
@@ -119,20 +119,20 @@ func TestHighlighterTypicalFile(t *testing.T) {
 		lines = append(lines, strings.Count(src[:strings.LastIndex(src, "func ")], "\n"))
 	}
 	for _, i := range lines {
-		if l, _, final := h.Line(i); !final || !coloured(l) {
+		if l, _, final := h.Line(i); !final || !colored(l) {
 			t.Errorf("line %d = %q, final %v, want it highlighted", i, l, final)
 		}
 	}
 }
 
-// Colours can split a grapheme cluster. WrapLine must still break where
+// Colors can split a grapheme cluster. WrapLine must still break where
 // WrapParts does.
 func TestWrapLine(t *testing.T) {
 	t.Parallel()
 	family := "👨\u200d👩\u200d👧" // one cluster of five runes
 	plain := strings.Repeat("ab "+family+" cd ", 20)
 	red, reset := "\x1b[31m", "\x1b[m"
-	// Colour each rune of the cluster on its own, as a lexer can.
+	// Color each rune of the cluster on its own, as a lexer can.
 	code := strings.ReplaceAll(plain, family, red+"👨"+reset+"\u200d"+red+"👩"+reset+"\u200d👧")
 	code = strings.ReplaceAll(code, "ab", red+"ab"+reset)
 	for _, width := range []int{1, 3, 7, 10, 25} {
@@ -146,8 +146,8 @@ func TestWrapLine(t *testing.T) {
 				t.Fatalf("width %d: part %d = %q, want the text %q", width, k, got[k], want[k])
 			}
 		}
-		if !coloured(strings.Join(got, "")) {
-			t.Errorf("width %d: the parts have no colours", width)
+		if !colored(strings.Join(got, "")) {
+			t.Errorf("width %d: the parts have no colors", width)
 		}
 	}
 	if got := diffview.WrapLine(plain, "other", 10); strings.Join(got, "") != strings.Join(diffview.WrapParts(plain, 10), "") {

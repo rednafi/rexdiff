@@ -27,7 +27,6 @@ type findState struct {
 // count. A pane's rows, lines, path and texts change only when it renders
 // again, and each render increments the count.
 type findCache struct {
-	ok      bool
 	q       string
 	tab     tab
 	renders int
@@ -132,9 +131,9 @@ func (m *model) findHits(q string) []findHit {
 		return nil
 	}
 	p := m.curPane()
-	next := findCache{ok: true, q: q, tab: m.tab, renders: p.renders}
+	next := findCache{q: q, tab: m.tab, renders: p.renders}
 	c := &m.find.hits
-	if c.ok && c.q == next.q && c.tab == next.tab && c.renders == next.renders {
+	if c.q == next.q && c.tab == next.tab && c.renders == next.renders {
 		return c.hits
 	}
 	oldLines, newLines := m.findSource()

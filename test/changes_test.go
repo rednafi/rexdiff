@@ -100,7 +100,7 @@ func TestScopes(t *testing.T) {
 	tm.waitFor("vs feat", "Changes (2)")
 }
 
-// TestSlowCommitPicker checks that the end of a cancelled commit list does
+// TestSlowCommitPicker checks that the end of a canceled commit list does
 // not open the picker again.
 func TestSlowCommitPicker(t *testing.T) {
 	// The first list blocks until rexdiff stops it. The second list waits
@@ -142,6 +142,35 @@ PATH=${PATH#*:} exec git "$@"
 	tm.keys("esc")
 	tm.waitGone("commits · 1 over main")
 	tm.waitFor("1 Changes", "Changes (")
+}
+
+// TestSlowBasePicker checks that a branch list that ends while the comment
+// box is open does not hide the box and lose the comment.
+func TestSlowBasePicker(t *testing.T) {
+	// The branch list waits for the FIFO gate and then runs the real git.
+	bin := tools(t, map[string]string{"git": `d="${0%/*}"
+case "$*" in
+for-each-ref*) cat "$d/gate" >/dev/null ;;
+esac
+PATH=${PATH#*:} exec git "$@"
+`})
+	gate := filepath.Join(bin, "gate")
+	if err := syscall.Mkfifo(gate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(t.TempDir(), "log")
+	tm := start(t, newRepo(t), opts{path: bin, args: []string{"-log", log}})
+	tm.keys("B", "]", "c")
+	tm.waitFor("enter save")
+	tm.typed("hi")
+	// Let the list end once rexdiff has read B, ], c and the text.
+	waitFile(t, log, "five keys", func(s string) bool { return strings.Count(s, "msg=key") == 5 })
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tm.waitFor("close the box, then press B to pick a base")
+	tm.keys("enter")
+	tm.waitFor("💬 hi")
 }
 
 func TestFlags(t *testing.T) {

@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -31,18 +30,6 @@ func (m *model) updateNormal(msg tea.KeyPressMsg) tea.Cmd {
 		m.scrollToCursor()
 	}
 	return cmd
-}
-
-const colorsTick = 16 * time.Millisecond
-
-type colorsMsg struct{}
-
-func (m *model) awaitColors() tea.Cmd {
-	if m.colorsTicking || !m.cache.Highlighting() {
-		return nil
-	}
-	m.colorsTicking = true
-	return tea.Tick(colorsTick, func(time.Time) tea.Msg { return colorsMsg{} })
 }
 
 func (m *model) onQuit() tea.Cmd {
@@ -90,26 +77,18 @@ func (m *model) onTabPR() tea.Cmd {
 	return nil
 }
 
-func (m *model) onScopeUncommitted() tea.Cmd {
+func (m *model) pickScope(s Scope) tea.Cmd {
 	if m.tab != tabPR {
-		m.setScope(ScopeUncommitted)
+		m.setScope(s)
 	}
 	return nil
 }
 
-func (m *model) onScopeBranch() tea.Cmd {
-	if m.tab != tabPR {
-		m.setScope(ScopeBranch)
-	}
-	return nil
-}
+func (m *model) onScopeUncommitted() tea.Cmd { return m.pickScope(ScopeUncommitted) }
 
-func (m *model) onScopeLastTurn() tea.Cmd {
-	if m.tab != tabPR {
-		m.setScope(ScopeLastTurn)
-	}
-	return nil
-}
+func (m *model) onScopeBranch() tea.Cmd { return m.pickScope(ScopeBranch) }
+
+func (m *model) onScopeLastTurn() tea.Cmd { return m.pickScope(ScopeLastTurn) }
 
 func (m *model) onScopeCommits() tea.Cmd {
 	switch {
@@ -122,15 +101,6 @@ func (m *model) onScopeCommits() tea.Cmd {
 	return nil
 }
 
-func (m *model) onBasePick() tea.Cmd {
-	if m.tab == tabPR {
-		return nil
-	}
-	return m.openBasePicker()
-}
-
-func (m *model) onCommitPick() tea.Cmd { return m.openCommitPicker() }
-
 func (m *model) onFocus() tea.Cmd {
 	if m.navigatorHidden && m.tab != tabPR {
 		m.navigatorHidden, m.navigatorFocused = false, true
@@ -141,23 +111,18 @@ func (m *model) onFocus() tea.Cmd {
 	return nil
 }
 
-func (m *model) onDown() tea.Cmd {
+func (m *model) step(d int) tea.Cmd {
 	if m.navigatorFocused && m.tab != tabPR {
-		m.stepNavigatorRow(1)
+		m.stepNavigatorRow(d)
 	} else {
-		m.moveCur(1)
+		m.moveCur(d)
 	}
 	return nil
 }
 
-func (m *model) onUp() tea.Cmd {
-	if m.navigatorFocused && m.tab != tabPR {
-		m.stepNavigatorRow(-1)
-	} else {
-		m.moveCur(-1)
-	}
-	return nil
-}
+func (m *model) onDown() tea.Cmd { return m.step(1) }
+
+func (m *model) onUp() tea.Cmd { return m.step(-1) }
 
 func (m *model) onPageDown() tea.Cmd { return m.moveCur(m.mainHeight()) }
 
@@ -315,8 +280,6 @@ func (m *model) onComments() tea.Cmd {
 	return nil
 }
 
-func (m *model) onSend() tea.Cmd { return m.startSend() }
-
 func (m *model) onCopy() tea.Cmd {
 	m.copyComments()
 	return nil
@@ -327,8 +290,6 @@ func (m *model) onSearch() tea.Cmd {
 	m.openSearch()
 	return nil
 }
-
-func (m *model) onFind() tea.Cmd { return m.openFind() }
 
 func (m *model) onGotoLine() tea.Cmd {
 	m.openInput(overlayGotoLine, "go to line (:0 first, :$ last)", "")
@@ -361,12 +322,23 @@ func (m *model) onSplit() tea.Cmd {
 }
 
 func (m *model) onNavigatorPosition() tea.Cmd {
-	m.moveNavigator()
+	if m.navigatorHidden && m.tab != tabPR {
+		return nil
+	}
+	m.navigatorPosition = m.navigatorPosition.next()
+	m.rerender()
 	return nil
 }
 
 func (m *model) onNavigatorHide() tea.Cmd {
-	m.toggleNavigator()
+	if m.tab == tabPR {
+		return nil
+	}
+	m.navigatorHidden = !m.navigatorHidden
+	if m.navigatorHidden {
+		m.navigatorFocused = false
+	}
+	m.rerender()
 	return nil
 }
 
@@ -385,25 +357,6 @@ func (m *model) onUpdate() tea.Cmd {
 		return nil
 	}
 	return m.startUpdate()
-}
-
-func (m *model) moveNavigator() {
-	if m.navigatorHidden && m.tab != tabPR {
-		return
-	}
-	m.navigatorPosition = m.navigatorPosition.next()
-	m.rerender()
-}
-
-func (m *model) toggleNavigator() {
-	if m.tab == tabPR {
-		return
-	}
-	m.navigatorHidden = !m.navigatorHidden
-	if m.navigatorHidden {
-		m.navigatorFocused = false
-	}
-	m.rerender()
 }
 
 func (m *model) resizeNavigator(d int) {
@@ -474,7 +427,7 @@ func (m *model) setTab(t tab) {
 	case tabChanges:
 		m.requestReloadIfChanged()
 	}
-	// The layout, wrapping or terminal colours may have changed while
+	// The layout, wrapping or terminal colors may have changed while
 	// another tab was shown.
 	m.rerender()
 }

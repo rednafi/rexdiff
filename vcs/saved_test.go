@@ -21,11 +21,11 @@ func TestSavedBase(t *testing.T) {
 	if got := r.SavedBase(ctx); got != "feat" {
 		t.Errorf("SavedBase = %q, want feat", got)
 	}
-	if err := r.SaveBase(ctx, "main"); err != nil {
+	if err := r.SaveBase(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.SavedBase(ctx); got != "" {
-		t.Errorf("SavedBase after a save of the default = %q, want \"\"", got)
+		t.Errorf("SavedBase after a save of \"\" = %q, want \"\"", got)
 	}
 	// A value that is not a valid ref name can be neither saved nor read.
 	for _, bad := range []string{"-x", "a b", "a\x7f"} {

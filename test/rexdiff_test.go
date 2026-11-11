@@ -147,7 +147,7 @@ func start(t *testing.T, repo string, o opts) *term {
 			}
 		}
 	}()
-	// The emulator also replies to terminal queries, such as colour queries.
+	// The emulator also replies to terminal queries, such as color queries.
 	input := make(chan struct{})
 	go func() {
 		defer close(input)

@@ -30,10 +30,10 @@ const (
 	ansiBlue    = "4"
 	ansiMagenta = "5"
 	ansiCyan    = "6"
-	ansiGrey    = "8" // bright black
+	ansiGray    = "8" // bright black
 )
 
-// The amounts of colour that terminalStyle mixes into the background.
+// The amounts of color that terminalStyle mixes into the background.
 const (
 	tintDark     = 0.16 // added and deleted lines on a dark background
 	tintLight    = 0.13 // added and deleted lines on a light background
@@ -84,7 +84,7 @@ func terminalStyle(bg, fg, green, red color.Color, dark bool) style {
 	missing := plain.Background(subtle(shadeMissing))
 	return style{
 		dividerLine: lineStyle{
-			num:  num(divider.Foreground(lipgloss.Color(ansiGrey))),
+			num:  num(divider.Foreground(lipgloss.Color(ansiGray))),
 			code: divider.Foreground(lipgloss.Color(ansiCyan)),
 		},
 		missingLine: lineStyle{
@@ -93,7 +93,7 @@ func terminalStyle(bg, fg, green, red color.Color, dark bool) style {
 			code: missing,
 		},
 		equalLine: lineStyle{
-			num:  num(plain.Foreground(lipgloss.Color(ansiGrey))),
+			num:  num(plain.Foreground(lipgloss.Color(ansiGray))),
 			code: plain,
 		},
 		addedLine:   changed(ansiGreen, green),

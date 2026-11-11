@@ -1,4 +1,5 @@
-// Package termtext makes untrusted text safe to display in a terminal.
+// Package termtext prepares text for a terminal. It makes untrusted text
+// safe and expands tabs.
 package termtext
 
 import (
@@ -20,6 +21,14 @@ func Plain(s string) string {
 		return -1
 	}, s)
 }
+
+// TabWidth is the number of spaces that replace a tab.
+const TabWidth = 4
+
+var tabSpaces = strings.Repeat(" ", TabWidth)
+
+// ExpandTabs replaces each tab in s with TabWidth spaces.
+func ExpandTabs(s string) string { return strings.ReplaceAll(s, "\t", tabSpaces) }
 
 // Quote returns s as a quoted Go string if it has an [Invisible] character
 // or is not valid UTF-8, as git does.

@@ -38,15 +38,6 @@ const (
 	KindChanged // a deleted line next to an added line, in split view
 )
 
-// Side identifies one version of a file.
-type Side int
-
-// The two sides of a file.
-const (
-	SideOld Side = iota
-	SideNew
-)
-
 // Row describes one rendered line. Old and New are 1-based, or 0 for no
 // line. For a hunk header, Fold is the fold above it.
 type Row struct {
@@ -56,20 +47,11 @@ type Row struct {
 	Fold      Fold
 }
 
-// Line returns the row's line number on side.
-func (r Row) Line(side Side) int {
-	if side == SideOld {
-		return r.Old
-	}
-	return r.New
-}
-
 type item struct {
-	row            Row
-	header         int       // the hunk index for a header, or -1
-	line           *diffLine // unified layout only
-	pair           splitLine // split layout only
-	oldNum, newNum int
+	row    Row
+	header int       // the hunk index for a header, or -1
+	line   *diffLine // unified layout only
+	pair   splitLine // split layout only
 }
 
 func (v *View) items() []item {
@@ -83,7 +65,7 @@ func (v *View) items() []item {
 		oldNum, newNum := h.OldStart, h.NewStart
 		if v.split {
 			for _, l := range hunkToSplit(h) {
-				it := item{row: Row{Kind: splitKind(l)}, header: -1, pair: l, oldNum: oldNum, newNum: newNum}
+				it := item{row: Row{Kind: splitKind(l)}, header: -1, pair: l}
 				if l.old != nil {
 					it.row.Old = oldNum
 					oldNum++
@@ -98,7 +80,7 @@ func (v *View) items() []item {
 		}
 		for k := range h.Lines {
 			l := &h.Lines[k]
-			it := item{header: -1, line: l, oldNum: oldNum, newNum: newNum}
+			it := item{header: -1, line: l}
 			switch l.Kind {
 			case KindEqual:
 				it.row = Row{Kind: KindEqual, Old: oldNum, New: newNum}
@@ -139,11 +121,11 @@ func (v *View) unifiedLines(it *item) []string {
 	var num string
 	switch l.Kind {
 	case KindEqual:
-		num = nums(ls, strconv.Itoa(it.oldNum), strconv.Itoa(it.newNum))
+		num = nums(ls, strconv.Itoa(it.row.Old), strconv.Itoa(it.row.New))
 	case KindAdded:
-		num = nums(ls, " ", strconv.Itoa(it.newNum))
+		num = nums(ls, " ", strconv.Itoa(it.row.New))
 	case KindDeleted:
-		num = nums(ls, strconv.Itoa(it.oldNum), " ")
+		num = nums(ls, strconv.Itoa(it.row.Old), " ")
 	}
 	blank := nums(ls, " ", " ")
 	return v.codeLines(ls, num, blank, mark, l.Content, v.codeWidth)
@@ -151,8 +133,8 @@ func (v *View) unifiedLines(it *item) []string {
 
 func (v *View) splitLines(it *item) []string {
 	l := it.pair
-	left, leftFill := v.splitSide(l.old, it.oldNum, v.oldNumDigits, v.codeWidth)
-	right, rightFill := v.splitSide(l.new, it.newNum, v.newNumDigits, v.newWidth())
+	left, leftFill := v.splitSide(l.old, it.row.Old, v.oldNumDigits, v.codeWidth)
+	right, rightFill := v.splitSide(l.new, it.row.New, v.newNumDigits, v.newWidth())
 	n := max(len(left), len(right))
 	left, right = fillTo(left, n, leftFill), fillTo(right, n, rightFill)
 	lines := make([]string, n)
@@ -191,7 +173,7 @@ func (v *View) partCount(l *diffLine, width int) int {
 func plainCode(content string) string { return Escape(strings.ReplaceAll(content, "\r", CRSymbol)) }
 
 // Fits reports whether escaped s fits in width cells, with or without
-// colours. Colours can widen a multi-rune cluster, so it gives false.
+// colors. Colors can widen a multi-rune cluster, so it gives false.
 func Fits(s string, width int) bool {
 	width = max(width, 1)
 	if len(s) <= width && isPrintableASCII(s) {
@@ -316,7 +298,7 @@ func (v *View) codeLines(ls lineStyle, nums, blank, mark, content string, width 
 			nums, mark = blank, markNone
 		}
 		if v.width <= 0 && !v.wrap {
-			// Colours can make a cluster of runes measure wider than its
+			// Colors can make a cluster of runes measure wider than its
 			// plain text. So pad to width, and do not cut.
 			pad := strings.Repeat(" ", max(width-ansi.StringWidth(p), 0))
 			lines[i] = nums + ls.mark.Render(mark) + ls.code.Render(p+pad)
@@ -327,21 +309,21 @@ func (v *View) codeLines(ls lineStyle, nums, blank, mark, content string, width 
 	return lines
 }
 
-// WrapLine wraps code, the coloured form of plain, where [WrapParts]
-// breaks plain. If code does not match plain, the lines have no colours.
+// WrapLine wraps code, the colored form of plain, where [WrapParts]
+// breaks plain. If code does not match plain, the lines have no colors.
 func WrapLine(plain, code string, width int) []string {
 	parts := WrapParts(plain, width)
 	if code != plain {
-		if coloured, ok := colourParts(plain, code, parts); ok {
-			return coloured
+		if colored, ok := colorParts(plain, code, parts); ok {
+			return colored
 		}
 	}
 	return parts
 }
 
-// colourParts starts each part with the escape sequences in effect, and
+// colorParts starts each part with the escape sequences in effect, and
 // ends it with a reset if needed.
-func colourParts(plain, code string, parts []string) (out []string, ok bool) {
+func colorParts(plain, code string, parts []string) (out []string, ok bool) {
 	pos, i := 0, 0 // bytes of plain and code read so far
 	var sgr string // escape sequences since the last reset
 	escapes := func(b *strings.Builder) {

@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +20,7 @@ import (
 	"github.com/rednafi/rexdiff/vcs"
 )
 
-// The colours are ANSI palette indexes, so they follow the terminal theme.
+// The colors are ANSI palette indexes, so they follow the terminal theme.
 var (
 	dimColor     = lipgloss.Color("8")
 	dimStyle     = lipgloss.NewStyle().Foreground(dimColor)
@@ -361,11 +363,7 @@ func (m *model) noteLines(note string, h int) (lines []string, rowAt []int) {
 	for _, l := range wrapped {
 		lines = append(lines, "  "+dimStyle.Render(l))
 	}
-	rowAt = make([]int, len(lines))
-	for i := range rowAt {
-		rowAt[i] = -1
-	}
-	return lines, rowAt
+	return lines, slices.Repeat([]int{-1}, len(lines))
 }
 
 func (m *model) emptyNote() string {
@@ -629,22 +627,6 @@ func (m *model) footerLine(hits []findHit) string {
 	return m.help.View(hk)
 }
 
-func (m *model) bodyHeight() int { return max(m.h-m.footerHeight()-1, 3) }
-
-// shownBodyHeight is less than bodyHeight when View cuts the body on a
-// short terminal.
-func (m *model) shownBodyHeight() int {
-	return min(m.bodyHeight(), max(m.h-1-m.footerHeight(), 0))
-}
-
-func (m *model) shownMainHeight() int {
-	room := m.shownBodyHeight() - m.titleHeight()
-	if m.navigatorPosition == positionTop {
-		room -= m.navigatorHeight(m.bodyHeight())
-	}
-	return max(min(m.mainHeight(), room), 1)
-}
-
 // footerHeight renders only the full key list, because only it can take
 // more than one line.
 func (m *model) footerHeight() int {
@@ -854,6 +836,85 @@ func (m *model) programStatus() *tea.ProgramStatus {
 		Title:   appName,
 		Message: msg,
 	}
+}
+
+const (
+	navigatorSidePct      = 22
+	maxNavigatorSideWidth = 40 // caps the default width, unless minNavigatorPct requires more
+	navigatorStackPct     = 25
+	minNavigatorPct       = 15
+	maxNavigatorSidePct   = 60
+	maxNavigatorStackPct  = 50
+)
+
+func (m *model) navigatorShown() bool { return !m.navigatorHidden && m.tab != tabPR }
+
+func (m *model) navigatorSideWidth() int {
+	return m.clampNavigatorWidth(cmp.Or(m.navigatorWidthSet, min(m.w*navigatorSidePct/100, maxNavigatorSideWidth)))
+}
+
+func (m *model) clampNavigatorWidth(w int) int {
+	return min(max(w, m.w*minNavigatorPct/100), m.w*maxNavigatorSidePct/100)
+}
+
+func (m *model) navigatorWidth() int {
+	switch {
+	case !m.navigatorShown():
+		return 0
+	case m.navigatorPosition.stacked():
+		return m.w
+	}
+	return m.navigatorSideWidth()
+}
+
+// navigatorHeight includes the rule. It is 0 if the rule and title leave
+// no room for a file.
+func (m *model) navigatorHeight(h int) int {
+	if !m.navigatorShown() || !m.navigatorPosition.stacked() {
+		return 0
+	}
+	if lh := shareOf(h, m.navigatorPct); lh > 2 {
+		return lh
+	}
+	return 0
+}
+
+// minMainWidth includes the gutter.
+const minMainWidth = 24
+
+func (m *model) mainWidth() int {
+	w := m.w
+	if m.navigatorShown() && !m.navigatorPosition.stacked() {
+		w -= m.navigatorSideWidth() + sepWidth
+	}
+	return max(w, minMainWidth)
+}
+
+func (m *model) mainHeight() int { return m.mainHeightOf(m.bodyHeight()) }
+
+func (m *model) mainHeightOf(h int) int { return max(h-m.navigatorHeight(h)-m.titleHeight(), 0) }
+
+func (m *model) titleHeight() int {
+	if m.tab == tabPR {
+		return 0
+	}
+	return 1
+}
+
+func (m *model) bodyHeight() int { return max(m.h-m.footerHeight()-1, 3) }
+
+// shownBodyHeight is less than bodyHeight when View cuts the body on a
+// short terminal.
+func (m *model) shownBodyHeight() int {
+	return min(m.bodyHeight(), max(m.h-1-m.footerHeight(), 0))
+}
+
+func (m *model) shownMainHeight() int {
+	room := m.shownBodyHeight() - m.titleHeight()
+	if m.navigatorPosition == positionTop {
+		room -= m.navigatorHeight(m.bodyHeight())
+	}
+	return max(min(m.mainHeight(), room), 1)
 }
 
 func (m *model) mainX() int {

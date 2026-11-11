@@ -44,13 +44,11 @@ func (r *Repo) Commits(ctx context.Context, since string) ([]Commit, error) {
 	if isExitOne(err) {
 		return nil, nil
 	}
-	args := []string{"log", "--first-parent", format}
-	if since == "" {
-		args = append(args, "-n", strconv.Itoa(LastCommits), "--end-of-options", "HEAD")
-	} else {
-		args = append(args, "-n", strconv.Itoa(MaxCommits), "--end-of-options", since+"..HEAD")
+	n, rng := LastCommits, "HEAD"
+	if since != "" {
+		n, rng = MaxCommits, since+"..HEAD"
 	}
-	out, err := r.run(ctx, nil, args...)
+	out, err := r.run(ctx, nil, "log", "--first-parent", format, "-n", strconv.Itoa(n), "--end-of-options", rng)
 	if err != nil {
 		return nil, err
 	}
@@ -348,10 +346,10 @@ func isRefName(s string) bool {
 		!strings.ContainsFunc(s, func(c rune) bool { return c <= ' ' || c == 0x7f })
 }
 
-// SaveBase saves name as the base for this worktree. For the default
-// branch, it deletes the saved base.
+// SaveBase saves name as the base for this worktree. "" deletes the saved
+// base.
 func (r *Repo) SaveBase(ctx context.Context, name string) error {
-	if name == r.DefaultBase(ctx) {
+	if name == "" {
 		return r.deleteRef(ctx, baseRef)
 	}
 	if !isRefName(name) {

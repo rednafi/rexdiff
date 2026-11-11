@@ -119,9 +119,7 @@ func (m *model) renderPR() {
 		return
 	}
 	r := m.markdownRenderer(m.codeWidth() - 4)
-	lines := slices.Concat([]string{""}, prHeader(pr))
-	lines = append(lines, checkLines(pr)...)
-	lines = append(lines, "")
+	lines := slices.Concat([]string{""}, prHeader(pr), checkLines(pr), []string{""})
 	// A poll usually finds the same texts, so the texts rendered last time
 	// come from a cache.
 	mc := &m.markdown

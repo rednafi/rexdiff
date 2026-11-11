@@ -19,7 +19,7 @@ const (
 
 func screenLines(d *diff.Diff) []string {
 	var lines []string
-	for i := range len(d.Rows) {
+	for i := range d.Rows {
 		lines = append(lines, d.Line(i))
 	}
 	return lines
@@ -219,7 +219,7 @@ func TestMarks(t *testing.T) {
 			}
 			got := markColors(screenLines(d)[1:])
 			if !slices.Equal(got, []string{"31", "32"}) {
-				t.Errorf("the marks have colours %q, want 31 and 32", got)
+				t.Errorf("the marks have colors %q, want 31 and 32", got)
 			}
 		})
 	}

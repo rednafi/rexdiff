@@ -87,7 +87,7 @@ func TestLazy(t *testing.T) {
 			}
 		}
 	}
-	// Colour codes between the runes of an emoji can change its width.
+	// Color codes between the runes of an emoji can change its width.
 	wide := []string{"é 日本\n", "x := 👨‍👩 + 🇬🇧 é\n", "x := 👨‍👩 + 🇬🇧 " + strings.Repeat("日本 ", 20) + "\n"}
 	for width := range 40 {
 		o := diff.Options{Wrap: true, Width: width, Theme: diff.Theme{Background: color.Black, Foreground: color.White}}

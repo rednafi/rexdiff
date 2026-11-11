@@ -825,14 +825,14 @@ func TestGrepLimit(t *testing.T) {
 	}
 }
 
-func TestGrepCancelled(t *testing.T) {
+func TestGrepCanceled(t *testing.T) {
 	t.Parallel()
 	r, _ := openTestRepo(t)
 	ctx, cancel := context.WithCancelCause(t.Context())
 	errStop := errors.New("the test stops the search")
 	cancel(errStop)
 	if _, _, err := r.Grep(ctx, "one", 10, time.Minute); !errors.Is(err, errStop) {
-		t.Errorf("Grep with a cancelled context = %v, want the cause %v", err, errStop)
+		t.Errorf("Grep with a canceled context = %v, want the cause %v", err, errStop)
 	}
 }
 

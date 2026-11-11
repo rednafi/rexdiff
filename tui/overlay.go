@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -110,10 +111,7 @@ func (ov *overlay) curItem() *overlayItem {
 }
 
 func (ov *overlay) move(d int) {
-	step := 1
-	if d < 0 {
-		step = -1
-	}
+	step := cmp.Compare(d, 0)
 	for ; d != 0; d -= step {
 		i := ov.cur + step
 		for i >= 0 && i < len(ov.shown) && !ov.canHaveCursor(i) {
@@ -163,7 +161,7 @@ func (m *model) openQuit() {
 }
 
 // updateOverlay renders the search preview at once. Then the screen draws
-// again while its colours arrive.
+// again while its colors arrive.
 func (m *model) updateOverlay(msg tea.KeyPressMsg) tea.Cmd {
 	cmd := m.updateOverlayKey(msg)
 	if ov := m.overlay; ov != nil && ov.kind == overlaySearch {
@@ -236,6 +234,29 @@ func (ov *overlay) isCursorKey(msg tea.KeyPressMsg, b key.Binding) bool {
 	return key.Matches(msg, b) && (!ov.hasInput() || !slices.Contains(letterMoveKeys, msg.String()))
 }
 
+// moveKey reports whether msg was a movement key and moved the cursor.
+func (ov *overlay) moveKey(msg tea.KeyPressMsg, k *keyMap) bool {
+	d := 0
+	switch {
+	case key.Matches(msg, k.Down):
+		d = 1
+	case key.Matches(msg, k.Up):
+		d = -1
+	case key.Matches(msg, k.PageDown):
+		d = itemsPage
+	case key.Matches(msg, k.PageUp):
+		d = -itemsPage
+	case key.Matches(msg, k.HalfDown):
+		d = itemsHalf
+	case key.Matches(msg, k.HalfUp):
+		d = -itemsHalf
+	default:
+		return false
+	}
+	ov.move(d)
+	return true
+}
+
 // updateQuit ignores the Quit key, so that holding q down does not quit.
 // Only QuitDiscard quits.
 func (m *model) updateQuit(msg tea.KeyPressMsg) tea.Cmd {
@@ -297,8 +318,12 @@ func (m *model) choose() tea.Cmd {
 			m.flash("no such ref: " + ref)
 			return nil
 		}
+		saved := ref
+		if ref == m.defaultBase {
+			saved = ""
+		}
 		ctx, done := m.gitContext("base save")
-		err := m.repo.SaveBase(ctx, ref)
+		err := m.repo.SaveBase(ctx, saved)
 		done()
 		if err != nil {
 			m.flash("base save failed: " + err.Error())

@@ -22,9 +22,9 @@ func (m *model) openBasePicker() tea.Cmd {
 	if m.baseFromFlag || m.tab == tabPR {
 		return nil
 	}
-	ctx, cancel := xctx.WithTimeout(m.ctx, branchTimeout, "branch list")
-	repo := m.repo
+	ctx, repo := m.ctx, m.repo
 	return func() tea.Msg {
+		ctx, cancel := xctx.WithTimeout(ctx, branchTimeout, "branch list")
 		defer cancel()
 		branches, err := repo.Branches(ctx)
 		return branchesMsg{branches: branches, err: err}
@@ -36,7 +36,13 @@ func (m *model) onBranches(msg branchesMsg) {
 		m.flash("branch list failed: " + msg.err.Error())
 		return
 	}
-	if m.overlay != nil || m.tab == tabPR {
+	switch {
+	case m.overlay != nil || m.tab == tabPR:
+		return
+	case m.mode != modeNormal:
+		// A picker on top of the comment box could hide it and lose the
+		// comment.
+		m.flash("close the box, then press " + firstKey(m.keys.BasePick) + " to pick a base")
 		return
 	}
 	ov := newOverlay(overlayBase, "base branch for the branch scope (or type any ref)")

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/rednafi/rexdiff/internal/diffview"
+	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
 // lineNumColor is bright black in the ANSI palette.
@@ -26,7 +27,11 @@ type FileOptions struct {
 func RenderFile(path, src string, o FileOptions) *Diff {
 	raw := src
 	src, hl := o.Cache.fileColors(path, raw)
-	n := countLines(src)
+	lines := strings.Split(src, "\n")
+	n := len(lines)
+	if lines[n-1] == "" {
+		n--
+	}
 	digits := len(strconv.Itoa(n))
 	numWidth := digits + 2
 	f := &fileLines{
@@ -37,7 +42,7 @@ func RenderFile(path, src string, o FileOptions) *Diff {
 			Render(" %*d ") + " ",
 		codeWidth: o.Width - numWidth - 1,
 		blank:     strings.Repeat(" ", numWidth+1),
-		src:       strings.Split(src, "\n"),
+		src:       lines,
 	}
 	d := &Diff{newNum: numWidth, texts: [2]string{raw, raw}, wrap: o.Wrap}
 	d.codeAt = [2]int{numWidth + 1, numWidth + 1}
@@ -53,7 +58,7 @@ func RenderFile(path, src string, o FileOptions) *Diff {
 	d.Rows = make([]Row, 0, n)
 	for i := range n {
 		parts := 1
-		if wraps && !diffview.Fits(f.source(i), f.codeWidth) {
+		if wraps && !diffview.Fits(f.src[i], f.codeWidth) {
 			parts = len(diffview.WrapParts(f.plain(i), f.codeWidth))
 		}
 		start[i] = len(d.Rows)
@@ -75,7 +80,7 @@ type fileLines struct {
 }
 
 // render returns final false if the highlighter did not have the line
-// ready. The lines then have no colours.
+// ready. The lines then have no colors.
 func (f *fileLines) render(i int) (lines []string, final bool) {
 	l, _, final := f.hl.Line(i)
 	parts := fileLineParts(f.plain(i), l, f.codeWidth, f.o)
@@ -94,15 +99,8 @@ func (f *fileLines) render(i int) (lines []string, final bool) {
 	return out, final
 }
 
-func (f *fileLines) source(i int) string {
-	if i < len(f.src) {
-		return f.src[i]
-	}
-	return ""
-}
-
 // plain matches how the highlighter shows an unhighlighted line.
-func (f *fileLines) plain(i int) string { return diffview.Escape(f.source(i)) }
+func (f *fileLines) plain(i int) string { return diffview.Escape(f.src[i]) }
 
 func fileLineParts(plain, l string, codeWidth int, o FileOptions) []string {
 	switch {
@@ -150,12 +148,12 @@ func (c *Cache) StopHighlighting() {
 }
 
 // Highlighting reports whether the last file is still in background
-// highlighting. While it is, draw the screen again to get more colours.
+// highlighting. While it is, draw the screen again to get more colors.
 func (c *Cache) Highlighting() bool { return c != nil && c.file.h != nil && c.file.h.Busy() }
 
 // fileChars replaces a lone CR with a symbol, because chroma treats it as
 // a line break. The lines then match those of [SplitLines].
-var fileChars = strings.NewReplacer("\r\n", "\n", "\r", diffview.CRSymbol, "\t", strings.Repeat(" ", diffview.TabWidth))
+var fileChars = strings.NewReplacer("\r\n", "\n", "\r", diffview.CRSymbol, "\t", termtext.ExpandTabs("\t"))
 
 func shownFile(raw string) string { return fileChars.Replace(raw) }
 

@@ -28,8 +28,8 @@ type Cache struct {
 
 	diff struct {
 		oldText, newText string
-		hunks            []*hunk
-		keep             [][]bool
+		hunk             *hunk
+		keep             []bool
 		gen              int
 	}
 	folded foldedDiff
@@ -113,7 +113,7 @@ func (v *View) highlightCode(source string, bg color.Color) string {
 	}
 	out, ok := highlightLine(lexer, source, newTokenStyler(bg), escapeChromaValue)
 	if !ok {
-		// Cache the plain line too. Otherwise a slow line can get colours
+		// Cache the plain line too. Otherwise a slow line can get colors
 		// on a later draw and flicker.
 		out = Escape(source)
 	}
@@ -165,13 +165,13 @@ func (v *View) chromaLexer() chroma.Lexer {
 	return lx.l
 }
 
-const maxAnalyseBytes = 64 << 10
+const maxAnalyzeBytes = 64 << 10
 
 // fileLexer returns a lexer that is not coalesced.
 func fileLexer(path, content string) chroma.Lexer {
 	lexer := matchLexer(path)
 	if lexer == nil {
-		lexer = lexers.Analyse(content[:min(len(content), maxAnalyseBytes)])
+		lexer = lexers.Analyse(content[:min(len(content), maxAnalyzeBytes)])
 	}
 	if lexer == nil || slices.Contains(slowLexers, lexer.Config().Name) {
 		lexer = lexers.Fallback
@@ -234,12 +234,12 @@ func (ts *tokenStyler) render(t chroma.TokenType, value string) string {
 	if p == [2]string{} {
 		return value
 	}
-	// Style each line on its own, so a line shown alone keeps its colour.
+	// Style each line on its own, so a line shown alone keeps its color.
 	return p[0] + strings.ReplaceAll(value, "\n", p[1]+"\n"+p[0]) + p[1]
 }
 
 // Highlighter lexes a whole source in the background, so tokens that span
-// lines get the correct colour. While [Highlighter.Busy] is true, draw
+// lines get the correct color. While [Highlighter.Busy] is true, draw
 // again. The methods are safe for concurrent use.
 type Highlighter struct {
 	mu      sync.Mutex
@@ -467,7 +467,7 @@ func (h *Highlighter) Stop() { h.stop.Store(true) }
 func ansiFor(t chroma.TokenType) (c string, italic, ok bool) {
 	switch {
 	case t.InCategory(chroma.Comment):
-		return ansiGrey, true, true
+		return ansiGray, true, true
 	case t == chroma.KeywordType, t == chroma.NameBuiltin,
 		t.InSubCategory(chroma.NameClass):
 		return ansiCyan, false, true

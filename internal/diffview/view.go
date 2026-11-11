@@ -13,6 +13,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
 // View draws the difference between two versions of a file.
@@ -92,8 +94,8 @@ func (v *View) Cache(c *Cache) *View {
 	return v
 }
 
-// Theme sets the colours from the terminal's colours. A nil green or red
-// uses a fixed colour. A nil bg gives no tints.
+// Theme sets the colors from the terminal's colors. A nil green or red
+// uses a fixed color. A nil bg gives no tints.
 func (v *View) Theme(bg, fg, green, red color.Color, dark bool) *View {
 	v.style = terminalStyle(bg, fg, green, red, dark)
 	return v
@@ -192,10 +194,7 @@ func (v *View) RenderLines() (*Lines, []Row, Geometry) {
 		ls := &Lines{}
 		if len(rows) > 0 {
 			ls.lines = strings.Split(out, "\n")
-			ls.done = make([]bool, len(ls.lines))
-			for i := range ls.done {
-				ls.done[i] = true
-			}
+			ls.done = slices.Repeat([]bool{true}, len(ls.lines))
 		}
 		return ls, rows, v.geometry()
 	}
@@ -228,20 +227,17 @@ func (v *View) RenderLines() (*Lines, []Row, Geometry) {
 
 func (v *View) computeDiff() {
 	whole, keep := v.cache.unified(v.oldText, v.newText)
-	hidden := make([][]Fold, len(whole))
-	for i, h := range whole {
-		hidden[i] = hiddenFolds(h, keep[i], v.expanded)
+	var hidden []Fold
+	if whole != nil {
+		hidden = hiddenFolds(whole, keep, v.expanded)
 	}
 	f := &v.cache.folded
-	if f.gen == v.cache.diff.gen && slices.EqualFunc(f.hunkFolds, hidden, slices.Equal) {
+	if f.gen == v.cache.diff.gen && slices.Equal(f.hunkFolds, hidden) {
 		v.hunks, v.folds = f.hunks, f.folds
 		return
 	}
-	v.hunks, v.folds = nil, nil
-	for i, h := range whole {
-		hs, fs := foldHunk(h, keep[i], hidden[i])
-		v.hunks = append(v.hunks, hs...)
-		v.folds = append(v.folds, fs...)
+	if whole != nil {
+		v.hunks, v.folds = foldHunk(whole, keep, hidden)
 	}
 	*f = foldedDiff{gen: v.cache.diff.gen, hunkFolds: hidden, hunks: v.hunks, folds: v.folds}
 }
@@ -249,7 +245,7 @@ func (v *View) computeDiff() {
 // Do not modify a foldedDiff after it is built.
 type foldedDiff struct {
 	gen       int // the Cache diff generation of the hunks
-	hunkFolds [][]Fold
+	hunkFolds []Fold
 	hunks     []*hunk
 	folds     []Fold
 
@@ -267,26 +263,22 @@ type itemsKey struct {
 }
 
 // Do not modify the result of unified, because c keeps it.
-func (c *Cache) unified(oldText, newText string) (hunks []*hunk, keep [][]bool) {
+func (c *Cache) unified(oldText, newText string) (h *hunk, keep []bool) {
 	u := &c.diff
 	if u.gen > 0 && u.oldText == oldText && u.newText == newText {
-		return u.hunks, u.keep
+		return u.hunk, u.keep
 	}
-	u.hunks = nil
-	if h := lineDiff(oldText, newText); h != nil {
-		u.hunks = []*hunk{h}
+	u.hunk, u.keep = lineDiff(oldText, newText), nil
+	if u.hunk != nil {
+		// A fold hides only equal lines, so these steps give the same
+		// result before and after folding.
+		markEndings(u.hunk)
+		replaceTabs(u.hunk)
+		u.keep = keptLines(u.hunk)
 	}
-	// A fold hides only equal lines, so these steps give the same result
-	// before and after folding.
-	markEndings(u.hunks)
-	replaceTabs(u.hunks)
 	u.oldText, u.newText = oldText, newText
-	u.keep = make([][]bool, len(u.hunks))
-	for i, h := range u.hunks {
-		u.keep[i] = keptLines(h)
-	}
 	u.gen++
-	return u.hunks, u.keep
+	return u.hunk, u.keep
 }
 
 const crMark = "^M"
@@ -295,30 +287,28 @@ const noNewlineMark = "  \\ No newline at end of file"
 
 // markEndings removes the CR from each line ending. If a deleted and added
 // pair differs only by a CR, the line with the CR gets crMark.
-func markEndings(hunks []*hunk) {
-	for _, h := range hunks {
-		ls := h.Lines
-		for i := 0; i < len(ls); {
-			deleted := i
-			for i < len(ls) && ls[i].Kind == KindDeleted {
-				i++
-			}
-			ins := i
-			for i < len(ls) && ls[i].Kind == KindAdded {
-				i++
-			}
-			for k := 0; deleted+k < ins && ins+k < i; k++ {
-				markPair(&ls[deleted+k], &ls[ins+k])
-			}
-			if i == deleted {
-				i++
-			}
+func markEndings(h *hunk) {
+	ls := h.Lines
+	for i := 0; i < len(ls); {
+		deleted := i
+		for i < len(ls) && ls[i].Kind == KindDeleted {
+			i++
 		}
-		for i := range ls {
-			ls[i].Content, _ = cutCR(ls[i].Content, "")
-			if ls[i].Kind != KindEqual && !strings.HasSuffix(ls[i].Content, "\n") {
-				ls[i].Content += noNewlineMark
-			}
+		ins := i
+		for i < len(ls) && ls[i].Kind == KindAdded {
+			i++
+		}
+		for k := 0; deleted+k < ins && ins+k < i; k++ {
+			markPair(&ls[deleted+k], &ls[ins+k])
+		}
+		if i == deleted {
+			i++
+		}
+	}
+	for i := range ls {
+		ls[i].Content, _ = cutCR(ls[i].Content, "")
+		if ls[i].Kind != KindEqual && !strings.HasSuffix(ls[i].Content, "\n") {
+			ls[i].Content += noNewlineMark
 		}
 	}
 }
@@ -343,17 +333,13 @@ func cutCR(line, mark string) (string, bool) {
 
 // replaceTabs runs after the diff, so a tab changed to spaces still
 // counts as a change.
-func replaceTabs(hunks []*hunk) {
-	for _, h := range hunks {
-		for i := range h.Lines {
-			h.Lines[i].Content = ExpandTabs(h.Lines[i].Content)
-		}
+func replaceTabs(h *hunk) {
+	for i := range h.Lines {
+		h.Lines[i].Content = termtext.ExpandTabs(h.Lines[i].Content)
 	}
 }
 
 func (v *View) computeNumDigits() {
-	v.oldNumDigits = 0
-	v.newNumDigits = 0
 	for _, h := range v.hunks {
 		oldNum := len(strconv.Itoa(h.OldStart + len(h.Lines)))
 		newNum := len(strconv.Itoa(h.NewStart + len(h.Lines)))
@@ -363,7 +349,6 @@ func (v *View) computeNumDigits() {
 }
 
 func (v *View) computeCodeWidth() {
-	v.codeWidth = 0
 	for i, h := range v.hunks {
 		v.codeWidth = max(v.codeWidth, ansi.StringWidth(v.headerText(i)))
 		for _, l := range h.Lines {

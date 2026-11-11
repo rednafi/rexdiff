@@ -49,9 +49,12 @@ linters:
         - fmt.Fprintf
         - fmt.Fprintln
     misspell:
-      # No locale: the comments use British spelling, for example "colour".
+      locale: US
+      # Names from chroma and the GitHub API keep their British spelling.
       ignore-rules:
         - reviewr
+        - analyse
+        - cancelled
     gosec:
       # rexdiff runs git and rex, and reads and writes the user's files.
       excludes:

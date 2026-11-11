@@ -23,10 +23,10 @@ var tools = [][]string{
 // Write pipes text into the first clipboard tool on the PATH in env.
 func Write(ctx context.Context, env []string, text string) error {
 	for _, t := range tools {
-		if _, err := proc.LookPath(env, t[0]); err != nil {
+		cmd := proc.Command(ctx, env, t[0], t[1:]...)
+		if cmd.Err != nil {
 			continue
 		}
-		cmd := proc.Command(ctx, env, t[0], t[1:]...)
 		cmd.Stdin = strings.NewReader(text)
 		// Do not capture stderr. xclip and wl-copy leave a background process
 		// that keeps the pipe open.

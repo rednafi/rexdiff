@@ -2,6 +2,7 @@ package tui
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -153,8 +154,6 @@ func (m *model) reviewText() string {
 	return m.comments.Review(m.cfg.ReviewPrefix, m.commentStale)
 }
 
-// pasteReview checks the status first, because an agent at a prompt
-// would get the text in its prompt.
 func (m *model) pasteReview(a rex.Agent) tea.Cmd {
 	m.sends++
 	c, ctx := m.rex, m.ctx
@@ -163,34 +162,39 @@ func (m *model) pasteReview(a rex.Agent) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := xctx.WithTimeout(ctx, rexTimeout, "send")
 		defer cancel()
-		status, err := c.Status(ctx, a.Block)
-		if err != nil {
-			return sentMsg{agent: a, err: fmt.Errorf("check %s: %w", a.Name, err)}
-		}
-		if status == (rex.Status{}) {
-			return sentMsg{agent: a, err: fmt.Errorf("%s closed", a.Name)}
-		}
-		if status.State == rex.StateBlocked {
-			err := fmt.Errorf("answer %s's prompt first", a.Name)
-			return sentMsg{agent: a, err: err}
-		}
-		// If a part fails after others, the agent holds the start of the
-		// review. Tell the user to clear the agent's input.
-		err = c.Paste(ctx, a.Block, text)
-		if partly, ok := errors.AsType[*rex.PasteError](err); ok {
-			err = fmt.Errorf("only %d of %d parts reached %s, clear its input: %w",
-				partly.Pasted, partly.Parts, a.Name, partly.Err)
-			return sentMsg{agent: a, err: err}
-		}
-		if err != nil {
-			return sentMsg{agent: a, err: fmt.Errorf("paste into %s: %w", a.Name, err)}
-		}
-		if focus {
-			// Ignore any error, because the paste itself succeeded.
-			_ = c.Focus(ctx, a.Block)
-		}
-		return sentMsg{agent: a, sent: sent}
+		// onSent ignores sent when err is set.
+		return sentMsg{agent: a, sent: sent, err: sendReview(ctx, c, a, text, focus)}
 	}
+}
+
+// sendReview checks the status first, because an agent at a prompt would get
+// the text in its prompt.
+func sendReview(ctx context.Context, c *rex.Client, a rex.Agent, text string, focus bool) error {
+	status, err := c.Status(ctx, a.Block)
+	if err != nil {
+		return fmt.Errorf("check %s: %w", a.Name, err)
+	}
+	if status == (rex.Status{}) {
+		return fmt.Errorf("%s closed", a.Name)
+	}
+	if status.State == rex.StateBlocked {
+		return fmt.Errorf("answer %s's prompt first", a.Name)
+	}
+	// If a part fails after others, the agent holds the start of the
+	// review. Tell the user to clear the agent's input.
+	err = c.Paste(ctx, a.Block, text)
+	if partly, ok := errors.AsType[*rex.PasteError](err); ok {
+		return fmt.Errorf("only %d of %d parts reached %s, clear its input: %w",
+			partly.Pasted, partly.Parts, a.Name, partly.Err)
+	}
+	if err != nil {
+		return fmt.Errorf("paste into %s: %w", a.Name, err)
+	}
+	if focus {
+		// Ignore any error, because the paste itself succeeded.
+		_ = c.Focus(ctx, a.Block)
+	}
+	return nil
 }
 
 // onSent keeps comments that the user added or changed during the send.

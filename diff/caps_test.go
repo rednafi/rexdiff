@@ -14,7 +14,7 @@ func longLine(n int) string {
 	return strings.Repeat("public static lorem ipsum ", n/26+1)[:n]
 }
 
-const keywordColour = "\x1b[35m"
+const keywordColor = "\x1b[35m"
 
 // TestLongLinePlain uses a line that takes about 30 s to highlight.
 func TestLongLinePlain(t *testing.T) {
@@ -29,7 +29,7 @@ func TestLongLinePlain(t *testing.T) {
 		}
 		for name, d := range renders {
 			var shown []string
-			for i := range len(d.Rows) {
+			for i := range d.Rows {
 				if d.Rows[i].New == 2 {
 					shown = append(shown, d.Line(i))
 				}
@@ -41,11 +41,11 @@ func TestLongLinePlain(t *testing.T) {
 				t.Errorf("%s, wrap %v: the rows do not show the end of the long line", name, wrap)
 			}
 			for _, l := range shown {
-				if strings.Contains(l, keywordColour) {
-					t.Fatalf("%s, wrap %v: long line row %.60q… has colours", name, wrap, l)
+				if strings.Contains(l, keywordColor) {
+					t.Fatalf("%s, wrap %v: long line row %.60q… has colors", name, wrap, l)
 				}
 			}
-			if last := d.Line(len(d.Rows) - 1); !strings.Contains(last, keywordColour) {
+			if last := d.Line(len(d.Rows) - 1); !strings.Contains(last, keywordColor) {
 				t.Errorf("%s, wrap %v: last row %q, want it highlighted", name, wrap, last)
 			}
 		}

@@ -1,4 +1,4 @@
-// Package update finds, installs and restarts a newer release of rexdiff.
+// Package update finds and installs a newer release of rexdiff.
 // net/http reads proxy variables from the process environment.
 package update
 
@@ -23,7 +23,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/rednafi/rexdiff/internal/proc"
@@ -145,12 +144,11 @@ func (in *Installer) Install(ctx context.Context, r Release) error {
 	case methodBrew:
 		// Turn off brew's hints and prompts, because no one sees the output.
 		env := []string{"HOMEBREW_NO_ENV_HINTS=1", "NONINTERACTIVE=1"}
-		brew := cmp.Or(in.brew, "brew")
 		// brew updates its taps at most once a day, so upgrade can miss a
 		// new release. Update first, then stop upgrade from updating again.
-		if _, err = in.run(ctx, env, brew, "update", "--quiet"); err == nil {
+		if _, err = in.run(ctx, env, in.brew, "update", "--quiet"); err == nil {
 			env = append(env, "HOMEBREW_NO_AUTO_UPDATE=1")
-			_, err = in.run(ctx, env, brew, "upgrade", "--cask", "rexdiff")
+			_, err = in.run(ctx, env, in.brew, "upgrade", "--cask", "rexdiff")
 		}
 	case methodGo:
 		env := []string{"GOBIN=" + filepath.Dir(in.bin)}
@@ -332,12 +330,6 @@ func get(ctx context.Context, url string, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("GET %s: more than %d bytes", url, limit)
 	}
 	return body, nil
-}
-
-// Restart replaces the current process with bin. It returns only if it
-// fails.
-func Restart(env []string, bin string, args []string) error {
-	return syscall.Exec(bin, slices.Concat([]string{bin}, args), env)
 }
 
 // isNewer reports false if either version is not like "v1.2.3".

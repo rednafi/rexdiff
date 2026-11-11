@@ -15,9 +15,10 @@ excalidraw.com.
 - `diff` draws a file diff in the terminal and keeps the comments.
 - `vcs` runs git, and gh, glab, or az for the pull request.
 - `rex` runs rex.
-- `update` installs a new release and restarts rexdiff.
+- `update` finds and installs a new release.
 - `internal/` has small helpers for these packages.
-- `cmd/rexdiff` reads the flags, runs `rexdiff install`, and starts `tui`.
+- `cmd/rexdiff` reads the flags, runs `rexdiff install`, and starts `tui`. After an update,
+  it starts the new rexdiff in the same terminal.
 
 ## Rules of the design
 
@@ -30,4 +31,4 @@ excalidraw.com.
   index, so the real index does not change.
 - Lua does only the Rex part: the key and the action that opens the pane. Your settings
   are in `rexdiff.lua`. rexdiff writes the action to `rexdiff_toggle.lua`.
-- When the right behaviour is not clear, rexdiff does what herdr-reviewr does.
+- When the right behavior is not clear, rexdiff does what herdr-reviewr does.

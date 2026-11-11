@@ -96,18 +96,7 @@ func (m *model) updateCommitPicker(msg tea.KeyPressMsg) tea.Cmd {
 		m.closeOverlay()
 	case key.Matches(msg, overlayKeys.Choose):
 		return m.choose()
-	case key.Matches(msg, k.Down):
-		ov.move(1)
-	case key.Matches(msg, k.Up):
-		ov.move(-1)
-	case key.Matches(msg, k.PageDown):
-		ov.move(itemsPage)
-	case key.Matches(msg, k.PageUp):
-		ov.move(-itemsPage)
-	case key.Matches(msg, k.HalfDown):
-		ov.move(itemsHalf)
-	case key.Matches(msg, k.HalfUp):
-		ov.move(-itemsHalf)
+	case ov.moveKey(msg, &k):
 	case key.Matches(msg, k.Select) && ov.cur < len(ov.shown):
 		if ov.rangeStart == ov.shown[ov.cur] {
 			ov.rangeStart = -1

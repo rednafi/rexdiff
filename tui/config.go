@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -49,15 +50,7 @@ const (
 )
 
 func (p position) next() position {
-	switch p {
-	case positionRight:
-		return positionBottom
-	case positionBottom:
-		return positionLeft
-	case positionLeft:
-		return positionTop
-	}
-	return positionRight
+	return positions[(slices.Index(positions, p)+1)%len(positions)]
 }
 
 func (p position) stacked() bool { return p == positionTop || p == positionBottom }
@@ -91,84 +84,46 @@ type config struct {
 	Keybindings keybindings `json:"keybindings"`
 }
 
-// A nil list keeps the default keys.
-type keybindings struct {
-	Down     []string `json:"down"`
-	Up       []string `json:"up"`
-	PageDown []string `json:"page-down"`
-	PageUp   []string `json:"page-up"`
-	HalfDown []string `json:"half-down"`
-	HalfUp   []string `json:"half-up"`
-	Collapse []string `json:"collapse"`
-	Expand   []string `json:"expand"`
-	NextHunk []string `json:"next-hunk"`
-	PrevHunk []string `json:"prev-hunk"`
-	NextFile []string `json:"next-file"`
-	PrevFile []string `json:"prev-file"`
-	Focus    []string `json:"focus"`
+// keybindings maps an action name to its keys. A nil list keeps the
+// default keys.
+type keybindings map[string][]string
 
-	ScopeUncommitted []string `json:"scope-uncommitted"`
-	ScopeBranch      []string `json:"scope-branch"`
-	ScopeLastTurn    []string `json:"scope-last-turn"`
-	ScopeCommits     []string `json:"scope-commits"`
-	BasePick         []string `json:"base-pick"`
-	CommitPick       []string `json:"commit-pick"`
-	TabChanges       []string `json:"tab-changes"`
-	TabAllFiles      []string `json:"tab-all-files"`
-	TabPR            []string `json:"tab-pr"`
-
-	Select      []string `json:"select"`
-	Comment     []string `json:"comment"`
-	Edit        []string `json:"edit"`
-	Delete      []string `json:"delete"`
-	NextComment []string `json:"next-comment"`
-	PrevComment []string `json:"prev-comment"`
-	Comments    []string `json:"comments"`
-	Send        []string `json:"send"`
-	Copy        []string `json:"copy"`
-
-	Search            []string `json:"search"`
-	Find              []string `json:"find"`
-	GotoLine          []string `json:"goto-line"`
-	Rendered          []string `json:"rendered"`
-	Split             []string `json:"split"`
-	Wrap              []string `json:"wrap"`
-	NavigatorPosition []string `json:"navigator-position"`
-	NavigatorHide     []string `json:"navigator-hide"`
-	NavigatorGrow     []string `json:"navigator-grow"`
-	NavigatorShrink   []string `json:"navigator-shrink"`
-	OpenPR            []string `json:"open-pr"`
-	Refresh           []string `json:"refresh"`
-	Keys              []string `json:"keys"`
-	Quit              []string `json:"quit"`
-	QuitDiscard       []string `json:"quit-discard"`
-
-	// Former names of navigator-grow, navigator-shrink and rendered.
-	ListWider    []string `json:"list-wider"`
-	ListNarrower []string `json:"list-narrower"`
-	Preview      []string `json:"preview"`
+// oldNames maps the former names of actions to their current names.
+var oldNames = [][2]string{
+	{"list-wider", "navigator-grow"},
+	{"list-narrower", "navigator-shrink"},
+	{"preview", "rendered"},
 }
 
-func (kb *keybindings) useOldNames() error {
-	names := []struct {
-		name, old     string
-		keys, oldKeys *[]string
-	}{
-		{"navigator-grow", "list-wider", &kb.NavigatorGrow, &kb.ListWider},
-		{"navigator-shrink", "list-narrower", &kb.NavigatorShrink, &kb.ListNarrower},
-		{"rendered", "preview", &kb.Rendered, &kb.Preview},
-	}
-	for _, n := range names {
+func (kb keybindings) useOldNames() error {
+	for _, n := range oldNames {
+		old, name := n[0], n[1]
+		keys := kb[old]
+		delete(kb, old)
 		switch {
-		case *n.oldKeys == nil:
-		case *n.keys != nil:
+		case keys == nil:
+		case kb[name] != nil:
 			return fmt.Errorf("invalid value for keybindings: %q and %q name the same action",
-				n.name, n.old)
+				name, old)
 		default:
-			*n.keys, *n.oldKeys = *n.oldKeys, nil
+			kb[name] = keys
 		}
 	}
 	return nil
+}
+
+// unknownName returns the first name in kb that is not a configurable
+// action, or "".
+func (kb keybindings) unknownName() string {
+	for _, name := range slices.Sorted(maps.Keys(kb)) {
+		known := slices.ContainsFunc(keyActions, func(a keyAction) bool {
+			return a.name == name && !a.fixed
+		}) || slices.ContainsFunc(oldNames, func(n [2]string) bool { return n[0] == name })
+		if !known {
+			return name
+		}
+	}
+	return ""
 }
 
 const minNavigatorWidth = 16
@@ -195,6 +150,9 @@ func parseConfig(text string) (config, error) {
 	}
 	if err := json.Unmarshal([]byte(text), &c, json.RejectUnknownMembers(true)); err != nil {
 		return config{}, configError(err)
+	}
+	if name := c.Keybindings.unknownName(); name != "" {
+		return config{}, fmt.Errorf("config: unknown key %q", "keybindings."+name)
 	}
 	if err := c.Keybindings.useOldNames(); err != nil {
 		return config{}, fmt.Errorf("config: %w", err)
@@ -243,16 +201,7 @@ var jsonKinds = map[jsontext.Kind]string{
 }
 
 func (c config) validate(set map[string]jsontext.Value) error {
-	if err := c.validateChoices(set); err != nil {
-		return err
-	}
-	if err := c.validateTexts(set); err != nil {
-		return err
-	}
-	if err := c.validateHosts(set); err != nil {
-		return err
-	}
-	return c.validateKeybindings()
+	return cmp.Or(c.validateChoices(set), c.validateTexts(set), c.validateHosts(set), c.validateKeybindings())
 }
 
 func (c config) validateChoices(set map[string]jsontext.Value) error {

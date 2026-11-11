@@ -341,8 +341,8 @@ step "3. rexdiff opens with the changes and finds the agent"
 start "$repo" -config "$config"
 resize 150 30
 wait_for "Changes (5)" "README.md  +1 -1" "send → 1 agent"
-labelled() { rex api call -s "$session" session.list_blocks '{}' | jq -e --arg b "$block" '.blocks[] | select(.block_id == $b and .label == "rexdiff")' > /dev/null; }
-poll "rexdiff does not label its block" labelled
+labeled() { rex api call -s "$session" session.list_blocks '{}' | jq -e --arg b "$block" '.blocks[] | select(.block_id == $b and .label == "rexdiff")' > /dev/null; }
+poll "rexdiff does not label its block" labeled
 
 step "3. j and k move one line"
 text j

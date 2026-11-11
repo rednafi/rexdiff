@@ -13,6 +13,7 @@ import (
 	"go/ast"
 	"hash/fnv"
 	"io/fs"
+	"maps"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -201,12 +202,7 @@ func allKeys() []string {
 	} {
 		set[k] = true
 	}
-	keys := make([]string, 0, len(set))
-	for k := range set {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
+	return slices.Sorted(maps.Keys(set))
 }
 
 func genActions(seed uint64, steps int) []action {

@@ -405,10 +405,7 @@ func ConfigPath(env []string) string {
 	if path := proc.Getenv(env, "REX_CONFIG"); path != "" {
 		return path
 	}
-	dir := proc.Getenv(env, "XDG_CONFIG_HOME")
-	if dir == "" {
-		dir = filepath.Join(proc.Getenv(env, "HOME"), ".config")
-	}
+	dir := cmp.Or(proc.Getenv(env, "XDG_CONFIG_HOME"), filepath.Join(proc.Getenv(env, "HOME"), ".config"))
 	return filepath.Join(dir, "rex", "init.lua")
 }
 

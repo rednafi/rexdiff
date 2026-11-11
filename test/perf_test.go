@@ -316,7 +316,7 @@ func (tm *term) settleFrom(since time.Time, prev string, first time.Duration, ig
 	for {
 		select {
 		case <-tm.changed:
-			// A write that does not change the text, such as a colour query,
+			// A write that does not change the text, such as a color query,
 			// does not count.
 			if s := withoutBlink(tm.screen(), ignoreLastLine); s != prev {
 				last, prev = time.Now(), s
@@ -336,11 +336,8 @@ func withoutBlink(s string, ignoreLastLine bool) string {
 	if !ignoreLastLine {
 		return s
 	}
-	s = strings.TrimRight(s, "\n")
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
+	before, _, _ := strings.CutLast(strings.TrimRight(s, "\n"), "\n")
+	return before
 }
 
 const changeTimeout = 15 * time.Second

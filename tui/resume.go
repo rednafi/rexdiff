@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"encoding/json/v2"
 	"os"
 	"slices"
@@ -101,8 +102,8 @@ func (m *model) saveResume() (string, error) {
 	if f := m.curChangedFile(); f != nil {
 		s.ChangePath = f.Path
 	}
-	if m.allFiles.cur < len(m.allFiles.entries) {
-		s.FilePath = m.allFiles.entries[m.allFiles.cur].Path
+	if e := m.curEntry(); e != nil {
+		s.FilePath = e.Path
 	}
 	// Keep the places from the previous process if they are not restored
 	// yet.
@@ -158,14 +159,12 @@ func (m *model) restoreSettings(s *resumeState) {
 	m.split, m.wrap, m.rendered = s.Split, s.Wrap, s.Rendered
 	m.navigatorPosition, m.navigatorHidden = s.ListPos, s.ListHidden
 	m.navigatorFocused, m.navigatorWidthSet = s.FocusList, s.ListW
-	switch {
-	case m.navigatorPosition != "":
-		// The saved position takes precedence over the former ListLeft.
-	case s.ListLeft:
-		m.navigatorPosition = positionLeft
-	default:
-		m.navigatorPosition = positionRight
+	// The saved position takes precedence over the former ListLeft.
+	legacy := positionRight
+	if s.ListLeft {
+		legacy = positionLeft
 	}
+	m.navigatorPosition = cmp.Or(m.navigatorPosition, legacy)
 	if s.ListPct > 0 {
 		m.navigatorPct = s.ListPct
 	}

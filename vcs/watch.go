@@ -160,10 +160,12 @@ func (w *Watcher) LastWrite(until time.Time) time.Time {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var last time.Time
-	for _, p := range slices.Concat(w.files, w.dirs) {
-		info, err := os.Lstat(p)
-		if err == nil && info.ModTime().After(last) && !info.ModTime().After(until) {
-			last = info.ModTime()
+	for _, ps := range [][]string{w.files, w.dirs} {
+		for _, p := range ps {
+			info, err := os.Lstat(p)
+			if err == nil && info.ModTime().After(last) && !info.ModTime().After(until) {
+				last = info.ModTime()
+			}
 		}
 	}
 	if !last.After(w.since) {
@@ -388,7 +390,7 @@ func (r *Repo) lsFiles(ctx context.Context, args ...string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var ps []string
+	ps := make([]string, 0, strings.Count(out, "\x00"))
 	for p := range strings.SplitSeq(out, "\x00") {
 		if p != "" {
 			ps = append(ps, p)

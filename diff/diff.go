@@ -64,7 +64,7 @@ type Options struct {
 	Wrap    bool
 	// Expanded reports whether a fold is open. Nil keeps all folds hidden.
 	Expanded func(Fold) bool
-	// Signs uses + and - instead of a coloured bar.
+	// Signs uses + and - instead of a colored bar.
 	Signs bool
 	Theme Theme
 	// Cache is nil for no reuse.
@@ -197,12 +197,4 @@ func (c *Cache) convert(rows []diffview.Row) []Row {
 		c.rows.from, c.rows.to = rows, out
 	}
 	return out
-}
-
-func countLines(s string) int {
-	n := strings.Count(s, "\n")
-	if s != "" && !strings.HasSuffix(s, "\n") {
-		n++
-	}
-	return n
 }

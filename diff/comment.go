@@ -136,14 +136,13 @@ func (cs *Comments) Find(id int) *Comment {
 
 // At returns the first comment with anchor a that covers line, or nil.
 func (cs *Comments) At(a Anchor, path string, side Side, line int) *Comment {
-	i := slices.IndexFunc(cs.items, func(c *Comment) bool {
+	if i := slices.IndexFunc(cs.items, func(c *Comment) bool {
 		return c.Anchor == a && c.Path == path && c.Side == side &&
 			line >= c.Start && line <= c.End
-	})
-	if i < 0 {
-		return nil
+	}); i >= 0 {
+		return cs.items[i]
 	}
-	return cs.items[i]
+	return nil
 }
 
 // EndingAt returns the comments with anchor a whose range ends on line.

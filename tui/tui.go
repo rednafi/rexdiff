@@ -44,13 +44,6 @@ type Options struct {
 	Env []string
 }
 
-func (o Options) validate() error {
-	if o.Repo == nil {
-		return errors.New("no repository")
-	}
-	return ValidateFlags(o.Layout, o.Scope)
-}
-
 // ValidateFlags checks the -layout and -scope values. An empty value is
 // valid.
 func ValidateFlags(layout Layout, scope Scope) error {
@@ -76,7 +69,10 @@ func ValidateConfig(text string) error {
 // alternate screen on and the cursor hidden. If the restart fails, the
 // caller must restore both.
 func Run(ctx context.Context, o Options) (resume string, err error) {
-	if err := o.validate(); err != nil {
+	if o.Repo == nil {
+		return "", errors.New("no repository")
+	}
+	if err := ValidateFlags(o.Layout, o.Scope); err != nil {
 		return "", err
 	}
 	cfg, err := parseConfig(o.Config)
@@ -122,15 +118,12 @@ var errQuit = fmt.Errorf("rexdiff quits: %w", context.Canceled)
 // wait for git.
 func startModel(ctx context.Context, o Options, cfg config) model {
 	m := newModel(ctx, o, cfg)
-	var saved *resumeState
 	if o.Resume != "" {
-		var err error
-		if saved, err = loadResume(o.Resume); err != nil {
+		if saved, err := loadResume(o.Resume); err != nil {
 			m.flash("restore of the comments failed: " + err.Error())
+		} else {
+			m.restoreSettings(saved)
 		}
-	}
-	if saved != nil {
-		m.restoreSettings(saved)
 	}
 	m.requestReload()
 	m.changes.pane.note = "loading changes…"

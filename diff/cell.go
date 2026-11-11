@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/rednafi/rexdiff/internal/diffview"
+	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
 // Cell reports the source character at 0-based column x of screen line
@@ -113,16 +114,15 @@ func (d *Diff) segment(i int, side Side) string {
 }
 
 func expand(line string) string {
-	return diffview.Escape(diffview.ExpandTabs(line))
+	return diffview.Escape(termtext.ExpandTabs(line))
 }
 
 // runeAt returns the rune count if col is past the end.
-
 func runeAt(line string, col int) int {
 	i, c := 0, 0
 	for line != "" {
 		g, _ := ansi.FirstGraphemeCluster(line, ansi.GraphemeWidth)
-		w := diffview.TabWidth
+		w := termtext.TabWidth
 		if g != "\t" {
 			w = ansi.StringWidth(diffview.Escape(g))
 		}

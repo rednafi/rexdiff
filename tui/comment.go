@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/rednafi/rexdiff/diff"
+	"github.com/rednafi/rexdiff/vcs"
 )
 
 type targetLine struct {
@@ -40,6 +41,13 @@ func (m *model) curChangedFile() *changedFile {
 		return nil
 	}
 	return &m.changes.files[m.changes.cur]
+}
+
+func (m *model) curEntry() *vcs.Entry {
+	if m.allFiles.cur >= len(m.allFiles.entries) {
+		return nil
+	}
+	return &m.allFiles.entries[m.allFiles.cur]
 }
 
 func (m *model) contentFor(path string, side diff.Side) string {

@@ -85,7 +85,7 @@ func checkLines(t *testing.T, d *diff.Diff, o diff.Options) {
 	}
 }
 
-// checkSameText ignores colours. A long line that misses its highlighting
+// checkSameText ignores colors. A long line that misses its highlighting
 // time limit shows plain.
 func checkSameText(t *testing.T, a, b *diff.Diff) {
 	t.Helper()

@@ -13,14 +13,6 @@ import (
 	"github.com/rednafi/rexdiff/internal/termtext"
 )
 
-// TabWidth is the number of spaces that replace a tab.
-const TabWidth = 4
-
-var tabSpaces = strings.Repeat(" ", TabWidth)
-
-// ExpandTabs replaces each tab in s with TabWidth spaces.
-func ExpandTabs(s string) string { return strings.ReplaceAll(s, "\t", tabSpaces) }
-
 // EachLine applies f to each LF-separated line of s.
 func EachLine(s string, f func(string) string) string {
 	if !strings.Contains(s, "\n") {

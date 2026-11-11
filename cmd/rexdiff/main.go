@@ -141,7 +141,7 @@ func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) erro
 
 func restart(env []string, bin string, args []string, resume string, stdout io.Writer) error {
 	env = slices.Concat(env, []string{resumeEnv + "=" + resume})
-	err := update.Restart(env, bin, args)
+	err := syscall.Exec(bin, slices.Concat([]string{bin}, args), env)
 	// tui.Run leaves the alternate screen on for the new process. Switch
 	// back and show the cursor.
 	fmt.Fprint(stdout, "\x1b[?1049l\x1b[?25h")

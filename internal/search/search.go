@@ -4,11 +4,8 @@ package search
 
 import "github.com/sahilm/fuzzy"
 
-// Limits on the number of results.
-const (
-	MaxFiles     = 50
-	MaxGrepLines = 200
-)
+// MaxFiles limits the number of results.
+const MaxFiles = 50
 
 // Files returns up to limit paths that match query and the total number of
 // matches. If query is empty, recent paths come first.

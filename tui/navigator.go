@@ -12,14 +12,14 @@ type navigator struct {
 	entries []tree.Entry
 	rows    []tree.Row
 	cur     int
+	top     int
 	// following is false after a mouse wheel scroll. Then the cursor can
 	// go off screen until the next key press or click.
-	top       int
 	following bool
+	expandAll bool
 	// toggled holds the directories that the user switched away from
 	// expandAll.
-	expandAll bool
-	toggled   map[string]bool
+	toggled map[string]bool
 }
 
 // build keeps the cursor on the same directory or file. If that row is
@@ -199,10 +199,8 @@ func (m *model) includedPaths() (dirs []string, file string) {
 			dirs = append(dirs, dir)
 		}
 	}
-	if m.allFiles.cur < len(m.allFiles.entries) {
-		if e := m.allFiles.entries[m.allFiles.cur]; !strings.HasSuffix(e.Path, "/") {
-			file = e.Path
-		}
+	if e := m.curEntry(); e != nil && !strings.HasSuffix(e.Path, "/") {
+		file = e.Path
 	}
 	return dirs, file
 }

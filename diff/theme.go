@@ -4,13 +4,13 @@ import (
 	"image/color"
 )
 
-// Theme sets the colours. The lightness of Background selects dark or
-// light diff colours.
+// Theme sets the colors. The lightness of Background selects dark or
+// light diff colors.
 type Theme struct {
 	// Background and Foreground are nil if the terminal does not report
 	// them.
 	Background, Foreground color.Color
-	// Green and Red tint changed lines. Nil means fixed colours.
+	// Green and Red tint changed lines. Nil means fixed colors.
 	Green, Red color.Color
 }
 

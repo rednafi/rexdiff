@@ -21,6 +21,8 @@ const (
 	grepTimeout = 2 * time.Second
 )
 
+const maxGrepLines = 200
+
 type searchState struct {
 	grep      bool // true in code mode
 	paths     []string
@@ -166,7 +168,7 @@ func (m *model) startGrep() tea.Cmd {
 	repo, gen := m.repo, m.grepGen
 	return tea.Batch(files, func() tea.Msg {
 		defer cancel()
-		hits, more, err := repo.Grep(ctx, q, search.MaxGrepLines, grepBudget)
+		hits, more, err := repo.Grep(ctx, q, maxGrepLines, grepBudget)
 		return grepMsg{gen: gen, hits: hits, more: more, err: err}
 	})
 }

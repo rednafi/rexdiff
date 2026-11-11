@@ -45,6 +45,7 @@ var (
 	ErrTooBig     = errors.New("file too large")
 	errDiffTooBig = fmt.Errorf("changes too large: %w", ErrTooBig)
 	errNoCommits  = errors.New("no commits yet")
+	errClosed     = errors.New("the repository is closed")
 )
 
 // Repo is a git repository.
@@ -66,8 +67,6 @@ type Repo struct {
 
 	maxDiffBytes int // tests lower it
 }
-
-var errClosed = errors.New("the repository is closed")
 
 // Open returns the repository that contains dir.
 func Open(ctx context.Context, env []string, dir string) (*Repo, error) {
@@ -182,6 +181,11 @@ func (r *Repo) HeadTree(ctx context.Context) (string, error) {
 
 // ParentTree returns the tree of the first parent of rev, or the empty tree.
 func (r *Repo) ParentTree(ctx context.Context, rev string) (string, error) {
+	// Most commits have a parent, so one git run is enough. The slow path
+	// tells a root commit from an unknown rev or a missing parent.
+	if t, err := r.Tree(ctx, rev+"^"); err == nil {
+		return t, nil
+	}
 	c, err := r.ResolveRev(ctx, rev+"^{commit}")
 	if err != nil {
 		return "", err
@@ -206,8 +210,8 @@ func (r *Repo) MergeBaseTree(ctx context.Context, base string) (string, error) {
 	return r.Tree(ctx, c)
 }
 
-// MergeBaseCommit returns the merge base commit of base and HEAD. Other
-// git errors wrap the [*exec.ExitError] of git.
+// MergeBaseCommit returns the merge base commit of base and HEAD. It fails
+// if HEAD has no commit. Other errors wrap the [*exec.ExitError] of git.
 func (r *Repo) MergeBaseCommit(ctx context.Context, base string) (string, error) {
 	out, err := r.run(ctx, nil, "merge-base", "--end-of-options", base, "HEAD")
 	if err != nil {

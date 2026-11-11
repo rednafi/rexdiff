@@ -10,13 +10,15 @@ rexdiff has library tests and black-box tests.
 - A test that needs git runs real git in a temporary repository. `internal/testgit`
   hides your git config, so hooks and signing do not change the result.
 - A test uses the real limits of a library. A hook in `export_test.go` lowers a limit only
-  if the real size makes the test slow.
+  if the real size makes the test slow, or sets a clock that does not move.
 - A test gives the library its own environment, with fake tools on its own `PATH`. No
   test changes the environment of the process, so all of them run in parallel.
 
 ## Black-box tests
 
-- `tui` has no unit tests. The tests in `test/` build the binary and use it as you do.
+- `tui` has one unit test, `TestSim` in `tui/sim_test.go`. It runs the model with a seed
+  that picks the order of keys, messages, and time.
+- The tests in `test/` build the binary and use it as you do.
 - Each test types keys and clicks through a terminal emulator, and reads the screen.
 - A test waits for the screen or for a file, never for a fixed time.
 - Some tests wait for a line in the debug log, for example `msg="turn start"`.
