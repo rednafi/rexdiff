@@ -47,9 +47,34 @@ func CommandFor(s Sources, file string, line int) (Command, error) {
 	return c, nil
 }
 
+// fromTemplate quotes the file for the quotes around {file}, because in
+// "…" or '…' the quotes of shellQuote are literal, and sh then runs a
+// $(…) in the name.
 func fromTemplate(template, file string, line int) Command {
-	r := strings.NewReplacer("{file}", shellQuote(file), "{line}", strconv.Itoa(line))
-	script := r.Replace(template)
+	var b strings.Builder
+	var open byte // the open quote, or 0
+	for i := 0; i < len(template); i++ {
+		switch c, rest := template[i], template[i:]; {
+		case strings.HasPrefix(rest, "{file}"):
+			b.WriteString(quoteIn(open, file))
+			i += len("{file}") - 1
+		case strings.HasPrefix(rest, "{line}"):
+			b.WriteString(strconv.Itoa(line))
+			i += len("{line}") - 1
+		case c == '\\' && open != '\'' && i+1 < len(template):
+			b.WriteString(template[i : i+2])
+			i++
+		default:
+			b.WriteByte(c)
+			switch {
+			case open == 0 && (c == '\'' || c == '"'):
+				open = c
+			case open == c:
+				open = 0
+			}
+		}
+	}
+	script := b.String()
 	if !strings.Contains(template, "{file}") {
 		script += " " + shellQuote(file)
 	}
@@ -77,6 +102,21 @@ func fromEditor(command, file string, line int) Command {
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// quoteIn quotes s for sh inside the quote open, or outside quotes if open
+// is 0.
+func quoteIn(open byte, s string) string {
+	switch open {
+	case '\'':
+		return strings.ReplaceAll(s, "'", `'\''`)
+	case '"':
+		return inDoubleQuotes.Replace(s)
+	}
+	return shellQuote(s)
+}
+
+// In "…", a backslash makes only these characters literal.
+var inDoubleQuotes = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`")
 
 type lineArg int
 

@@ -1,6 +1,7 @@
 package editor_test
 
 import (
+	"os/exec"
 	"testing"
 
 	"github.com/rednafi/rexdiff/internal/editor"
@@ -17,6 +18,7 @@ func TestCommands(t *testing.T) {
 		{template: "/opt/homebrew/bin/nvim +{line} {file}", script: `/opt/homebrew/bin/nvim +12 '/r/a b.go'`},
 		{template: "code -g {file}:{line}", script: `code -g '/r/a b.go':12`, window: true},
 		{template: "zed {file}:{line}", script: `zed '/r/a b.go':12`, window: true},
+		{template: `code -g "{file}:{line}"`, script: `code -g "/r/a b.go:12"`, window: true},
 		{template: "open -a Zed {file}", script: `open -a Zed '/r/a b.go'`, window: true},
 		{template: "myeditor --at {line}", script: `myeditor --at 12 '/r/a b.go'`},
 		{editor: "nvim", script: `nvim +12 '/r/a b.go'`},
@@ -38,6 +40,34 @@ func TestCommands(t *testing.T) {
 		if err != nil || got.Script != tt.script || got.Window != tt.window {
 			t.Errorf("CommandFor(%q, %q) = %+v, %v, want script %q, window %v",
 				tt.template, tt.editor, got, err, tt.script, tt.window)
+		}
+	}
+}
+
+// TestTemplateQuotes runs each script in sh, so that no quote in the
+// template lets sh read the name as code.
+func TestTemplateQuotes(t *testing.T) {
+	t.Parallel()
+	const file = "/r/it's \"$(echo run)\" `echo run` \\ $HOME\nb.go"
+	tests := []struct{ template, want string }{
+		{"printf %s {file}", file},
+		{"printf %s '{file}'", file},
+		{`printf %s "{file}"`, file},
+		{`printf %s "{file}:{line}"`, file + ":12"},
+		{`printf %s "it's {file}"`, "it's " + file},
+		{`printf %s 'say "{file}"'`, `say "` + file + `"`},
+		{`printf %s \"{file}`, `"` + file},
+	}
+	for _, tt := range tests {
+		c, err := editor.CommandFor(editor.Sources{Template: tt.template}, file, 12)
+		if err != nil {
+			t.Fatalf("CommandFor(%q) = %v, want no error", tt.template, err)
+		}
+		cmd := exec.CommandContext(t.Context(), "sh", "-c", c.Script)
+		cmd.Dir = t.TempDir()
+		out, err := cmd.Output()
+		if err != nil || string(out) != tt.want {
+			t.Errorf("sh -c %q = %q, %v, want %q", c.Script, out, err, tt.want)
 		}
 	}
 }
