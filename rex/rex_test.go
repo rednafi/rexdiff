@@ -2,7 +2,8 @@ package rex_test
 
 import (
 	"context"
-	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -299,15 +300,16 @@ printf '%s' "$last" > "$d/call$n"
 		}
 		var args struct {
 			Event struct {
-				Type    string
-				Payload struct{ Text string }
-			}
+				Payload struct {
+					Text string `json:"text"`
+				} `json:"payload"`
+			} `json:"event"`
 		}
-		if err := jsonv1.Unmarshal(b, &args); err != nil {
+		if err := json.Unmarshal(b, &args); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 		// Rex encodes the text again, escaping HTML characters.
-		encoded, _ := jsonv1.Marshal(args.Event.Payload.Text)
+		encoded, _ := json.Marshal(args.Event.Payload.Text, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		if n := len(encoded); n > 60_000 {
 			t.Errorf("call %d holds %d bytes once encoded, want at most 60,000", i, n)
 		}
