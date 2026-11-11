@@ -135,6 +135,18 @@ func TestSlowLines(t *testing.T) {
 	within(t, 6*time.Second, "x.vsh", func() { diff.Render("x.vsh", "", src.String(), diff.Options{}) })
 }
 
+// TestEagerLexers checks that RenderFile does not wait for a lexer that
+// lexes the whole file at once. Svelte takes chroma 20 s for this file.
+func TestEagerLexers(t *testing.T) {
+	t.Parallel()
+	src := strings.Repeat("<script>let a = 1;</script><div on:click={f}>{a}</div>\n", 9000)
+	c := &diff.Cache{}
+	defer c.StopHighlighting()
+	within(t, 2*time.Second, "x.svelte", func() {
+		diff.RenderFile("x.svelte", src, diff.FileOptions{Cache: c}).Line(0)
+	})
+}
+
 // within does not stop f after the failure.
 func within(t *testing.T, limit time.Duration, what string, f func()) {
 	t.Helper()

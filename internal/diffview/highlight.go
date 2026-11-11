@@ -95,6 +95,11 @@ func highlightLine(lexer chroma.Lexer, source string, ts *tokenStyler, value fun
 // stop. The others can take far longer than lineBudget for one token.
 var slowLexers = []string{"Devicetree", "JSONata", "Jungle", "LilyPond", "Markless", "SYSTEMD"}
 
+// eagerLexers are chroma's delegating lexers. Their Tokenise lexes the
+// whole text before it returns, which takes 20 s for a 480 KB Svelte file.
+// So a Highlighter lexes them one line at a time.
+var eagerLexers = []string{"ERB", "Go HTML Template", "PHTML", "Svelte", "YAML+Jinja"}
+
 func (v *View) highlightCode(source string, bg color.Color) string {
 	// Chroma treats a lone CR as a line break.
 	source = strings.ReplaceAll(source, "\r", CRSymbol)
@@ -274,7 +279,9 @@ func NewHighlighter(path, src string, bg color.Color, processValue, fallback fun
 	h := &Highlighter{grew: make(chan struct{}), plain: strings.Split(src, "\n"), fallback: fallback}
 	h.ts, h.process = newTokenStyler(bg), processValue
 	lexer := fileLexer(path, src)
-	if len(src) > maxHighlightFile || slices.ContainsFunc(h.plain, func(l string) bool { return len(l) > maxHighlightLine }) {
+	perLine := len(src) > maxHighlightFile || slices.Contains(eagerLexers, lexer.Config().Name) ||
+		slices.ContainsFunc(h.plain, func(l string) bool { return len(l) > maxHighlightLine })
+	if perLine {
 		h.lexer = lexer
 	} else {
 		// Not coalesced, so Stop and lexBudget act between any two tokens.
