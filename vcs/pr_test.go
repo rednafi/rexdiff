@@ -323,6 +323,31 @@ func TestPRCheckLimit(t *testing.T) {
 	}
 }
 
+// TestPRGitHubHost checks that a self-hosted GitHub host does not change
+// the host for a github.com remote.
+func TestPRGitHubHost(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	env := testgit.ToolEnv(t, dir)
+	testgit.Script(t, dir, "gh", `echo "{\"number\": 1, \"title\": \"GH_HOST=$GH_HOST\"}"`+"\n")
+	hosts := vcs.Hosts{GitHub: "ghe.corp"}
+	tests := []struct{ remote, want string }{
+		{"https://github.com/o/r", "GH_HOST="},
+		{"https://ghe.corp/o/r", "GH_HOST=ghe.corp"},
+	}
+	for _, tt := range tests {
+		r, _ := repoAt(t, env, tt.remote)
+		pr, err := r.PR(t.Context(), hosts)
+		if err != nil {
+			t.Errorf("PR(%s) = %v, want no error", tt.remote, err)
+			continue
+		}
+		if pr.Title != tt.want {
+			t.Errorf("PR(%s) ran gh with %q, want %q", tt.remote, pr.Title, tt.want)
+		}
+	}
+}
+
 func TestNoPR(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

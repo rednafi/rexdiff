@@ -125,7 +125,10 @@ func (r *Repo) PR(ctx context.Context, h Hosts) (*PR, error) {
 	var pr *PR
 	var err error
 	switch {
-	case is("github.com") || is(h.GitHub):
+	case is("github.com"):
+		// gh fails if GH_HOST names a host that no remote has.
+		pr, err = r.gitHub(ctx, "")
+	case is(h.GitHub):
 		pr, err = r.gitHub(ctx, h.GitHub)
 	case is("gitlab.com") || is(h.GitLab):
 		pr, err = r.gitLab(ctx)
