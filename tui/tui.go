@@ -79,7 +79,7 @@ func Run(ctx context.Context, o Options) (resume string, err error) {
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithCancelCause(ctx)
+	ctx, cancel := xctx.WithCancel(ctx, "rexdiff")
 	defer cancel(errQuit)
 
 	m := startModel(ctx, o, cfg)
@@ -112,7 +112,7 @@ func Run(ctx context.Context, o Options) (resume string, err error) {
 	return "", err
 }
 
-var errQuit = fmt.Errorf("rexdiff quits: %w", context.Canceled)
+var errQuit = errors.New("quit")
 
 // startModel only requests the load, so that the first frame does not
 // wait for git.
@@ -132,7 +132,7 @@ func startModel(ctx context.Context, o Options, cfg config) model {
 		if err := o.Rex.SetLabel(ctx, o.Rex.Block(), appName); err != nil {
 			m.log.Debug("set label failed", "err", err)
 		}
-		cancel()
+		cancel(nil)
 	}
 	return m
 }

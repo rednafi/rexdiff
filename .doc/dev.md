@@ -51,5 +51,11 @@ GitHub Actions runs the tests again, builds the binaries, and updates the Homebr
 - Clean text from git, Rex, or a pull request with `internal/termtext` before you show
   it.
 - Start a program with `internal/proc`.
+- Make a context with `internal/xctx`, so that each timeout and each cancel has a cause.
+  End it with `cancel(nil)` when the work is done: the cause is then "<name>: done". Give
+  `cancel` an error when you stop the work early.
+- When a context is done, return `context.Cause(ctx)`, not `ctx.Err()`.
+- In `tui`, run slow work with `m.timed` or `m.stoppable`. A call into `update` is the
+  exception, because `update` sets its own time limits.
 - Keep the crush notice in each file that `internal/DERIVED.md` lists.
 - Write commit messages in this form: `fix(tui): keep the view on failed reloads`.

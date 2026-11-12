@@ -4,10 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +21,7 @@ import (
 	"testing/fstest"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
+	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/update"
 )
 
@@ -177,10 +178,10 @@ func TestInstallBrew(t *testing.T) {
 			}
 			pathEnv := "PATH=" + filepath.Join(prefix, "path") + ":/usr/bin:/bin"
 
-			ctx, cancel := context.WithCancelCause(t.Context())
-			defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
+			ctx, cancel := xctx.WithCancel(t.Context(), "test")
+			defer cancel(nil)
 			if tt.cancel {
-				cancel(fmt.Errorf("test stops the install: %w", context.Canceled))
+				cancel(errors.New("the test stops the install"))
 			}
 			u := newInstaller(t, "http://127.0.0.1:1/latest", link, "0.1.0", pathEnv)
 			err := u.Install(ctx, update.Release{Tag: "v0.2.0"})

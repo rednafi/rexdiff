@@ -169,7 +169,7 @@ func migrateLua(ctx context.Context, env []string, bin string) string {
 	// migrateLua runs before rexdiff draws its first frame, so the user
 	// cannot see or cancel it. Give the reload a deadline.
 	ctx, cancel := xctx.WithTimeout(ctx, migrateReloadTimeout, "rex config reload")
-	defer cancel()
+	defer cancel(nil)
 	if err := rex.ReloadConfig(ctx, env); err != nil {
 		return "upgraded " + toggleFile + ". Reload Rex's config yourself: rex config reload"
 	}

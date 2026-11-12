@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,7 +10,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/rednafi/rexdiff/internal/search"
-	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -163,14 +163,13 @@ func (m *model) startGrep() tea.Cmd {
 	if strings.TrimSpace(q) == "" {
 		return files
 	}
-	ctx, cancel := xctx.WithTimeout(m.ctx, grepTimeout, "code search")
-	m.grepCancel = cancel
 	repo, gen := m.repo, m.grepGen
-	return tea.Batch(files, func() tea.Msg {
-		defer cancel()
+	grep, stop := m.stoppable(grepTimeout, "code search", func(ctx context.Context) tea.Msg {
 		hits, more, err := repo.Grep(ctx, q, maxGrepLines, grepBudget)
 		return grepMsg{gen: gen, hits: hits, more: more, err: err}
 	})
+	m.grepStop = stop
+	return tea.Batch(files, grep)
 }
 
 func (m *model) addRecent(path string) {
@@ -180,9 +179,9 @@ func (m *model) addRecent(path string) {
 
 func (m *model) stopGrep() {
 	m.grepGen++
-	if m.grepCancel != nil {
-		m.grepCancel()
-		m.grepCancel = nil
+	if m.grepStop != nil {
+		m.grepStop(errSuperseded)
+		m.grepStop = nil
 	}
 }
 

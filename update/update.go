@@ -118,7 +118,7 @@ func NewInstaller(env []string, bin, stamped string) (*Installer, bool) {
 // Latest reports whether the latest release is newer than the running one.
 func (in *Installer) Latest(ctx context.Context) (r Release, newer bool, err error) {
 	ctx, cancel := xctx.WithTimeout(ctx, fetchTimeout, "release check")
-	defer cancel()
+	defer cancel(nil)
 	body, err := get(ctx, in.latestURL, maxMetadata)
 	if err != nil {
 		return Release{}, false, err
@@ -138,7 +138,7 @@ func (in *Installer) Latest(ctx context.Context) (r Release, newer bool, err err
 // of ctx, because a half install can break the cask or the binary.
 func (in *Installer) Install(ctx context.Context, r Release) error {
 	ctx, cancel := xctx.WithTimeout(context.WithoutCancel(ctx), installTimeout, "install")
-	defer cancel()
+	defer cancel(nil)
 	var err error
 	switch in.method {
 	case methodBrew:
@@ -184,11 +184,8 @@ func (in *Installer) run(ctx context.Context, env []string, name string, args ..
 	if err == nil {
 		return out, nil
 	}
-	if errors.Is(err, exec.ErrNotFound) {
-		return out, proc.NotInstalled(name)
-	}
-	if ctx.Err() != nil {
-		return out, fmt.Errorf("%s: %w", filepath.Base(name), proc.Error(ctx, name, err, nil))
+	if ctx.Err() != nil || errors.Is(err, exec.ErrNotFound) {
+		return out, proc.Error(ctx, name, err, nil)
 	}
 	if last := proc.LastLine(string(out)); last != "" {
 		return out, fmt.Errorf("%s: %s: %w", filepath.Base(name), last, err)
@@ -316,7 +313,7 @@ func get(ctx context.Context, url string, limit int64) ([]byte, error) {
 	req.Header.Set("Accept", "application/vnd.github+json, */*")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, xctx.Err(ctx, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -324,7 +321,7 @@ func get(ctx context.Context, url string, limit int64) ([]byte, error) {
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, err
+		return nil, xctx.Err(ctx, err)
 	}
 	if int64(len(body)) > limit {
 		return nil, fmt.Errorf("GET %s: more than %d bytes", url, limit)

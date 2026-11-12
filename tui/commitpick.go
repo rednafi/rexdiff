@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"time"
@@ -8,7 +9,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -27,20 +27,19 @@ func (m *model) openCommitPicker() tea.Cmd {
 	if m.tab == tabPR {
 		return nil
 	}
-	ctx, cancel := xctx.WithTimeout(m.ctx, commitTimeout, "commit list")
 	ov := newOverlay(overlayCommits, "commits")
-	ov.loading, ov.stop = true, cancel
-	m.openOverlay(ov)
 	repo, base := m.repo, m.base
-	return func() tea.Msg {
-		defer cancel()
+	cmd, stop := m.stoppable(commitTimeout, "commit list", func(ctx context.Context) tea.Msg {
 		since, err := repo.MergeBaseCommit(ctx, base)
 		if head, headErr := repo.ResolveRev(ctx, "HEAD"); err != nil || headErr != nil || since == head {
 			since = ""
 		}
 		commits, err := repo.Commits(ctx, since)
 		return commitsMsg{ov: ov, commits: commits, since: since, err: err}
-	}
+	})
+	ov.loading, ov.stop = true, stop
+	m.openOverlay(ov)
+	return cmd
 }
 
 // onCommits does nothing if the picker that asked for the commits has

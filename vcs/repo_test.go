@@ -1,7 +1,6 @@
 package vcs_test
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/rednafi/rexdiff/internal/proc"
 	"github.com/rednafi/rexdiff/internal/testgit"
+	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -828,7 +828,7 @@ func TestGrepLimit(t *testing.T) {
 func TestGrepCanceled(t *testing.T) {
 	t.Parallel()
 	r, _ := openTestRepo(t)
-	ctx, cancel := context.WithCancelCause(t.Context())
+	ctx, cancel := xctx.WithCancel(t.Context(), "test")
 	errStop := errors.New("the test stops the search")
 	cancel(errStop)
 	if _, _, err := r.Grep(ctx, "one", 10, time.Minute); !errors.Is(err, errStop) {

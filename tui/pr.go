@@ -13,7 +13,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/rednafi/rexdiff/diff"
-	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -28,7 +27,7 @@ type prFetch struct {
 	gen      int // the latest fetch. Results of older fetches are stale.
 	inFlight bool
 	polled   time.Time
-	cancel   context.CancelFunc
+	stop     context.CancelCauseFunc
 	// trailing is true if a non-forced request arrived during a fetch.
 	trailing bool
 	branch   string // the branch at the last ref change
@@ -47,23 +46,22 @@ func (m *model) requestPR(force bool) tea.Cmd {
 
 func (m *model) fetchPR() tea.Cmd {
 	f := &m.pr.fetch
-	if f.cancel != nil {
-		f.cancel()
+	if f.stop != nil {
+		f.stop(errSuperseded)
 	}
-	ctx, cancel := xctx.WithTimeout(m.ctx, prTimeout, "pull request read")
 	f.gen++
-	f.inFlight, f.trailing, f.cancel = true, false, cancel
 	repo, gen := m.repo, f.gen
 	hosts := vcs.Hosts{
 		GitHub: m.cfg.GitHubHost,
 		GitLab: m.cfg.GitLabHost,
 		Azure:  m.cfg.AzureHost,
 	}
-	return func() tea.Msg {
-		defer cancel()
+	cmd, stop := m.stoppable(prTimeout, "pull request read", func(ctx context.Context) tea.Msg {
 		pr, err := repo.PR(ctx, hosts)
 		return prMsg{gen: gen, pr: pr, err: err}
-	}
+	})
+	f.inFlight, f.trailing, f.stop = true, false, stop
+	return cmd
 }
 
 // A detached HEAD during a rebase is not a branch switch.
@@ -71,7 +69,7 @@ func (m *model) reloadPR() tea.Cmd {
 	f := &m.pr.fetch
 	ctx, done := m.gitContext("branch")
 	b, err := m.repo.Branch(ctx)
-	done()
+	done(nil)
 	if err != nil || b == "HEAD" {
 		b = f.branch
 	}
@@ -332,7 +330,7 @@ func (m *model) onPR(msg prMsg) tea.Cmd {
 	if msg.gen != f.gen {
 		return nil
 	}
-	f.inFlight, f.cancel = false, nil
+	f.inFlight, f.stop = false, nil
 	var next tea.Cmd
 	if f.trailing {
 		next = m.fetchPR()

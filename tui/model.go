@@ -230,7 +230,7 @@ type agentState struct {
 type model struct {
 	// ctx comes from Run. The model keeps it for git and Rex calls,
 	// because the tea.Model methods do not take a context.
-	ctx  context.Context
+	ctx  context.Context //nolint:containedctx // see above
 	repo *vcs.Repo
 	rex  *rex.Client // nil outside Rex
 	log  *slog.Logger
@@ -333,7 +333,7 @@ type model struct {
 	mode         mode
 	overlay      *overlay
 	recent       []string
-	grepCancel   context.CancelFunc
+	grepStop     context.CancelCauseFunc
 	grepGen      int
 	fileGen      int
 	find         findState
@@ -380,8 +380,8 @@ func newModel(ctx context.Context, o Options, cfg config) model {
 		m.log = slog.New(slog.DiscardHandler)
 	}
 	// The flag wins over the saved base.
-	gitCtx, done := m.gitContext("startup")
-	defer done()
+	gitCtx, done := xctx.WithTimeout(ctx, gitTimeout, "startup")
+	defer done(nil)
 	if m.base == "" {
 		if b := o.Repo.SavedBase(gitCtx); b != "" {
 			if _, err := o.Repo.ResolveRev(gitCtx, b); err == nil {
@@ -398,7 +398,7 @@ func newModel(ctx context.Context, o Options, cfg config) model {
 		// If Rex does not know the agent, the picker starts with none selected.
 		ctx, cancel := xctx.WithTimeout(ctx, rexTimeout, "rex resolve")
 		m.beside, _ = o.Rex.ResolveBlock(ctx, o.Agent)
-		cancel()
+		cancel(nil)
 	}
 	m.changes.pane.selStart, m.allFiles.pane.selStart, m.pr.pane.selStart = -1, -1, -1
 	m.followCursor()
@@ -513,9 +513,35 @@ func (m *model) flash(s string) {
 
 const gitTimeout = 5 * time.Second
 
-func (m *model) gitContext(what string) (ctx context.Context, done func()) {
+// gitContext is for a short git call in Update. End it with done(nil).
+func (m *model) gitContext(what string) (ctx context.Context, done context.CancelCauseFunc) {
 	return xctx.WithTimeout(m.ctx, gitTimeout, what)
 }
+
+// timed returns a command that runs fn with a time limit.
+func (m *model) timed(d time.Duration, what string, fn func(context.Context) tea.Msg) tea.Cmd {
+	ctx := m.ctx
+	return func() tea.Msg {
+		ctx, cancel := xctx.WithTimeout(ctx, d, what)
+		defer cancel(nil)
+		return fn(ctx)
+	}
+}
+
+// stoppable is like timed, but stop ends fn early. Give stop the reason.
+func (m *model) stoppable(d time.Duration, what string, fn func(context.Context) tea.Msg) (cmd tea.Cmd, stop context.CancelCauseFunc) {
+	ctx, stop := xctx.WithTimeout(m.ctx, d, what)
+	return func() tea.Msg {
+		defer stop(nil)
+		return fn(ctx)
+	}, stop
+}
+
+// The reasons to stop a command early.
+var (
+	errSuperseded = errors.New("replaced by a newer request")
+	errClosed     = errors.New("list closed")
+)
 
 // Update handles a message. After a self-update, it restarts when no work
 // can be lost.

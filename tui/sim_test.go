@@ -35,6 +35,7 @@ import (
 	"github.com/dlclark/regexp2/v2"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
+	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -301,7 +302,7 @@ func simRun(t *testing.T, acts []action) error {
 }
 
 type sim struct {
-	ctx    context.Context
+	ctx    context.Context //nolint:containedctx // the sim steps the model, as Bubble Tea does
 	m      *model
 	dir    string
 	env    []string
@@ -320,9 +321,9 @@ type sim struct {
 
 func runBubble(t *testing.T, dir string, env []string, acts []action, keep bool) (s *sim, err error) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := xctx.WithCancel(t.Context(), "test")
 	defer func() {
-		cancel()
+		cancel(nil)
 		// Let the ticks and git commands that are in flight finish.
 		time.Sleep(time.Hour)
 		synctest.Wait()

@@ -9,6 +9,9 @@ linters:
     - unused
     - errcheck
     - errorlint
+    - forbidigo
+    - containedctx
+    - contextcheck
     - nilerr
     - noctx
     - bodyclose
@@ -33,6 +36,15 @@ linters:
     - paralleltest
     - tparallel
   settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        # internal/xctx gives each cancel a cause that wraps the sentinel.
+        - pattern: ^context\.With(Cancel|Timeout|Deadline)(Cause)?$
+          msg: use internal/xctx
+        # Only main makes a root context. A test uses t.Context.
+        - pattern: ^context\.(Background|TODO)$
+          msg: pass the context of the caller
     staticcheck:
       checks:
         - all

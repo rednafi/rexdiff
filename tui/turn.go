@@ -1,13 +1,13 @@
 package tui
 
 import (
+	"context"
 	"maps"
 	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/rex"
 )
 
@@ -55,13 +55,11 @@ func (m *model) askCwd(block string) tea.Cmd {
 		return nil
 	}
 	a.asking = true
-	c, ctx := m.rex, m.ctx
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, rexTimeout, "rex cwd")
-		defer cancel()
+	c := m.rex
+	return m.timed(rexTimeout, "rex cwd", func(ctx context.Context) tea.Msg {
 		cwd, err := c.Cwd(ctx, block)
 		return cwdMsg{block: block, cwd: cwd, err: err}
-	}
+	})
 }
 
 // onCwd lets the next state change ask again after an error.
@@ -87,7 +85,7 @@ func (m *model) owns(dir string) (bool, error) {
 	}
 	ctx, done := m.gitContext("owns")
 	in, err := m.repo.Owns(ctx, dir)
-	done()
+	done(nil)
 	if err == nil {
 		if m.ownsDir == nil {
 			m.ownsDir = map[string]bool{}
@@ -148,21 +146,19 @@ func (m *model) startTurn(ms []member) tea.Cmd {
 	m.turnGen++
 	// A turn starts only when some member is working, so i is valid.
 	i := slices.IndexFunc(ms, func(a member) bool { return a.state == rex.StateWorking })
-	gen, a, repo, watch, ctx := m.turnGen, ms[i], m.repo, m.watch, m.ctx
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, reloadTimeout, "turn snapshot")
-		defer cancel()
+	gen, a, repo, watch := m.turnGen, ms[i], m.repo, m.watch
+	return m.timed(reloadTimeout, "turn snapshot", func(ctx context.Context) tea.Msg {
 		tree, err := repo.SnapshotTree(ctx)
 		msg := turnStartMsg{gen: gen, agent: a, tree: tree, snapped: time.Now(), err: err}
 		if watch != nil && err == nil {
 			// LastWrite waits for a watcher check, so do not call it in
 			// Update. A write after the snapshot does not hide one before it.
-			w := watch.LastWrite(msg.snapped)
-			msg.write = w
+			w, err := watch.LastWrite(ctx, msg.snapped)
+			msg.write, msg.err = w, err
 			msg.raced = !w.Before(a.since.Add(-raceBefore)) && !w.After(msg.snapped)
 		}
 		return msg
-	}
+	})
 }
 
 type turnStartMsg struct {
@@ -206,13 +202,11 @@ func (m *model) scheduleTurnCheck(end bool) tea.Cmd {
 		return nil
 	}
 	m.turnChecking = m.turnChecking || !end
-	p, gen, repo, ctx := m.pendingTurn, m.turnGen, m.repo, m.ctx
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, reloadTimeout, "turn check")
-		defer cancel()
+	p, gen, repo := m.pendingTurn, m.turnGen, m.repo
+	return m.timed(reloadTimeout, "turn check", func(ctx context.Context) tea.Msg {
 		tree, err := repo.SnapshotTree(ctx)
 		return turnCheckMsg{turn: p, gen: gen, end: end, tree: tree, err: err}
-	}
+	})
 }
 
 type turnCheckMsg struct {
@@ -262,15 +256,13 @@ func (m *model) promoteTurn(t *turnState) tea.Cmd {
 
 // saveTurn deletes the saved tree if tree is empty.
 func (m *model) saveTurn(tree string) tea.Cmd {
-	repo, ctx, log := m.repo, m.ctx, m.log
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, reloadTimeout, "turn save")
-		defer cancel()
+	repo, log := m.repo, m.log
+	return m.timed(reloadTimeout, "turn save", func(ctx context.Context) tea.Msg {
 		if err := repo.SaveTurn(ctx, tree); err != nil {
 			log.Warn("turn baseline ref write failed", "err", err)
 		}
 		return nil
-	}
+	})
 }
 
 // endTurn checks the pending turn. Changes after the end do not belong to

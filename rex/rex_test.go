@@ -1,7 +1,6 @@
 package rex_test
 
 import (
-	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -18,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
+	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/rex"
 )
 
@@ -191,8 +191,8 @@ func TestEvents(t *testing.T) {
 			{Block: "block:pi", Closed: true},
 		}
 		want := slices.Concat(once, []rex.Event{{Reconnect: true}}, once)
-		ctx, cancel := context.WithCancelCause(t.Context())
-		defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
+		ctx, cancel := xctx.WithCancel(t.Context(), "test")
+		defer cancel(nil)
 		errAll := errors.New("the test has all the events")
 		var got []rex.Event
 		err := c.Events(ctx, func(e rex.Event) {

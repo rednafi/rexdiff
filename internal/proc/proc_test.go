@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -48,7 +47,7 @@ func TestError(t *testing.T) {
 func TestErrorCause(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := xctx.WithTimeout(t.Context(), time.Millisecond, "test run")
-	defer cancel()
+	defer cancel(nil)
 	<-ctx.Done()
 	cause := context.Cause(ctx)
 	exit := proc.Command(t.Context(), shEnv, "sh", "-c", "exit 3").Run()
@@ -66,7 +65,7 @@ func TestErrorCause(t *testing.T) {
 
 func TestCommandTerm(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithCancelCause(t.Context())
+	ctx, cancel := xctx.WithCancel(t.Context(), "test")
 	cmd := proc.Command(ctx, shEnv, "sh", "-c", `trap 'echo term; exit 0' TERM; echo ready; while :; do sleep 0.01; done`)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -79,7 +78,7 @@ func TestCommandTerm(t *testing.T) {
 	if line, err := r.ReadString('\n'); err != nil || line != "ready\n" {
 		t.Fatalf("first line = %q, %v, want %q", line, err, "ready\n")
 	}
-	cancel(fmt.Errorf("test stops the program: %w", context.Canceled))
+	cancel(errors.New("the test stops the program"))
 	rest, _ := io.ReadAll(r)
 	_ = cmd.Wait()
 	if string(rest) != "term\n" {

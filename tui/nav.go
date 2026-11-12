@@ -387,7 +387,7 @@ func (m *model) onOpenPR() tea.Cmd {
 }
 
 func (m *model) openURL(url, what string) tea.Cmd {
-	wait, err := urlOpenerCmd(m.env, m.cfg, url)
+	wait, err := urlOpenerCmd(m.ctx, m.env, m.cfg, url)
 	if err != nil {
 		m.flash("open failed: " + err.Error())
 		return nil

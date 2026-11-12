@@ -19,8 +19,10 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/rednafi/rexdiff/internal/proc"
+	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/rex"
 	"github.com/rednafi/rexdiff/tui"
 	"github.com/rednafi/rexdiff/update"
@@ -30,6 +32,7 @@ import (
 func main() {
 	// Closing the pane sends SIGHUP. Cancel ctx on these signals so rexdiff
 	// can remove its temporary files before it exits.
+	//nolint:forbidigo // main makes the root context
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	// Read the environment only here.
 	err := run(ctx, os.Environ(), os.Args[1:], os.Stdout, os.Stderr)
@@ -49,6 +52,8 @@ func main() {
 }
 
 const exitUsage = 2
+
+const openTimeout = 10 * time.Second
 
 // errUsage means that the error and the usage are already on stderr.
 var errUsage = errors.New("bad usage")
@@ -98,7 +103,10 @@ func run(ctx context.Context, env, args []string, stdout, stderr io.Writer) erro
 	// Remove the resume variable, so that an editor does not inherit it.
 	resumePath, env := takeResume(env)
 	dir := cmp.Or(f.repo, ".")
-	repo, err := vcs.Open(ctx, env, dir)
+	// git runs before the first frame, so the user cannot see it hang.
+	openCtx, cancel := xctx.WithTimeout(ctx, openTimeout, "open repository")
+	repo, err := vcs.Open(openCtx, env, dir)
+	cancel(nil)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", dir, err)
 	}

@@ -66,7 +66,10 @@ func (r *Repo) Watch(ctx context.Context) (*Watcher, error) {
 		return nil, err
 	}
 	// Sum them now too, so the first Changed call does not list them again.
-	w.dirSum, w.fileSum = sumPaths(w.dirs), sumFiles(w.files)
+	w.dirSum, w.fileSum = sumPaths(w.dirs), sumFiles(ctx, w.files)
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
+	}
 	return w, nil
 }
 
@@ -130,7 +133,7 @@ func (w *Watcher) Changed(ctx context.Context) (Change, error) {
 		}
 		dirs, listed = sumPaths(w.dirs), true
 	}
-	files, included := sumFiles(w.files), sumPaths(w.included)
+	files, included := sumFiles(ctx, w.files), sumPaths(w.included)
 	ch := Change{
 		Files: w.reset || index != w.index || list != w.list || files != w.fileSum,
 		Refs:  refs != w.refs,
@@ -141,7 +144,10 @@ func (w *Watcher) Changed(ctx context.Context) (Change, error) {
 		if list, err = relist(); err != nil {
 			return Change{}, err
 		}
-		dirs, files = sumPaths(w.dirs), sumFiles(w.files)
+		dirs, files = sumPaths(w.dirs), sumFiles(ctx, w.files)
+	}
+	if ctx.Err() != nil {
+		return Change{}, context.Cause(ctx) // the sums are not complete
 	}
 	if !w.started {
 		w.started, ch = true, Change{Files: true, Refs: true}
@@ -155,13 +161,17 @@ func (w *Watcher) Changed(ctx context.Context) (Change, error) {
 }
 
 // LastWrite returns the latest mtime, up to until, of the listed paths. It
-// is zero if that is not after the watch started.
-func (w *Watcher) LastWrite(until time.Time) time.Time {
+// is zero if that is not after the watch started. The error is the cause
+// of ctx, if ctx ends first.
+func (w *Watcher) LastWrite(ctx context.Context, until time.Time) (time.Time, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var last time.Time
 	for _, ps := range [][]string{w.files, w.dirs} {
-		for _, p := range ps {
+		for i, p := range ps {
+			if stopped(ctx, i) {
+				return time.Time{}, context.Cause(ctx)
+			}
 			info, err := os.Lstat(p)
 			if err == nil && info.ModTime().After(last) && !info.ModTime().After(until) {
 				last = info.ModTime()
@@ -169,9 +179,9 @@ func (w *Watcher) LastWrite(until time.Time) time.Time {
 		}
 	}
 	if !last.After(w.since) {
-		return time.Time{}
+		return time.Time{}, nil
 	}
-	return last
+	return last, nil
 }
 
 func (w *Watcher) relist(ctx context.Context) (uint64, error) {
@@ -298,11 +308,23 @@ func sumPaths(paths []string) uint64 {
 	return s.Sum64()
 }
 
+// checkEvery is how many files a loop reads between two checks of ctx.
+const checkEvery = 1024
+
+// stopped reports whether ctx is done, at every checkEvery files. A loop
+// that stops early leaves ctx done, so its caller returns the cause.
+func stopped(ctx context.Context, i int) bool {
+	return i%checkEvery == 0 && ctx.Err() != nil
+}
+
 // sumFiles does not follow symbolic links. It also hashes the git files of
 // a nested repository, because a commit there does not change the directory.
-func sumFiles(paths []string) uint64 {
+func sumFiles(ctx context.Context, paths []string) uint64 {
 	s := newSum()
-	for _, p := range paths {
+	for i, p := range paths {
+		if stopped(ctx, i) {
+			break
+		}
 		if s.file(p, statOf(os.Lstat, p)) {
 			s.nested(p)
 		}

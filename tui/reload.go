@@ -15,7 +15,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/rednafi/rexdiff/diff"
-	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -51,9 +50,9 @@ func (m *model) startReload() tea.Cmd {
 	l.gen++
 	l.running, l.want, l.stale = true, false, false
 	m.reloads.pending = false // the reload sees each change until now
-	in, ctx := m.reloadInput(l.force), m.ctx
+	in := m.reloadInput(l.force)
 	l.force = false
-	return func() tea.Msg { return in.run(ctx) }
+	return m.timed(reloadTimeout, "reload", func(ctx context.Context) tea.Msg { return in.run(ctx) })
 }
 
 func (m *model) reloadInput(force bool) reloadInput {
@@ -101,8 +100,6 @@ type changesMsg struct {
 
 func (in reloadInput) run(ctx context.Context) changesMsg {
 	msg := changesMsg{gen: in.gen, note: in.note, start: time.Now()}
-	ctx, cancel := xctx.WithTimeout(ctx, reloadTimeout, "reload")
-	defer cancel()
 	if msg.note == "" {
 		oldTree, newTree, err := in.trees(ctx)
 		msg.trees, msg.err = oldTree+".."+newTree, err
@@ -276,11 +273,9 @@ func (m *model) startFiles() tea.Cmd {
 	}
 	l.gen++
 	l.running, l.want = true, false
-	repo, ctx, gen := m.repo, m.ctx, l.gen
+	repo, gen := m.repo, l.gen
 	expanded := maps.Clone(m.allFiles.navigator.toggled)
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, reloadTimeout, "file list")
-		defer cancel()
+	return m.timed(reloadTimeout, "file list", func(ctx context.Context) tea.Msg {
 		es, err := repo.Files(ctx)
 		if err != nil {
 			return filesMsg{gen: gen, err: err}
@@ -288,7 +283,7 @@ func (m *model) startFiles() tea.Cmd {
 		es = withIgnored(repo, es, expanded)
 		more := max(len(es)-maxListedFiles, 0)
 		return filesMsg{gen: gen, entries: es[:len(es)-more], more: more}
-	}
+	})
 }
 
 type fileJump struct {
@@ -401,16 +396,14 @@ func (m *model) watchChanges() tea.Cmd {
 		return nil
 	}
 	m.watching = true
-	w, repo, ctx, reset := m.watch, m.repo, m.ctx, m.watchReset
+	w, repo, reset := m.watch, m.repo, m.watchReset
 	m.watchReset = false
 	dirs, file := m.includedPaths()
 	paths := dirs
 	if file != "" {
 		paths = append(slices.Clip(dirs), file)
 	}
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, reloadTimeout, "watch")
-		defer cancel()
+	return m.timed(reloadTimeout, "watch", func(ctx context.Context) tea.Msg {
 		if w == nil {
 			// This lists the files, which can take seconds in a large
 			// repository.
@@ -425,7 +418,7 @@ func (m *model) watchChanges() tea.Cmd {
 		}
 		ch, err := w.Changed(ctx)
 		return watchedMsg{w: w, ch: ch, err: err, took: time.Since(now), dirs: dirs, file: file}
-	}
+	})
 }
 
 func (m *model) onWatched(msg watchedMsg) tea.Cmd {

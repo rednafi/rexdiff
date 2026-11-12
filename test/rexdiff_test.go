@@ -25,8 +25,8 @@ import (
 	"github.com/rednafi/rexdiff/internal/testgit"
 )
 
-// buildDev is shared between all tests, so it uses context.Background.
 var buildDev = sync.OnceValues(func() (string, error) {
+	//nolint:forbidigo // all tests share the build, so no test context fits
 	return build(context.Background(), filepath.Join(buildDir, "dev"), "")
 })
 

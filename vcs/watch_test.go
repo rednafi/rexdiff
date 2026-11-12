@@ -1,6 +1,7 @@
 package vcs_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rednafi/rexdiff/internal/testgit"
+	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -113,7 +115,7 @@ func TestWatcherLastWrite(t *testing.T) {
 	t.Parallel()
 	r, dir := openTestRepo(t)
 	w := newWatcher(t, r)
-	if got := w.LastWrite(time.Now()); !got.IsZero() {
+	if got, err := w.LastWrite(t.Context(), time.Now()); err != nil || !got.IsZero() {
 		t.Errorf("LastWrite before a write = %v, want zero", got)
 	}
 	testgit.WriteFile(t, dir, "c.txt", "c\n")
@@ -125,10 +127,10 @@ func TestWatcherLastWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if w.LastWrite(later).IsZero() {
+	if got, err := w.LastWrite(t.Context(), later); err != nil || got.IsZero() {
 		t.Error("LastWrite after a write is zero")
 	}
-	if got := w.LastWrite(later.Add(-time.Minute)); !got.IsZero() {
+	if got, err := w.LastWrite(t.Context(), later.Add(-time.Minute)); err != nil || !got.IsZero() {
 		t.Errorf("LastWrite before the write = %v, want zero", got)
 	}
 	if got := changed(t, w); !got.Files {
@@ -357,7 +359,7 @@ func TestWatcherConcurrent(t *testing.T) {
 	})
 	for range 20 {
 		w.Include([]string{"build"})
-		w.LastWrite(time.Now())
+		_, _ = w.LastWrite(t.Context(), time.Now())
 		w.Include(nil)
 	}
 	wg.Wait()
@@ -365,5 +367,26 @@ func TestWatcherConcurrent(t *testing.T) {
 	testgit.WriteFile(t, dir, "many/f37.txt", "an edit\n")
 	if got := changed(t, w); !got.Files {
 		t.Errorf("Changed after an edit of many/f37.txt = %+v, want Files", got)
+	}
+}
+
+// TestWatcherCanceled checks that a done context stops the reads of the
+// files, and that the next call still reports the change.
+func TestWatcherCanceled(t *testing.T) {
+	t.Parallel()
+	r, dir := openTestRepo(t)
+	w := newWatcher(t, r)
+	testgit.WriteFile(t, dir, "new.txt", "x\n")
+	errStop := errors.New("the test stops the check")
+	ctx, cancel := xctx.WithCancel(t.Context(), "test")
+	cancel(errStop)
+	if ch, err := w.Changed(ctx); !errors.Is(err, errStop) || ch != (vcs.Change{}) {
+		t.Errorf("Changed with a canceled context = %+v, %v, want no change and the cause %v", ch, err, errStop)
+	}
+	if _, err := w.LastWrite(ctx, time.Now()); !errors.Is(err, errStop) {
+		t.Errorf("LastWrite with a canceled context = %v, want the cause %v", err, errStop)
+	}
+	if ch := changed(t, w); !ch.Files {
+		t.Errorf("Changed after the canceled call = %+v, want Files", ch)
 	}
 }

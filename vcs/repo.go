@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/rednafi/rexdiff/internal/proc"
+	"github.com/rednafi/rexdiff/internal/xctx"
 )
 
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -637,7 +638,8 @@ func (r *Repo) catFile(ctx context.Context, ids []string, batch []int, blobs []b
 	if werr := cmd.Wait(); err == nil && werr != nil {
 		err = proc.Error(ctx, "git", werr, stderr.Bytes())
 	}
-	if err != nil {
+	// A read that ctx cut short fails as a short read, so report the cause.
+	if err = xctx.Err(ctx, err); err != nil {
 		return fmt.Errorf("git cat-file: %w", err)
 	}
 	return nil

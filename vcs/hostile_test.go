@@ -370,7 +370,7 @@ exec /bin/sleep 10
 `)
 	grep := func(timeout, budget time.Duration) ([]vcs.Match, bool, error) {
 		ctx, cancel := xctx.WithTimeout(t.Context(), timeout, "test grep")
-		defer cancel()
+		defer cancel(nil)
 		return r.Grep(ctx, "hit", 10, budget)
 	}
 	if ms, more, err := grep(time.Minute, 50*time.Millisecond); err != nil || !more ||
@@ -408,8 +408,8 @@ echo started > "$d/started"
 read -r _ < "$d/block"
 `)
 	errFirst := errors.New("the test stops the first snapshot")
-	ctx, cancel := context.WithCancelCause(t.Context())
-	defer cancel(fmt.Errorf("test: done: %w", context.Canceled))
+	ctx, cancel := xctx.WithCancel(t.Context(), "test")
+	defer cancel(nil)
 	done := make(chan error, 1)
 	go func() {
 		_, err := r.SnapshotTree(ctx)
@@ -420,7 +420,7 @@ read -r _ < "$d/block"
 	}
 
 	ctx2, cancel2 := xctx.WithTimeout(t.Context(), 50*time.Millisecond, "second snapshot")
-	defer cancel2()
+	defer cancel2(nil)
 	_, err := r.SnapshotTree(ctx2)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Snapshot that waits = %v, want the cause of its context", err)
@@ -429,5 +429,27 @@ read -r _ < "$d/block"
 	cancel(errFirst)
 	if err := <-done; !errors.Is(err, errFirst) {
 		t.Errorf("Snapshot that holds the lock = %v, want the cause %v", err, errFirst)
+	}
+}
+
+func TestDiffDeadline(t *testing.T) {
+	t.Parallel()
+	env, link := gitLink(t)
+	r, dir := openTestRepoEnv(t, env)
+	testgit.WriteFile(t, dir, "a.txt", "new\n")
+	oldTree, newTree := head(t, r), snapshot(t, r)
+	// The fake git hangs when Diff reads the file contents.
+	bin := filepath.Dir(link)
+	if err := os.Rename(link, filepath.Join(bin, "realgit")); err != nil {
+		t.Fatal(err)
+	}
+	testgit.Script(t, bin, "git", `case "$*" in *cat-file*) exec /bin/sleep 10 ;; esac
+exec "${0%/*}/realgit" "$@"
+`)
+	ctx, cancel := xctx.WithTimeout(t.Context(), 200*time.Millisecond, "test diff")
+	defer cancel(nil)
+	_, err := r.Diff(ctx, oldTree, newTree)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "test diff") {
+		t.Errorf("Diff past the deadline = %v, want the cause of the timeout", err)
 	}
 }

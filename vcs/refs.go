@@ -258,8 +258,6 @@ func (r *Repo) Grep(ctx context.Context, q string, limit int, budget time.Durati
 		return ms, more, nil
 	case isPastDeadline(ctx):
 		return ms, true, nil
-	case ctx.Err() != nil:
-		return nil, false, context.Cause(ctx)
 	}
 	return nil, false, fmt.Errorf("git grep: %w", proc.Error(ctx, "git", err, stderr.Bytes()))
 }

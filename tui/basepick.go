@@ -1,13 +1,13 @@
 package tui
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/rednafi/rexdiff/internal/xctx"
 	"github.com/rednafi/rexdiff/vcs"
 )
 
@@ -22,13 +22,11 @@ func (m *model) openBasePicker() tea.Cmd {
 	if m.baseFromFlag || m.tab == tabPR {
 		return nil
 	}
-	ctx, repo := m.ctx, m.repo
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, branchTimeout, "branch list")
-		defer cancel()
+	repo := m.repo
+	return m.timed(branchTimeout, "branch list", func(ctx context.Context) tea.Msg {
 		branches, err := repo.Branches(ctx)
 		return branchesMsg{branches: branches, err: err}
-	}
+	})
 }
 
 func (m *model) onBranches(msg branchesMsg) {
@@ -76,7 +74,7 @@ func (m *model) onBranches(msg branchesMsg) {
 // A match that the user moves the cursor to wins over the typed text.
 func (m *model) baseRef(it *overlayItem) (ref string, ok bool) {
 	ctx, done := m.gitContext("base resolve")
-	defer done()
+	defer done(nil)
 	ref = strings.TrimSpace(m.overlay.input.Value())
 	_, err := m.repo.ResolveRev(ctx, ref)
 	if it != nil && (ref == "" || err != nil || m.overlay.cur > 0) {

@@ -20,17 +20,15 @@ import (
 const maxSend = 256 << 10
 
 func (m *model) fetchAgents(msg agentsMsg) tea.Cmd {
-	c, ctx := m.rex, m.ctx
+	c := m.rex
 	msg.gen = m.agentsGen
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, rexTimeout, "agent list")
-		defer cancel()
+	return m.timed(rexTimeout, "agent list", func(ctx context.Context) tea.Msg {
 		agents, err := c.Agents(ctx)
 		isRexdiff := func(a rex.Agent) bool { return a.Status.App == appName }
 		agents = slices.DeleteFunc(agents, isRexdiff)
 		msg.agents, msg.err = agents, err
 		return msg
-	}
+	})
 }
 
 const rexTimeout = 10 * time.Second
@@ -156,15 +154,13 @@ func (m *model) reviewText() string {
 
 func (m *model) pasteReview(a rex.Agent) tea.Cmd {
 	m.sends++
-	c, ctx := m.rex, m.ctx
+	c := m.rex
 	text, sent := m.reviewText(), m.commentTexts()
 	focus := m.cfg.focusesAgent()
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, rexTimeout, "send")
-		defer cancel()
+	return m.timed(rexTimeout, "send", func(ctx context.Context) tea.Msg {
 		// onSent ignores sent when err is set.
 		return sentMsg{agent: a, sent: sent, err: sendReview(ctx, c, a, text, focus)}
-	}
+	})
 }
 
 // sendReview checks the status first, because an agent at a prompt would get
@@ -244,7 +240,7 @@ const copyTimeout = 2 * time.Second
 // copyText waits for the copy, so that copies happen in order.
 func (m *model) copyText(text, success string, texts map[int]string) {
 	ctx, cancel := xctx.WithTimeout(m.ctx, copyTimeout, "copy")
-	defer cancel()
+	defer cancel(nil)
 	err := clipboard.Write(ctx, m.env, text)
 	switch {
 	case errors.Is(err, clipboard.ErrNoTool):

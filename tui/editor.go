@@ -17,7 +17,6 @@ import (
 
 	"github.com/rednafi/rexdiff/internal/editor"
 	"github.com/rednafi/rexdiff/internal/proc"
-	"github.com/rednafi/rexdiff/internal/xctx"
 )
 
 func (m *model) launchEditor(path string, line int) tea.Cmd {
@@ -30,7 +29,7 @@ func (m *model) launchEditor(path string, line int) tea.Cmd {
 	if sources.Template == "" {
 		ctx, done := m.gitContext("git editor")
 		sources.Git = m.repo.GitEditor(ctx)
-		done()
+		done(nil)
 	}
 	ed, err := editor.CommandFor(sources, abs, line)
 	if err != nil {
@@ -54,13 +53,11 @@ func (m *model) launchEditor(path string, line int) tea.Cmd {
 	if m.rex == nil {
 		return m.runEditorHere(path, ed.Script)
 	}
-	c, ctx, root := m.rex, m.ctx, m.repo.Root()
-	return func() tea.Msg {
-		ctx, cancel := xctx.WithTimeout(ctx, rexTimeout, "editor split")
-		defer cancel()
+	c, root := m.rex, m.repo.Root()
+	return m.timed(rexTimeout, "editor split", func(ctx context.Context) tea.Msg {
 		err := c.Split(ctx, root, "sh", "-c", ed.Script)
 		return editorPaneMsg{path: path, script: ed.Script, err: err}
-	}
+	})
 }
 
 func (m *model) onEditorPane(msg editorPaneMsg) tea.Cmd {
@@ -73,13 +70,13 @@ func (m *model) onEditorPane(msg editorPaneMsg) tea.Cmd {
 }
 
 func (m *model) runEditorHere(path, script string) tea.Cmd {
-	return tea.ExecProcess(command(m.env, "sh", "-c", script), func(err error) tea.Msg {
+	return tea.ExecProcess(command(m.ctx, m.env, "sh", "-c", script), func(err error) tea.Msg {
 		return editorDoneMsg{path: path, err: err}
 	})
 }
 
 func (m *model) runEditorWindow(path, script string) tea.Cmd {
-	wait, err := detach(m.env, "editor", "sh", "-c", script)
+	wait, err := detach(m.ctx, m.env, "editor", "sh", "-c", script)
 	if err != nil {
 		m.flash("editor failed: " + err.Error())
 		return nil
@@ -88,8 +85,8 @@ func (m *model) runEditorWindow(path, script string) tea.Cmd {
 	return wait
 }
 
-func detach(env []string, what, name string, args ...string) (tea.Cmd, error) {
-	cmd := command(env, name, args...)
+func detach(ctx context.Context, env []string, what, name string, args ...string) (tea.Cmd, error) {
+	cmd := command(ctx, env, name, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -124,7 +121,7 @@ func (m *model) onEditorDone(msg editorDoneMsg) {
 }
 
 // urlOpenerCmd runs the opener without a shell.
-func urlOpenerCmd(env []string, cfg config, url string) (tea.Cmd, error) {
+func urlOpenerCmd(ctx context.Context, env []string, cfg config, url string) (tea.Cmd, error) {
 	url = strings.TrimSpace(url)
 	if !isWebURL(url) {
 		return nil, errors.New("unsupported link scheme")
@@ -140,7 +137,7 @@ func urlOpenerCmd(env []string, cfg config, url string) (tea.Cmd, error) {
 	if _, err := proc.LookPath(env, name); err != nil {
 		return nil, proc.NotInstalled(name)
 	}
-	return detach(env, "open", name, args...)
+	return detach(ctx, env, "open", name, args...)
 }
 
 // isWebURL rejects control characters and bidi marks, because these can
@@ -191,8 +188,8 @@ func splitWords(command string) []string {
 	return words
 }
 
-// command uses [context.Background] so that the program keeps running
-// when rexdiff exits. Killing an editor can lose the user's edits.
-func command(env []string, name string, args ...string) *exec.Cmd {
-	return proc.Command(context.Background(), env, name, args...)
+// command drops the cancel of ctx so that the program keeps running when
+// rexdiff exits. Killing an editor can lose the user's edits.
+func command(ctx context.Context, env []string, name string, args ...string) *exec.Cmd {
+	return proc.Command(context.WithoutCancel(ctx), env, name, args...)
 }

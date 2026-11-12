@@ -55,7 +55,7 @@ type overlay struct {
 	cur        int
 	rangeStart int // commit picker only: the item at the start of the range, or -1
 	loading    bool
-	stop       context.CancelFunc
+	stop       context.CancelCauseFunc
 	agents     []rex.Agent
 	search     searchState
 	// itemsHi is one past the last visible row.
@@ -137,7 +137,7 @@ func (m *model) openOverlay(ov *overlay) {
 
 func (m *model) closeOverlay() {
 	if ov := m.overlay; ov != nil && ov.stop != nil {
-		ov.stop()
+		ov.stop(errClosed)
 	}
 	if ov := m.overlay; ov != nil && ov.kind == overlaySearch && ov.search.preview != nil && ov.search.preview.file != nil {
 		// The preview was the last file rendered, so the cache holds its
@@ -324,7 +324,7 @@ func (m *model) choose() tea.Cmd {
 		}
 		ctx, done := m.gitContext("base save")
 		err := m.repo.SaveBase(ctx, saved)
-		done()
+		done(nil)
 		if err != nil {
 			m.flash("base save failed: " + err.Error())
 			return nil
